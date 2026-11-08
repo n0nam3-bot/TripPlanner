@@ -1,1 +1,150 @@
+name: Import project ZIP
 
+on:
+  push:
+    paths:
+      - '*.zip'
+  workflow_dispatch:
+    inputs:
+      zip_name:
+        description: 'Optional ZIP filename in the repository root (leave blank to import every root-level ZIP)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: import-project-zip-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    name: Safely unpack project ZIP
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Safely unpack uploaded ZIP files
+        env:
+          ZIP_NAME: ${{ github.event.inputs.zip_name || '' }}
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+          import os, shutil, stat, sys, zipfile
+          from pathlib import Path, PurePosixPath
+
+          ROOT = Path.cwd().resolve()
+          MAX_FILES = 10000
+          MAX_TOTAL = 150 * 1024 * 1024
+          MAX_FILE = 40 * 1024 * 1024
+          PROTECTED = {'.git', '.github', 'node_modules', '.next', '.vercel', '.turbo', 'coverage', 'dist', 'build'}
+
+          def log(message):
+              print(f'[zip-import] {message}', flush=True)
+
+          requested = os.environ.get('ZIP_NAME', '').strip()
+          if requested:
+              if Path(requested).name != requested or not requested.lower().endswith('.zip'):
+                  raise SystemExit('ZIP_NAME must be a .zip filename in the repository root.')
+              candidate = ROOT / requested
+              if not candidate.is_file():
+                  raise SystemExit(f'ZIP not found in repository root: {requested}')
+              archives = [candidate]
+          else:
+              archives = sorted((p for p in ROOT.glob('*.zip') if p.is_file()), key=lambda p: p.name.lower())
+
+          if not archives:
+              log('No root-level ZIP files found; nothing to import.')
+              sys.exit(0)
+
+          total_written = 0
+          for archive_path in archives:
+              log(f'Processing {archive_path.name}')
+              with zipfile.ZipFile(archive_path, 'r') as archive:
+                  infos = [i for i in archive.infolist() if not i.is_dir()]
+                  if len(infos) > MAX_FILES:
+                      raise SystemExit(f'{archive_path.name}: more than {MAX_FILES:,} files.')
+                  if sum(i.file_size for i in infos) > MAX_TOTAL:
+                      raise SystemExit(f'{archive_path.name}: expands beyond the 150 MiB limit.')
+
+                  parsed = []
+                  for info in infos:
+                      name = info.filename
+                      if not name or '\\' in name or name.startswith('/'):
+                          raise SystemExit(f'Unsafe ZIP path: {name!r}')
+                      rel = PurePosixPath(name)
+                      if rel.is_absolute() or any(part in ('..', '.', '') for part in rel.parts):
+                          raise SystemExit(f'Unsafe ZIP path: {name!r}')
+                      if not rel.parts:
+                          continue
+                      if ':' in rel.parts[0]:
+                          raise SystemExit(f'Drive-style ZIP path is not allowed: {name!r}')
+                      if info.file_size > MAX_FILE:
+                          raise SystemExit(f'File exceeds 40 MiB: {name}')
+                      mode = (info.external_attr >> 16) & 0xFFFF
+                      if stat.S_ISLNK(mode):
+                          raise SystemExit(f'Symbolic links are not allowed: {name}')
+                      parsed.append((info, rel))
+
+                  # Flatten a single enclosing directory (e.g. tripfinder-starter/).
+                  paths = [p for _, p in parsed]
+                  first = {p.parts[0] for p in paths if p.parts}
+                  if paths and len(first) == 1 and all(len(p.parts) > 1 for p in paths):
+                      wrapper = next(iter(first))
+                      if wrapper not in {'app', 'src', 'pages', 'public', 'components', 'lib'}:
+                          parsed = [(i, PurePosixPath(*p.parts[1:])) for i, p in parsed]
+
+                  written = 0
+                  skipped = 0
+                  for info, rel in parsed:
+                      if not rel.parts:
+                          skipped += 1
+                          continue
+                      parts = rel.parts
+                      filename = parts[-1]
+                      posix = rel.as_posix()
+                      # Preserve automation and runtime/build folders managed by the repo.
+                      if parts[0] in PROTECTED:
+                          skipped += 1
+                          continue
+                      # Never extract real environment secrets or private key material.
+                      if filename == '.env' or (filename.startswith('.env.') and filename != '.env.example'):
+                          skipped += 1
+                          continue
+                      if filename.lower().endswith(('.pem', '.key', '.p12', '.pfx')):
+                          skipped += 1
+                          continue
+
+                      target = (ROOT / Path(*parts)).resolve()
+                      if ROOT not in target.parents:
+                          raise SystemExit(f'ZIP path escaped repository: {info.filename}')
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      with archive.open(info, 'r') as src, target.open('wb') as dst:
+                          shutil.copyfileobj(src, dst, length=1024 * 1024)
+                      written += 1
+
+              # Delete the archive from the working tree only after full success.
+              archive_path.unlink()
+              total_written += written
+              log(f'Imported {written} file(s); skipped {skipped} protected file(s); removed {archive_path.name}.')
+
+          log(f'Finished. {total_written} file(s) imported.')
+          PY
+
+      - name: Commit extracted project files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No repository changes to commit."
+          else
+            git commit -m "Import project ZIP update"
+            git push
+          fi
