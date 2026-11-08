@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Compass, Heart, MapPinned, Waves } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Compass, Heart, MapPinned, Sun, Waves } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { TripSearch } from "@/components/trip-search";
 import { Floating, Reveal } from "@/components/motion";
