@@ -2,6 +2,7 @@ import { DESTINATIONS, findDestination, normalizeDestinationQuery, styleLabel } 
 import { resolveAirportCode } from "./airports";
 import { destinationMetadata, getDestinationGateways } from "./location-suggestions";
 import type { Destination, ItineraryDay, TripRecommendation, TripSearchInput, TripStyle } from "./types";
+import { getTypicalDaytimeHighF, toFahrenheit } from "./climate-normals";
 
 const DAY_NAMES = ["Arrival and getting oriented", "A full day to explore", "A slower local day", "A day for a signature experience", "Room for a favourite repeat", "A final easy day"];
 
@@ -26,7 +27,7 @@ function styleScore(destination: Destination, style: TripStyle): number {
   return destination.styles.some((item) => adjacent[style]?.includes(item)) ? 58 : 25;
 }
 
-function scoreDestination(destination: Destination, input: TripSearchInput): { score: number; reasons: string[] } {
+function scoreDestination(destination: Destination, input: TripSearchInput, typicalHighF: number | null): { score: number; reasons: string[] } {
   const reasons: string[] = [];
   let score = styleScore(destination, input.style);
   if (input.style !== "any" && destination.styles.includes(input.style)) reasons.push(`Strong match for ${styleLabel(input.style).toLowerCase()}`);
@@ -48,6 +49,13 @@ function scoreDestination(destination: Destination, input: TripSearchInput): { s
   } else {
     score += 2;
     reasons.push("There is enough time to explore beyond the main highlights");
+  }
+  const hasTemperaturePreference = input.temperatureMin !== null || input.temperatureMax !== null;
+  if (hasTemperaturePreference && typicalHighF !== null) {
+    score += 18;
+    reasons.push(`Typical daytime high is about ${Math.round(typicalHighF)}°F for these dates`);
+  } else if (hasTemperaturePreference) {
+    reasons.push("Monthly climate data is not available for this destination, so the temperature preference could not be checked");
   }
   const people = input.adults + input.childrenAges.length;
   const dailyTarget = input.budgetMode === "per_person" ? input.budget / Math.max(1, nights) : input.budget / Math.max(1, people * nights);
@@ -96,6 +104,17 @@ function buildItinerary(destination: Destination, input: TripSearchInput): Itine
   });
 }
 
+const CUSTOM_DESTINATION_IMAGES: Record<string, string> = {
+  "amalfi coast": "https://images.unsplash.com/photo-1533587851505-d119e13fa0d7?auto=format&fit=crop&w=1400&q=88",
+  kyoto: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1400&q=88",
+  tulum: "https://images.unsplash.com/photo-1510414842594-a61c69b5ae57?auto=format&fit=crop&w=1400&q=88",
+  // Pexels free-to-use destination photographs, selected for the actual city/region.
+  santiago: "https://images.pexels.com/photos/35874451/pexels-photo-35874451/free-photo-of-historic-architecture-in-santiago-de-los-caballeros.jpeg?auto=compress&cs=tinysrgb&w=1400",
+  "santiago de los caballeros": "https://images.pexels.com/photos/35874451/pexels-photo-35874451/free-photo-of-historic-architecture-in-santiago-de-los-caballeros.jpeg?auto=compress&cs=tinysrgb&w=1400",
+  "punta cana": "https://images.pexels.com/photos/34623077/pexels-photo-34623077/free-photo-of-sunny-beach-in-punta-cana-dominican-republic.jpeg?auto=compress&cs=tinysrgb&w=1400",
+  "dominican republic": "https://images.pexels.com/photos/34623077/pexels-photo-34623077/free-photo-of-sunny-beach-in-punta-cana-dominican-republic.jpeg?auto=compress&cs=tinysrgb&w=1400",
+};
+
 function makeCustomDestination(query: string, selectedAirportCode = ""): Destination {
   const metadata = destinationMetadata(query);
   const gateway = getDestinationGateways(query).find((item) => item.code === selectedAirportCode);
@@ -105,7 +124,9 @@ function makeCustomDestination(query: string, selectedAirportCode = ""): Destina
   const destinationLabel = country ? `${city}, ${country}` : city;
   return {
     id: `custom-${query.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, city, country, airportCode, airportLabel: airportCode || "Choose an arrival airport for flights",
-    image: "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1400&q=88",
+    // Prefer a verified image for the resolved city, then the search region.
+    // Unknown destinations stay image-neutral rather than showing unrelated stock travel art.
+    image: CUSTOM_DESTINATION_IMAGES[normalizeDestinationQuery(city)] || (!gateway ? CUSTOM_DESTINATION_IMAGES[normalizeDestinationQuery(query)] : "") || "",
     summary: `Live travel options and local places for ${destinationLabel}. Check the details against your selected dates and traveler count.`,
     bestFor: ["Custom destination"], styles: ["any", "city", "food", "culture"], costLevel: 2, suggestedNights: [3, 6], goodMonths: [],
     highlights: ["Confirm the right airport", "Choose a neighbourhood", "Verify attractions and transport"],
@@ -142,19 +163,38 @@ export function buildTripRecommendations(input: TripSearchInput): TripRecommenda
   const candidates = exact ? [exact] : input.destination.trim() && !["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination))
     ? [makeCustomDestination(input.destination.trim(), input.destinationAirportCode)]
     : [...DESTINATIONS];
+  const hasTemperaturePreference = input.temperatureMin !== null || input.temperatureMax !== null;
+  const minF = input.temperatureMin === null ? null : toFahrenheit(input.temperatureMin, input.temperatureUnit);
+  const maxF = input.temperatureMax === null ? null : toFahrenheit(input.temperatureMax, input.temperatureUnit);
+  const isAnywhere = !input.destination.trim() || ["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination));
+
   return candidates
     .map((destination) => {
-      const ranking = scoreDestination(destination, input).score;
+      const typicalDaytimeHighF = getTypicalDaytimeHighF(destination.city, input.departureDate, input.returnDate, destination.id);
+      return { destination, typicalDaytimeHighF };
+    })
+    .filter(({ typicalDaytimeHighF }) => {
+      if (!hasTemperaturePreference) return true;
+      // For broad discovery, only include destinations with a documented
+      // climate profile inside the requested range. For an explicitly named
+      // place, retain the place when climate normals are unavailable and
+      // clearly disclose that the preference could not be verified.
+      if (typicalDaytimeHighF === null) return !isAnywhere;
+      return (minF === null || typicalDaytimeHighF >= minF) && (maxF === null || typicalDaytimeHighF <= maxF);
+    })
+    .map(({ destination, typicalDaytimeHighF }) => {
+      const ranking = scoreDestination(destination, input, typicalDaytimeHighF).score;
       return {
         destination,
         ranking,
+        typicalDaytimeHighF,
         itinerary: buildItinerary(destination, input),
         liveSearchSupported: Boolean(destination.airportCode),
         ...buildProviderLinks(input.origin, destination, input),
       };
     })
     .sort((a, b) => b.ranking - a.ranking)
-    .slice(0, exact || (input.destination.trim() && !["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination))) ? 1 : 6)
+    .slice(0, exact || !isAnywhere ? 1 : 6)
     .map(({ ranking: _ranking, ...recommendation }) => recommendation);
 }
 

@@ -103,6 +103,9 @@ export function TripSearch() {
   const [stops, setStops] = useState("any");
   const [hotelRating, setHotelRating] = useState("0");
   const [freeCancellation, setFreeCancellation] = useState(false);
+  const [temperatureMin, setTemperatureMin] = useState("");
+  const [temperatureMax, setTemperatureMax] = useState("");
+  const [temperatureUnit, setTemperatureUnit] = useState<"F" | "C">("F");
   const [components, setComponents] = useState<TripComponent[]>(["flights", "stays", "activities"]);
   const [stayTypes, setStayTypes] = useState<StayType[]>(["hotels"]);
   const [error, setError] = useState("");
@@ -118,6 +121,20 @@ export function TripSearch() {
   function applyPreset(values: TripComponent[]) {
     setComponents(values);
     if (values.includes("stays") && stayTypes.length === 0) setStayTypes(["hotels"]);
+  }
+
+  function changeTemperatureUnit(nextUnit: "F" | "C") {
+    if (nextUnit === temperatureUnit) return;
+    const convert = (raw: string) => {
+      if (!raw.trim()) return "";
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return "";
+      const converted = temperatureUnit === "F" ? (value - 32) * 5 / 9 : value * 9 / 5 + 32;
+      return String(Math.round(converted));
+    };
+    setTemperatureMin(convert(temperatureMin));
+    setTemperatureMax(convert(temperatureMax));
+    setTemperatureUnit(nextUnit);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -138,6 +155,13 @@ export function TripSearch() {
     if (ages.some((age) => !/^\d+$/.test(age) || Number(age) < 1 || Number(age) > 17)) return setError("Enter each child's age from 1 to 17, separated by commas.");
     if (Number(rooms) < 1 || Number(rooms) > 8) return setError("Choose between 1 and 8 rooms.");
     if (components.includes("stays") && stayTypes.length === 0) return setError("Choose hotels, vacation rentals or both.");
+    const minTemp = temperatureMin.trim() === "" ? null : Number(temperatureMin);
+    const maxTemp = temperatureMax.trim() === "" ? null : Number(temperatureMax);
+    const tempFloor = temperatureUnit === "F" ? -40 : -40;
+    const tempCeiling = temperatureUnit === "F" ? 130 : 55;
+    if (minTemp !== null && (!Number.isFinite(minTemp) || minTemp < tempFloor || minTemp > tempCeiling)) return setError(`Minimum temperature must be between ${tempFloor} and ${tempCeiling}°${temperatureUnit}.`);
+    if (maxTemp !== null && (!Number.isFinite(maxTemp) || maxTemp < tempFloor || maxTemp > tempCeiling)) return setError(`Maximum temperature must be between ${tempFloor} and ${tempCeiling}°${temperatureUnit}.`);
+    if (minTemp !== null && maxTemp !== null && minTemp >= maxTemp) return setError("Maximum temperature must be higher than minimum temperature.");
 
     setSubmitting(true);
     const params = new URLSearchParams({
@@ -146,6 +170,7 @@ export function TripSearch() {
       depart, return: returnDate, adults, childrenAges: ages.join(","), rooms, budget, budgetMode, currency, style,
       flexibleDays: "0", cabin, stops, hotelRating, freeCancellation: String(freeCancellation),
       components: components.join(","), stayTypes: stayTypes.join(","),
+      temperatureMin: temperatureMin.trim(), temperatureMax: temperatureMax.trim(), temperatureUnit,
     });
     router.push(`/results?${params.toString()}`);
   }
@@ -193,7 +218,15 @@ export function TripSearch() {
       <div className="search-bottom">
         <div className="search-preferences">
           <label className="preference-select">Trip style <select value={style} onChange={(e) => setStyle(e.target.value)}><option value="any">No preference</option><option value="beach">Beach</option><option value="city">City</option><option value="food">Food and culture</option><option value="nature">Nature</option><option value="romantic">Romantic</option><option value="family">Family</option><option value="adventure">Adventure</option><option value="culture">History and culture</option></select><ChevronDown size={13}/></label>
-
+          <div className="temperature-filter temperature-filter-inline">
+            <div className="temperature-filter-heading"><strong>Typical daytime high</strong><small>Monthly climate average for your dates</small></div>
+            <div className="temperature-filter-controls">
+              <label><span className="sr-only">Minimum temperature</span><input type="number" min={-40} max={temperatureUnit === "F" ? 130 : 55} step="1" value={temperatureMin} onChange={(e) => setTemperatureMin(e.target.value)} placeholder="Min" aria-label={`Minimum temperature in ${temperatureUnit === "F" ? "Fahrenheit" : "Celsius"}`}/></label>
+              <span>to</span>
+              <label><span className="sr-only">Maximum temperature</span><input type="number" min={-40} max={temperatureUnit === "F" ? 130 : 55} step="1" value={temperatureMax} onChange={(e) => setTemperatureMax(e.target.value)} placeholder="Max" aria-label={`Maximum temperature in ${temperatureUnit === "F" ? "Fahrenheit" : "Celsius"}`}/></label>
+              <select value={temperatureUnit} onChange={(e) => changeTemperatureUnit(e.target.value as "F" | "C")} aria-label="Temperature unit"><option value="F">°F</option><option value="C">°C</option></select>
+            </div>
+          </div>
         </div>
         <button type="submit" className="button button-dark search-submit" disabled={submitting}>{submitting ? <><RefreshCw size={15} className="spin"/> Building search</> : <>Search trips <ArrowRight size={17}/></>}</button>
       </div>

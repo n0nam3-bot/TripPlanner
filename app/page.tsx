@@ -1,21 +1,42 @@
 import Link from "next/link";
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Compass, Heart, MapPinned, Sun, Waves } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Compass, Heart, MapPinned, Waves } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { TripSearch } from "@/components/trip-search";
-import { Floating, Reveal } from "@/components/motion";
+import { Reveal } from "@/components/motion";
+
+// Inspiration links use rolling departure dates; render them per request, not at build time.
+export const dynamic = "force-dynamic";
 
 const places = [
-  { name: "Amalfi Coast", country: "Italy", note: "Sea air & slow afternoons", image: "https://images.unsplash.com/photo-1533587851505-d119e13fa0d7?auto=format&fit=crop&w=1000&q=85", tag: "For the romantics" },
-  { name: "Kyoto", country: "Japan", note: "Quiet streets, rich stories", image: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1000&q=85", tag: "For the curious" },
-  { name: "Tulum", country: "Mexico", note: "Barefoot days & blue water", image: "https://images.unsplash.com/photo-1510414842594-a61c69b5ae57?auto=format&fit=crop&w=1000&q=85", tag: "For the sun seekers" },
-  { name: "Lisbon", country: "Portugal", note: "Good food, better wandering", image: "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=1000&q=85", tag: "For the city lovers" },
+  { name: "Amalfi Coast", country: "Italy", note: "Coastal villages and slow afternoons", image: "https://images.unsplash.com/photo-1533587851505-d119e13fa0d7?auto=format&fit=crop&w=900&q=82", airportCode: "NAP", style: "romantic", budget: "3200", tag: "Coast" },
+  { name: "Kyoto", country: "Japan", note: "Temples, gardens and old streets", image: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=900&q=82", airportCode: "KIX", style: "culture", budget: "3600", tag: "Culture" },
+  { name: "Tulum", country: "Mexico", note: "Caribbean water and Mayan history", image: "https://images.unsplash.com/photo-1510414842594-a61c69b5ae57?auto=format&fit=crop&w=900&q=82", airportCode: "TQO", style: "beach", budget: "2800", tag: "Beach" },
+  { name: "Lisbon", country: "Portugal", note: "Food, viewpoints and coastal day trips", image: "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=900&q=82", airportCode: "LIS", style: "food", budget: "2700", tag: "City" },
 ];
+
+function dateAfter(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function inspirationSearchUrl(place: (typeof places)[number]) {
+  const params = new URLSearchParams({
+    origin: "New York (NYC)", originAirportCode: "NYC",
+    destination: place.name, destinationAirportCode: place.airportCode,
+    depart: dateAfter(45), return: dateAfter(50), adults: "2", childrenAges: "", rooms: "1",
+    budget: place.budget, budgetMode: "total", currency: "USD", style: place.style,
+    flexibleDays: "0", cabin: "economy", stops: "any", hotelRating: "0", freeCancellation: "false",
+    components: "flights,stays,activities", stayTypes: "hotels,vacation_rentals",
+  });
+  return `/results?${params.toString()}`;
+}
 
 export default function Home() {
   return (
     <main>
       <SiteHeader />
-      <section className="hero shell">
+      <section className="hero hero-text-only shell">
         <div className="hero-copy">
           <Reveal>
             <div className="hero-kicker"><span className="kicker-line" /> A MORE THOUGHTFUL WAY TO GET AWAY</div>
@@ -27,16 +48,6 @@ export default function Home() {
             </div>
             <div className="hero-proof"><span className="proof-compass"><Compass size={18} /></span><div><strong>Thoughtful plans. Your pace.</strong><small>Not another one-size-fits-all search.</small></div></div>
           </Reveal>
-        </div>
-        <div className="hero-visual">
-          <Reveal delay={0.12} className="hero-photo-wrap">
-            <div className="hero-photo" role="img" aria-label="Sunlit Mediterranean coastline with turquoise water" />
-            <div className="photo-shade" />
-            <div className="hero-photo-caption"><span>THE ART OF GETTING AWAY</span><strong>Take the scenic route.</strong></div>
-          </Reveal>
-          <Floating className="float-note float-note-top"><span className="float-icon"><Compass size={16} /></span><span><strong>Your trip, your pace</strong><small>Plans with room to breathe</small></span></Floating>
-          <Floating className="float-note float-note-bottom"><span className="sun-icon"><Sun size={17} /></span><span><strong>Somewhere warmer?</strong><small>We know a few places.</small></span></Floating>
-          <div className="image-index">01 <span /> 04</div>
         </div>
       </section>
 
@@ -52,12 +63,14 @@ export default function Home() {
           </Reveal>
           <div className="destination-grid">
             {places.map((place, i) => (
-              <Reveal key={place.name} delay={i * 0.07} className={`destination-card destination-card-${i + 1}`}>
-                <div className="destination-image" style={{ backgroundImage: `url('${place.image}')` }} />
-                <div className="destination-overlay" />
-                <span className="destination-tag">{place.tag}</span>
-                <div className="destination-copy"><span>{place.country}</span><h3>{place.name}</h3><p>{place.note}</p></div>
-                <span className="destination-arrow"><ArrowUpRight size={18} /></span>
+              <Reveal key={place.name} delay={i * 0.07}>
+                <Link href={inspirationSearchUrl(place)} className={`destination-card destination-card-${i + 1}`} aria-label={`Search flights, stays and activities for ${place.name}`}>
+                  <div className="destination-image" style={{ backgroundImage: `url('${place.image}')` }} />
+                  <div className="destination-overlay" />
+                  <span className="destination-tag">{place.tag}</span>
+                  <div className="destination-copy"><span>{place.country}</span><h3>{place.name}</h3><p>{place.note}</p></div>
+                  <span className="destination-cta">Search this trip <ArrowUpRight size={15} /></span>
+                </Link>
               </Reveal>
             ))}
           </div>
@@ -81,12 +94,6 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="quote-section" id="about">
-        <div className="quote-image" />
-        <div className="quote-content shell">
-          <Reveal><span className="eyebrow light-eyebrow">A BETTER WAY TO PLAN</span><p>“A great trip should fit your life — not the other way around.”</p><span className="quote-caption">Thoughtful travel starts with the details.</span></Reveal>
-        </div>
-      </section>
 
       <section className="closing-section shell">
         <Reveal className="closing-content"><span className="eyebrow">YOUR NEXT STORY IS OUT THERE</span><h2>Ready when <em>you are.</em></h2><p>Start with a few details. We’ll help you figure out the rest.</p><Link href="#plan" className="button button-dark">Let’s plan a trip <ArrowRight size={17} /></Link></Reveal>

@@ -411,7 +411,7 @@ h1, h2, h3, p { margin-top: 0; }
 .planner-results-list { display: flex; flex-direction: column; gap: 17px; }
 .planner-destination-card { display: grid; grid-template-columns: minmax(210px, .78fr) minmax(0, 1.5fr); overflow: hidden; background: #fff; border: 1px solid #e6e8e1; border-radius: 4px; box-shadow: 0 9px 25px rgba(32,44,39,.035); transition: border-color .25s, box-shadow .25s, transform .25s; }
 .planner-destination-card:hover { border-color: #d1d9cf; box-shadow: 0 15px 35px rgba(32,44,39,.07); }
-.planner-destination-visual { position: relative; min-height: 260px; background-position: center; background-size: cover; isolation: isolate; }
+.planner-destination-visual { position: relative; min-height: 260px; background-position: center; background-size: cover; background-color: #e9eee8; isolation: isolate; }
 .planner-destination-visual::after { content: ''; position: absolute; z-index: -1; inset: 30% 0 0; background: linear-gradient(0deg, rgba(21,36,28,.58), transparent); }
 .planner-destination-body { min-width: 0; padding: 20px 22px; }
 .planner-destination-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
@@ -962,4 +962,73 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .experience-card > img { width: 70px; height: 68px; }
   .experience-actions { grid-column: 1 / -1; max-width: none; }
   .planner-destination-visual { min-height: 190px; max-height: 220px; }
+}
+
+
+/* Tripfinder search-first layout and climate preference */
+.hero-text-only { min-height: 0; display: block; padding-top: 50px; padding-bottom: 32px; }
+.hero-text-only .hero-copy { max-width: 820px; padding: 8px 0 0; }
+.hero-text-only h1 { max-width: 760px; margin-top: 17px; margin-bottom: 16px; font-size: clamp(42px, 5vw, 62px); }
+.hero-text-only .hero-description { max-width: 690px; margin-bottom: 22px; }
+.hero-text-only .hero-proof { margin-top: 25px; }
+.planner-section { margin-top: 0; }
+.destination-card { display:block; text-decoration:none; cursor:pointer; }
+.destination-card:focus-visible { outline:3px solid var(--clay); outline-offset:3px; }
+.destination-arrow { transition:transform .2s ease, background .2s ease, color .2s ease; }
+.destination-card:hover .destination-arrow { transform:translate(2px,-2px); }
+.quote-section { display:none; }
+.planner-destination-card { grid-template-columns:minmax(165px, 205px) minmax(0, 1fr); }
+.planner-destination-visual { min-height:205px; max-height:260px; }
+.planner-destination-body { padding:18px 20px; }
+.planner-climate-note { margin:8px 0 0 !important; color:#53695c !important; font-size:12px !important; line-height:1.4 !important; }
+.planner-climate-note strong { color:#1e523d; font-variant-numeric:tabular-nums; }
+.planner-climate-note span { color:#6d7c72; }
+.temperature-filter { display:grid; gap:8px; padding:12px; border:1px solid #dfe7df; border-radius:10px; background:#f7faf6; }
+.temperature-filter-heading { display:grid; gap:3px; }
+.temperature-filter-heading strong { color:#233a2d; font-size:12px; }
+.temperature-filter-heading small { color:#68796e; font-size:10px; line-height:1.4; }
+.temperature-filter-controls { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) 74px; gap:7px; align-items:center; }
+.temperature-filter-controls input,.temperature-filter-controls select { width:100%; min-width:0; height:38px; padding:0 10px; border:1px solid #d7e1d8; border-radius:7px; background:#fff; color:#20362a; font-size:13px; font-variant-numeric:tabular-nums; }
+.temperature-filter-controls > span { color:#66796d; font-size:11px; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.no-climate-matches { padding:28px; border:1px solid #dfe7df; border-radius:14px; background:#fff; }
+.no-climate-matches h2 { margin:0 0 8px; color:#1d3026; font-size:24px; letter-spacing:-.6px; }
+.no-climate-matches p { max-width:620px; color:#5d7064; font-size:14px; line-height:1.6; }
+@media (max-width:900px) {
+  .hero-text-only { padding-top:34px; padding-bottom:22px; }
+  .planner-destination-card { grid-template-columns:170px minmax(0,1fr); }
+  .planner-destination-visual { min-height:190px; }
+}
+@media (max-width:620px) {
+  .hero-text-only { padding-top:24px; padding-bottom:16px; }
+  .hero-text-only .hero-copy { padding:0; }
+  .hero-text-only h1 { font-size:clamp(38px,10vw,50px); }
+  .hero-text-only .hero-actions { flex-direction:row; flex-wrap:wrap; }
+  .hero-text-only .hero-proof { margin-top:18px; }
+  .planner-destination-card { grid-template-columns:1fr; }
+  .planner-destination-visual { min-height:165px; max-height:190px; }
+  .temperature-filter-controls { grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) 66px; }
+  .no-climate-matches { padding:20px 16px; }
+}
+
+
+/* Compact primary temperature preference and clickable inspiration cards */
+.search-preferences { flex-wrap: wrap; gap: 14px; }
+.temperature-filter-inline { width: min(390px, 100%); min-width: 320px; grid-template-columns: minmax(112px, .9fr) minmax(190px, 1.4fr); align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; }
+.temperature-filter-inline .temperature-filter-heading strong { font-size: 11px; }
+.temperature-filter-inline .temperature-filter-heading small { font-size: 9px; }
+.temperature-filter-inline .temperature-filter-controls { grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) 58px; gap: 5px; }
+.temperature-filter-inline .temperature-filter-controls input,
+.temperature-filter-inline .temperature-filter-controls select { height: 34px; padding: 0 7px; font-size: 12px; }
+.destination-cta { position: absolute; right: 17px; bottom: 20px; display: inline-flex; align-items: center; gap: 6px; color: #fff; font-size: 10px; font-weight: 650; letter-spacing: .1px; transition: transform .2s ease, color .2s ease; }
+.destination-card:hover .destination-cta { transform: translate(2px,-2px); color: #f0d4ab; }
+.hero-visual, .hero-photo, .home-hero-image, .quote-section, .quote-image { display: none !important; }
+@media (max-width: 900px) {
+  .search-preferences { gap: 12px; }
+  .temperature-filter-inline { width: min(100%, 520px); min-width: min(320px, 100%); }
+}
+@media (max-width: 620px) {
+  .search-preferences { width: 100%; align-items: stretch; }
+  .temperature-filter-inline { width: 100%; min-width: 0; grid-template-columns: 1fr; }
+  .destination-cta { right: 10px; bottom: 13px; font-size: 9px; }
 }

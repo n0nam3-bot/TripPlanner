@@ -28,23 +28,6 @@ const duration = (minutes: number | null) => minutes === null ? "Duration not li
 const dateLabel = (date: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
 const dateShort = (date: string) => new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
 
-async function readApiJson(response: Response, fallback: string): Promise<Record<string, unknown>> {
-  const contentType = response.headers.get("content-type") || "";
-  const body = await response.text();
-  if (!contentType.toLowerCase().includes("application/json")) {
-    if (response.status === 404 || body.trimStart().startsWith("<!DOCTYPE")) {
-      throw new Error("This Tripfinder service endpoint is not available in the current deployment. Redeploy the latest update and try again.");
-    }
-    throw new Error(fallback);
-  }
-  let parsed: unknown;
-  try { parsed = JSON.parse(body); } catch { throw new Error(fallback); }
-  if (!parsed || typeof parsed !== "object") throw new Error(fallback);
-  const data = parsed as Record<string, unknown>;
-  if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : fallback);
-  return data;
-}
-
 function haversineMiles(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const rad = (value: number) => value * Math.PI / 180;
   const dLat = rad(bLat - aLat); const dLon = rad(bLon - aLon);
@@ -118,7 +101,8 @@ function RouteLookup({ origin, destination, label }: { origin: string; destinati
     setState({ loading: true });
     try {
       const response = await fetch("/api/travel/directions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ origin, destination }) });
-      const data = await readApiJson(response, "Driving route unavailable.");
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Driving route unavailable.");
       setState({ loading: false, distance: String(data.distance || ""), duration: String(data.duration || ""), durationInTraffic: typeof data.durationInTraffic === "string" ? data.durationInTraffic : undefined });
     } catch (error) {
       setState({ loading: false, error: error instanceof Error ? error.message : "Driving route unavailable." });
@@ -202,7 +186,7 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
     setState({ loading: true, status: "loading", days: [] });
     try {
       const response = await fetch("/api/travel/weather", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location, startDate, endDate }) });
-      const data = await readApiJson(response, "Weather information is unavailable right now.");
+      const data = await response.json();
       setState({ loading: false, status: String(data.status || "error"), message: typeof data.message === "string" ? data.message : undefined, days: Array.isArray(data.days) ? data.days as WeatherDay[] : [], attribution: typeof data.attribution === "string" ? data.attribution : undefined });
     } catch { setState({ loading: false, status: "error", message: "Weather information is unavailable right now.", days: [] }); }
   }, [location, startDate, endDate]);
@@ -238,7 +222,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setStates((current) => ({ ...current, [id]: { loading: true, error: "", result: current[id]?.result ?? null } }));
     try {
       const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: [recommendation.destination.city, recommendation.destination.country].filter(Boolean).join(", "), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode }) });
-      const data = await readApiJson(response, "Unable to search this trip right now.");
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to search this trip right now.");
       setStates((current) => ({ ...current, [id]: { loading: false, error: "", result: data as LiveTravelSearchResult } }));
       setCheckedDestinations((current) => current.includes(id) ? current : [...current, id]);
     } catch (error) {
@@ -257,7 +242,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setReturnStates((current) => ({ ...current, [outbound.id]: { loading: true, error: "", result: current[outbound.id]?.result ?? null } }));
     try {
       const response = await fetch("/api/travel/return-flights", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationAirportCode, departureToken: outbound.departureToken }) });
-      const data = await readApiJson(response, "Unable to retrieve return flight options.");
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to retrieve return flight options.");
       setReturnStates((current) => ({ ...current, [outbound.id]: { loading: false, error: "", result: data as ReturnFlightSearchResult } }));
     } catch (error) {
       setReturnStates((current) => ({ ...current, [outbound.id]: { loading: false, error: error instanceof Error ? error.message : "Return flight search failed.", result: current[outbound.id]?.result ?? null } }));
@@ -269,7 +255,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setBookingStates((current) => ({ ...current, [flight.id]: { loading: true, error: "", options: current[flight.id]?.options ?? null } }));
     try {
       const response = await fetch("/api/travel/booking-options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bookingToken: flight.bookingToken, search, destinationAirportCode }) });
-      const data = await readApiJson(response, "Could not retrieve seller links.");
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Could not retrieve seller links.");
       setBookingStates((current) => ({ ...current, [flight.id]: { loading: false, error: "", options: Array.isArray(data.options) ? data.options as FlightBookingOption[] : [] } }));
     } catch (error) {
       setBookingStates((current) => ({ ...current, [flight.id]: { loading: false, error: error instanceof Error ? error.message : "Seller lookup failed.", options: current[flight.id]?.options ?? null } }));
@@ -281,7 +268,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setHotelBookingStates((current) => ({ ...current, [hotel.id]: { loading: true, error: "", options: current[hotel.id]?.options ?? null } }));
     try {
       const response = await fetch("/api/travel/hotel-options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ propertyToken: hotel.propertyToken, search }) });
-      const data = await readApiJson(response, "Could not retrieve property booking options.");
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Could not retrieve property booking options.");
       setHotelBookingStates((current) => ({ ...current, [hotel.id]: { loading: false, error: "", options: Array.isArray(data.offers) ? data.offers as HotelBookingOption[] : [] } }));
     } catch (error) {
       setHotelBookingStates((current) => ({ ...current, [hotel.id]: { loading: false, error: error instanceof Error ? error.message : "Hotel booking lookup failed.", options: current[hotel.id]?.options ?? null } }));
@@ -315,7 +303,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         return <motion.article className={`planner-destination-card ${isExpanded ? "is-expanded" : ""}`} key={destination.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: index * 0.035 }}>
           <div className="planner-destination-visual" style={{ backgroundImage: `url('${destination.image}')` }} aria-label={`${destination.city}, ${destination.country}`} />
           <div className="planner-destination-body">
-            <div className="planner-destination-heading"><div><span className="planner-country">{destination.country}</span><h3>{destination.city}</h3><p>{destination.summary}</p></div>{airportCode && <span className="planner-airport">{airportCode}</span>}</div>
+            <div className="planner-destination-heading"><div><span className="planner-country">{destination.country}</span><h3>{destination.city}</h3><p>{destination.summary}</p>{recommendation.typicalDaytimeHighF !== null ? <p className="planner-climate-note">Typical daytime high for these dates: <strong>{Math.round(search.temperatureUnit === "C" ? (recommendation.typicalDaytimeHighF - 32) * 5 / 9 : recommendation.typicalDaytimeHighF)}°{search.temperatureUnit}</strong> <span>· monthly climate average, not a forecast</span></p> : (search.temperatureMin !== null || search.temperatureMax !== null) ? <p className="planner-climate-note">No monthly temperature baseline is available for this location, so your temperature range could not be checked.</p> : null}</div>{airportCode && <span className="planner-airport">{airportCode}</span>}</div>
             <div className="planner-highlights">{destination.highlights.slice(0, 3).map((highlight) => <span key={highlight}>{highlight}</span>)}</div>
             <div className="planner-actions">
               {search.components.includes("flights") && <a className="planner-outbound-link" href={recommendation.flightSearchUrl} target="_blank" rel="noreferrer"><Plane size={14}/> Flights <ArrowUpRight size={12}/></a>}
