@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
-import type { TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
+import type { ItineraryDay, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
 import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 
@@ -23,6 +23,15 @@ type HotelBookingState = { loading: boolean; error: string; options: HotelBookin
 type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null };
 type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attribution?: string };
 type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string };
+type ExperienceSlot = "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening";
+type SelectedExperience = { date: string; slot: ExperienceSlot };
+type DestinationSelection = {
+  outbound: LiveFlight | null;
+  returnFlight: LiveFlight | null;
+  hotel: LiveHotel | null;
+  experiences: Record<string, SelectedExperience>;
+};
+const emptySelection = (): DestinationSelection => ({ outbound: null, returnFlight: null, hotel: null, experiences: {} });
 
 const money = (amount: number, currency: string) => new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
 const duration = (minutes: number | null) => minutes === null ? "Duration not listed" : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
@@ -65,34 +74,49 @@ function BookingOptions({ state, currency }: { state?: BookingState; currency: s
   </div>;
 }
 
-function ReturnOptions({ state, bookingStates, onLoadBookingOptions, currency }: {
-  state?: ReturnState; bookingStates: Record<string, BookingState>; onLoadBookingOptions: (flight: LiveFlight) => void; currency: string;
+function ReturnOptions({ state, bookingStates, onLoadBookingOptions, onSelectReturn, selectedReturnId, currency }: {
+  state?: ReturnState;
+  bookingStates: Record<string, BookingState>;
+  onLoadBookingOptions: (flight: LiveFlight) => void;
+  onSelectReturn: (flight: LiveFlight) => void;
+  selectedReturnId?: string;
+  currency: string;
 }) {
   if (!state) return null;
   return <div className="return-options-panel">
-    <div className="return-options-heading"><strong>Return flights</strong>{state.result && <small>Checked {new Date(state.result.dataAsOf).toLocaleString()}</small>}</div>
+    <div className="return-options-heading"><strong>Choose your return flight</strong>{state.result && <small>Checked {new Date(state.result.dataAsOf).toLocaleString()}</small>}</div>
     {state.loading && <p className="inline-loading"><RefreshCw size={13} className="spin"/> Matching return legs to this outbound flight…</p>}
     {state.error && <p className="provider-inline-error">{state.error}</p>}
     {state.result?.warnings.map((warning) => <p className="provider-warning" key={warning}>{warning}</p>)}
-    {state.result?.flights.map((flight) => <div className="return-flight-option" key={flight.id}>
+    {state.result?.flights.map((flight) => <div className={`return-flight-option ${selectedReturnId === flight.id ? "is-selected" : ""}`} key={flight.id}>
       <div className="return-flight-copy"><strong>{flight.departure} <span>→</span> {flight.arrival}</strong><small>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</small><small>{flight.from} → {flight.to}</small></div>
-      <div className="return-flight-action">{flight.price !== null && <strong>{money(flight.price, flight.currency || currency)}</strong>}{flight.bookingToken && <button className="text-action" type="button" onClick={() => onLoadBookingOptions(flight)} disabled={bookingStates[flight.id]?.loading}>Compare sellers <ArrowUpRight size={12}/></button>}</div>
+      <div className="return-flight-action">{flight.price !== null && <strong>{money(flight.price, flight.currency || currency)}</strong>}
+        <button type="button" className={`selection-button ${selectedReturnId === flight.id ? "is-selected" : ""}`} onClick={() => onSelectReturn(flight)}>{selectedReturnId === flight.id ? <><Check size={13}/> Return selected · Remove</> : "Select return"}</button>
+        {flight.bookingToken && <button className="text-action" type="button" onClick={() => onLoadBookingOptions(flight)} disabled={bookingStates[flight.id]?.loading}>Compare sellers <ArrowUpRight size={12}/></button>}
+      </div>
       <BookingOptions state={bookingStates[flight.id]} currency={currency}/>
     </div>)}
     {state.result && state.result.flights.length === 0 && <p className="empty-inline">No return options matched this outbound selection.</p>}
   </div>;
 }
 
-function FlightResult({ flight, currency, returnState, bookingStates, onLoadReturnFlights, onLoadBookingOptions }: {
-  flight: LiveFlight; currency: string; returnState?: ReturnState; bookingStates: Record<string, BookingState>;
-  onLoadReturnFlights: (flight: LiveFlight) => void; onLoadBookingOptions: (flight: LiveFlight) => void;
+function FlightResult({ flight, currency, returnState, bookingStates, selectedOutbound, selectedReturnId, onSelectOutbound, onSelectReturn, onLoadBookingOptions }: {
+  flight: LiveFlight;
+  currency: string;
+  returnState?: ReturnState;
+  bookingStates: Record<string, BookingState>;
+  selectedOutbound: boolean;
+  selectedReturnId?: string;
+  onSelectOutbound: (flight: LiveFlight) => void;
+  onSelectReturn: (flight: LiveFlight) => void;
+  onLoadBookingOptions: (flight: LiveFlight) => void;
 }) {
-  return <article className="live-offer-card">
+  return <article className={`live-offer-card ${selectedOutbound ? "is-selected" : ""}`}>
     <div className="live-offer-main"><div className="live-offer-route"><strong>{flight.departure}</strong><span>→</span><strong>{flight.arrival}</strong></div><p>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</p><small>{flight.from} → {flight.to}</small></div>
-    <div className="live-offer-price">{flight.price !== null ? <strong>{money(flight.price, flight.currency || currency)}</strong> : <strong>Price not supplied</strong>}<small>Outbound leg price, not a round-trip total</small>
-      {flight.departureToken && <button className="text-action" type="button" disabled={returnState?.loading} onClick={() => onLoadReturnFlights(flight)}>{returnState?.loading ? <><RefreshCw size={12} className="spin"/> Finding return</> : <>Select outbound <ArrowRight size={12}/></>}</button>}
+    <div className="live-offer-price">{flight.price !== null ? <strong>{money(flight.price, flight.currency || currency)}</strong> : <strong>Price not supplied</strong>}<small>Google Flights displayed itinerary price; confirm final fare with seller</small>
+      <button className={`selection-button ${selectedOutbound ? "is-selected" : ""}`} type="button" disabled={returnState?.loading} onClick={() => onSelectOutbound(flight)}>{returnState?.loading && selectedOutbound ? <><RefreshCw size={12} className="spin"/> Finding returns</> : selectedOutbound ? <><Check size={13}/> Outbound selected</> : <>Choose outbound <ArrowRight size={12}/></>}</button>
     </div>
-    <ReturnOptions state={returnState} bookingStates={bookingStates} onLoadBookingOptions={onLoadBookingOptions} currency={currency}/>
+    {selectedOutbound && <ReturnOptions state={returnState} bookingStates={bookingStates} onLoadBookingOptions={onLoadBookingOptions} onSelectReturn={onSelectReturn} selectedReturnId={selectedReturnId} currency={currency}/>}
   </article>;
 }
 
@@ -116,19 +140,19 @@ function RouteLookup({ origin, destination, label }: { origin: string; destinati
   </span>;
 }
 
-function HotelResult({ hotel, currency, airportCode, experiences, nights, bookingState, onLoadBookingOptions }: {
+function HotelResult({ hotel, currency, airportCode, experiences, nights, bookingState, selected, onSelect, onLoadBookingOptions }: {
   hotel: LiveHotel; currency: string; airportCode: string; experiences: LiveExperience[]; nights: number;
-  bookingState?: HotelBookingState; onLoadBookingOptions: (hotel: LiveHotel) => void;
+  bookingState?: HotelBookingState; selected: boolean; onSelect: (hotel: LiveHotel) => void; onLoadBookingOptions: (hotel: LiveHotel) => void;
 }) {
   const airport = hotel.latitude !== null && hotel.longitude !== null
     ? nearestKnownAirport(hotel.latitude, hotel.longitude, airportCode) : null;
   const airportDistance = airport?.miles ?? null;
   const nearestActivities = hotel.latitude !== null && hotel.longitude !== null
-    ? experiences.filter((item) => item.latitude !== null && item.longitude !== null).map((item) => ({ item, miles: haversineMiles(hotel.latitude!, hotel.longitude!, item.latitude!, item.longitude!) })).sort((a, b) => a.miles - b.miles).slice(0, 2)
+    ? experiences.filter((item) => item.kind === "activity" && item.latitude !== null && item.longitude !== null).map((item) => ({ item, miles: haversineMiles(hotel.latitude!, hotel.longitude!, item.latitude!, item.longitude!) })).sort((a, b) => a.miles - b.miles).slice(0, 2)
     : [];
   const hotelOrigin = hotel.address || (hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : hotel.name);
   const propertyUrl = hotel.bookingUrl || `https://www.google.com/travel/hotels?q=${encodeURIComponent(`${hotel.name} ${hotel.address}`)}`;
-  return <article className="live-hotel-card">
+  return <article className={`live-hotel-card ${selected ? "is-selected" : ""}`}>
     {hotel.image && <img src={hotel.image} alt={`${hotel.name} property`} loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="live-hotel-copy">
       <div className="live-hotel-title"><h4><a href={propertyUrl} target="_blank" rel="noreferrer">{hotel.name} <ExternalLink size={12}/></a></h4>{hotel.rating !== null && <span><Star size={12} fill="currentColor"/> {hotel.rating.toFixed(1)}{hotel.reviews ? ` · ${hotel.reviews.toLocaleString()}` : ""}</span>}</div>
@@ -148,13 +172,27 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, bookin
     <div className="live-hotel-price">
       {hotel.totalPrice !== null ? <strong>{money(hotel.totalPrice, hotel.currency || currency)}</strong> : hotel.nightlyPrice !== null ? <><strong>{money(hotel.nightlyPrice * nights, hotel.currency || currency)}</strong><small>Estimated {nights}-night total before taxes and fees</small><small>{money(hotel.nightlyPrice, hotel.currency || currency)} per night</small></> : <strong>Price unavailable</strong>}
       {hotel.totalPrice !== null && <small>Provider-displayed total for {nights} nights</small>}
+      <button type="button" className={`selection-button ${selected ? "is-selected" : ""}`} onClick={() => onSelect(hotel)}>{selected ? <><Check size={13}/> Stay selected · Remove</> : "Select this stay"}</button>
       {hotel.propertyToken && <button type="button" className="text-action" onClick={() => onLoadBookingOptions(hotel)} disabled={bookingState?.loading}>{bookingState?.loading ? "Loading rates…" : bookingState?.options ? "Refresh rates" : "Compare rates"} <ArrowUpRight size={12}/></button>}
       <a className="hotel-primary-link" href={propertyUrl} target="_blank" rel="noreferrer">{hotel.bookingUrlLabel} <ExternalLink size={12}/></a>
     </div>
   </article>;
 }
 
-function ExperienceResult({ experience, hotels, airportCode, search }: { experience: LiveExperience; hotels: LiveHotel[]; airportCode: string; search: TripSearchInput }) {
+function ExperienceResult({ experience, hotels, airportCode, search, days, selected, onSelectionChange }: {
+  experience: LiveExperience;
+  hotels: LiveHotel[];
+  airportCode: string;
+  search: TripSearchInput;
+  days: Array<{ date: string; label: string }>;
+  selected?: SelectedExperience;
+  onSelectionChange: (experience: LiveExperience, selection: SelectedExperience | null) => void;
+}) {
+  const isRestaurant = experience.kind === "restaurant";
+  const [draftDate, setDraftDate] = useState(search.departureDate);
+  const [draftSlot, setDraftSlot] = useState<ExperienceSlot>(isRestaurant ? "Dinner" : "Afternoon");
+  const activeDate = selected?.date ?? draftDate;
+  const activeSlot = selected?.slot ?? draftSlot;
   const nearbyStays = experience.latitude !== null && experience.longitude !== null
     ? hotels.filter((hotel) => hotel.latitude !== null && hotel.longitude !== null).map((hotel) => ({ hotel, miles: haversineMiles(experience.latitude!, experience.longitude!, hotel.latitude!, hotel.longitude!) })).sort((a, b) => a.miles - b.miles).slice(0, 2)
     : [];
@@ -167,7 +205,15 @@ function ExperienceResult({ experience, hotels, airportCode, search }: { experie
   const ticketQuery = encodeURIComponent(`${experience.name} ${experience.address}. Visit ${visitWindow}. ${travelers}.`);
   const viatorUrl = `https://www.viator.com/searchResults/all?text=${ticketQuery}`;
   const getYourGuideUrl = `https://www.getyourguide.com/s/?q=${ticketQuery}`;
-  return <article className="experience-card">
+  const setDate = (date: string) => {
+    setDraftDate(date);
+    if (selected) onSelectionChange(experience, { date, slot: activeSlot });
+  };
+  const setSlot = (slot: ExperienceSlot) => {
+    setDraftSlot(slot);
+    if (selected) onSelectionChange(experience, { date: activeDate, slot });
+  };
+  return <article className={`experience-card ${selected ? "is-selected" : ""}`}>
     {experience.thumbnail && <img src={experience.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="experience-copy"><div className="experience-title"><h4>{experience.name}</h4>{experience.rating !== null && <span><Star size={12} fill="currentColor"/> {experience.rating.toFixed(1)}{experience.reviews ? ` · ${experience.reviews.toLocaleString()}` : ""}</span>}</div><p>{experience.category}{experience.address ? ` · ${experience.address}` : ""}</p>{experience.openState && <small>{experience.openState}</small>}{experience.price && <small>{experience.price}</small>}
       {nearbyStays.length > 0 && <div className="experience-distances">{nearbyStays.map(({ hotel, miles }) => {
@@ -176,8 +222,54 @@ function ExperienceResult({ experience, hotels, airportCode, search }: { experie
       })}</div>}
       {airport && airportMiles !== null && <div className="experience-distances"><span>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportMiles)} straight-line <RouteLookup origin={airport.name} destination={activityLocation} label="Check drive from airport"/></span></div>}
     </div>
-    <div className="experience-actions">{experience.website && <a href={experience.website} target="_blank" rel="noreferrer" className="text-action">Official site <ArrowUpRight size={12}/></a>}<a href={experience.mapsUrl} target="_blank" rel="noreferrer" className="text-action">Open in Maps <ArrowUpRight size={12}/></a><a href={viatorUrl} target="_blank" rel="noreferrer" className="text-action">Search Viator <ArrowUpRight size={12}/></a><a href={getYourGuideUrl} target="_blank" rel="noreferrer" className="text-action">Search GetYourGuide <ArrowUpRight size={12}/></a></div>
+    <div className="experience-actions">
+      <label className="experience-schedule-field"><span>Trip day</span><select value={activeDate} onChange={(event) => setDate(event.target.value)}>{days.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select></label>
+      <label className="experience-schedule-field"><span>{isRestaurant ? "Meal" : "Time"}</span><select value={activeSlot} onChange={(event) => setSlot(event.target.value as ExperienceSlot)}>{(isRestaurant ? ["Lunch", "Dinner"] : ["Morning", "Afternoon", "Evening"]).map((slot) => <option key={slot} value={slot}>{slot}</option>)}</select></label>
+      <button type="button" className={`selection-button ${selected ? "is-selected" : ""}`} onClick={() => onSelectionChange(experience, selected ? null : { date: activeDate, slot: activeSlot })}>{selected ? <><Check size={13}/> Added to trip · Remove</> : isRestaurant ? "Add restaurant" : "Add activity"}</button>
+      {experience.website && <a href={experience.website} target="_blank" rel="noreferrer" className="text-action">Official site <ArrowUpRight size={12}/></a>}
+      <a href={experience.mapsUrl} target="_blank" rel="noreferrer" className="text-action">Open in Maps <ArrowUpRight size={12}/></a>
+      {isRestaurant ? null : <><a href={viatorUrl} target="_blank" rel="noreferrer" className="text-action">Search Viator <ArrowUpRight size={12}/></a><a href={getYourGuideUrl} target="_blank" rel="noreferrer" className="text-action">Search GetYourGuide <ArrowUpRight size={12}/></a></>}
+    </div>
   </article>;
+}
+
+function SelectedTripSummary({ selection, experiences, currency, nights }: {
+  selection: DestinationSelection;
+  experiences: LiveExperience[];
+  currency: string;
+  nights: number;
+}) {
+  const selectedExperiences = experiences.filter((experience) => Boolean(selection.experiences[experience.id]));
+  if (!selection.outbound && !selection.returnFlight && !selection.hotel && selectedExperiences.length === 0) return null;
+  const activities = selectedExperiences.filter((item) => item.kind === "activity");
+  const restaurants = selectedExperiences.filter((item) => item.kind === "restaurant");
+  return <section className="trip-selection-summary">
+    <div className="trip-selection-summary-heading"><div><h4>Your trip selections</h4><p>Selections are reflected in this trip view; they are not bookings.</p></div><span>{selectedExperiences.length} places added</span></div>
+    <div className="trip-selection-summary-grid">
+      <div><small>Flight</small>{selection.outbound ? <><strong>{selection.outbound.airlines.join(" · ")}</strong><span>{selection.outbound.departure} → {selection.outbound.arrival}</span>{selection.returnFlight ? <span>Return selected: {selection.returnFlight.departure} → {selection.returnFlight.arrival}</span> : <span>Choose a return flight</span>}{selection.outbound.price !== null && <b>{money(selection.outbound.price, selection.outbound.currency || currency)} displayed fare</b>}</> : <span>No outbound flight selected</span>}</div>
+      <div><small>Stay · {nights} nights</small>{selection.hotel ? <><strong>{selection.hotel.name}</strong><span>{selection.hotel.totalPrice !== null ? `${money(selection.hotel.totalPrice, selection.hotel.currency || currency)} provider-displayed stay total` : "Price not supplied"}</span></> : <span>No hotel or rental selected</span>}</div>
+      <div><small>Activities & dining</small><strong>{activities.length} activities · {restaurants.length} restaurants</strong><span>{selectedExperiences.map((item) => item.name).join(" · ") || "No places added yet"}</span></div>
+    </div>
+  </section>;
+}
+
+function activitiesForDay(day: ItineraryDay, selection: DestinationSelection, experiences: LiveExperience[]) {
+  return day.activities.flatMap((activity) => {
+    const selected = experiences.filter((experience) => {
+      const plan = selection.experiences[experience.id];
+      return plan?.date === day.date && plan.slot === activity.period;
+    });
+    if (!selected.length) return [activity];
+    if (activity.category === "Meal") {
+      return [{ ...activity, title: `${activity.period} at ${selected.map((item) => item.name).join(" + ")}`, description: selected.map((item) => item.address || item.category).join(" · "), category: "Selected restaurant" }];
+    }
+    return selected.map((item) => ({
+      period: activity.period,
+      title: item.name,
+      description: [item.category, item.address].filter(Boolean).join(" · ") || "Check current opening hours and booking details.",
+      category: item.kind === "restaurant" ? "Selected restaurant" : "Selected activity",
+    }));
+  });
 }
 
 function WeatherPanel({ location, startDate, endDate, configured }: { location: string; startDate: string; endDate: string; configured: boolean }) {
@@ -213,6 +305,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const [bookingStates, setBookingStates] = useState<Record<string, BookingState>>({});
   const [hotelBookingStates, setHotelBookingStates] = useState<Record<string, HotelBookingState>>({});
   const [checkedDestinations, setCheckedDestinations] = useState<string[]>([]);
+  const [selections, setSelections] = useState<Record<string, DestinationSelection>>({});
   const people = search.adults + search.childrenAges.length;
   const nights = Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000));
   const totalBudget = search.budgetMode === "per_person" ? search.budget * people : search.budget;
@@ -279,6 +372,36 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     }
   }
 
+  function updateSelection(destinationId: string, updater: (current: DestinationSelection) => DestinationSelection) {
+    setSelections((current) => ({
+      ...current,
+      [destinationId]: updater(current[destinationId] ?? emptySelection()),
+    }));
+  }
+
+  function selectOutbound(destinationId: string, flight: LiveFlight, destinationAirportCode: string) {
+    const alreadySelected = selections[destinationId]?.outbound?.id === flight.id;
+    updateSelection(destinationId, (current) => ({ ...current, outbound: alreadySelected ? null : flight, returnFlight: null }));
+    if (!alreadySelected) void loadReturnFlights(flight, destinationAirportCode);
+  }
+
+  function selectReturn(destinationId: string, flight: LiveFlight) {
+    updateSelection(destinationId, (current) => ({ ...current, returnFlight: current.returnFlight?.id === flight.id ? null : flight }));
+  }
+
+  function selectHotel(destinationId: string, hotel: LiveHotel) {
+    updateSelection(destinationId, (current) => ({ ...current, hotel: current.hotel?.id === hotel.id ? null : hotel }));
+  }
+
+  function updateExperienceSelection(destinationId: string, experience: LiveExperience, plan: SelectedExperience | null) {
+    updateSelection(destinationId, (current) => {
+      const next = { ...current.experiences };
+      if (plan) next[experience.id] = plan;
+      else delete next[experience.id];
+      return { ...current, experiences: next };
+    });
+  }
+
   const requestedLabels = search.components.map((component) => component === "flights" ? "Flights" : component === "stays" ? (search.stayTypes.includes("vacation_rentals") && search.stayTypes.includes("hotels") ? "Hotels and vacation rentals" : search.stayTypes.includes("vacation_rentals") ? "Vacation rentals" : "Hotels") : "Things to do");
 
   return <div className="planner-results-workspace">
@@ -298,6 +421,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       {recommendations.map((recommendation, index) => {
         const destination = recommendation.destination;
         const state = states[destination.id];
+        const selection = selections[destination.id] ?? emptySelection();
+        const resultExperiences = state?.result?.experiences ?? [];
+        const itineraryDates = recommendation.itinerary.map((day, dayIndex) => ({ date: day.date, label: `Day ${dayIndex + 1} · ${dateShort(day.date)}` }));
+        const activityExperiences = resultExperiences.filter((item) => item.kind === "activity");
+        const restaurantExperiences = resultExperiences.filter((item) => item.kind === "restaurant");
         const isExpanded = expanded === destination.id;
         const airportCode = search.destinationAirportCode || destination.airportCode;
         const destinationLabel = formatDestinationLabel(destination.city, destination.country);
@@ -332,22 +460,28 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               {state.result.warnings.map((warning) => <p className="provider-warning" key={warning}>{warning}</p>)}
 
               {search.components.includes("flights") && <section className="live-result-group"><h5><Plane size={16}/> Flights <span>{state.result.flights.length} outbound options</span></h5>
-                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{state.result.flights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} onLoadReturnFlights={(selected) => loadReturnFlights(selected, airportCode)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
+                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{state.result.flights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnId={selection.outbound?.id === flight.id ? selection.returnFlight?.id : undefined} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
               </section>}
 
               {search.components.includes("stays") && <section className="live-result-group"><h5><Hotel size={16}/> Places to stay <span>{state.result.hotels.length} properties</span></h5>
-                {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} nights={nights} bookingState={hotelBookingStates[hotel.id]} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
+                {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} nights={nights} bookingState={hotelBookingStates[hotel.id]} selected={selection.hotel?.id === hotel.id} onSelect={(selected) => selectHotel(destination.id, selected)} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
               </section>}
 
-              {search.components.includes("activities") && <section className="live-result-group"><h5><Activity size={16}/> Things to do <span>{state.result.experiences.length} places</span></h5>
-                {state.result.experiences.length ? state.result.experiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search}/>) : <div className="empty-category"><p>No local places matched this search. Try a more specific city or activity style.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
-              </section>}
+              {search.components.includes("activities") && <>
+                <section className="live-result-group"><h5><Activity size={16}/> Activities & attractions <span>{activityExperiences.length} options</span></h5>
+                  {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
+                </section>
+                <section className="live-result-group"><h5><Users size={16}/> Restaurants & dining <span>{restaurantExperiences.length} options</span></h5>
+                  {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
+                </section>
+              </>}
+              <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights}/>
               <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>
             </div>}
 
             {isExpanded && <><div className="itinerary-panel"><div className="itinerary-panel-heading"><div><h4>{nights}-night outline</h4></div><p>Suggested pacing. Activities and hours are not reservations.</p></div>
-              <div className="itinerary-days">{recommendation.itinerary.map((day, dayIndex) => <div className="itinerary-day" key={day.date}><div className="itinerary-day-date"><span>DAY {dayIndex + 1}</span><strong>{dateLabel(day.date)}</strong></div><div className="itinerary-activities">{day.activities.map((activity) => <div className="itinerary-activity" key={`${day.date}-${activity.period}-${activity.title}`}><span>{activity.period}</span><div><strong>{activity.title}</strong><p>{activity.description}</p></div><small>{activity.category}</small></div>)}<p className="itinerary-pace">{day.paceNote}</p></div></div>)}</div>
+              <div className="itinerary-days">{recommendation.itinerary.map((day, dayIndex) => <div className="itinerary-day" key={day.date}><div className="itinerary-day-date"><span>DAY {dayIndex + 1}</span><strong>{dateLabel(day.date)}</strong></div><div className="itinerary-activities">{activitiesForDay(day, selection, resultExperiences).map((activity, activityIndex) => <div className={`itinerary-activity ${activity.category === "Meal" || activity.category === "Selected restaurant" ? "is-meal" : ""}`} key={`${day.date}-${activity.period}-${activity.title}-${activityIndex}`}><span>{activity.period}</span><div><strong>{activity.title}</strong><p>{activity.description}</p></div><small>{activity.category}</small></div>)}<p className="itinerary-pace">{day.paceNote}</p></div></div>)}</div>
               <div className="itinerary-footnote">{destination.sourceNote}</div>
             </div></>}
           </div>

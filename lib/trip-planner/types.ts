@@ -42,7 +42,7 @@ export type TripSearchInput = {
 };
 
 export type ItineraryActivity = {
-  period: "Morning" | "Afternoon" | "Evening";
+  period: "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening";
   title: string;
   description: string;
   category: string;

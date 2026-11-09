@@ -1146,3 +1146,57 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 @media (prefers-reduced-motion: reduce) {
   .inspiration-option, .inspiration-option-image, .inspiration-feature-cta svg { transition: none; }
 }
+
+/* User-selected flights, stays, activities and meal planning. */
+.selection-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid #cbd9cf;
+  border-radius: 8px;
+  background: #f5f8f5;
+  color: #264d38;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: pointer;
+}
+.selection-button:hover { border-color: #739581; background: #edf4ee; }
+.selection-button.is-selected { border-color: #2e6849; background: #e8f2e9; color: #1e5637; }
+.live-offer-card.is-selected, .live-hotel-card.is-selected, .experience-card.is-selected { border-color: #6e9b7a; box-shadow: 0 0 0 1px rgba(65,125,81,.12); }
+.live-offer-price .selection-button { white-space: nowrap; }
+.return-flight-option.is-selected { margin-inline: -8px; padding-inline: 8px; border-radius: 8px; background: #eef5ef; }
+.return-flight-action .selection-button { white-space: nowrap; }
+.live-hotel-price .selection-button { margin-top: 5px; white-space: nowrap; }
+.experience-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.experience-schedule-field { display: flex; flex: 1 1 105px; min-width: 100px; flex-direction: column; gap: 4px; }
+.experience-schedule-field span { color: #607267; font-size: 10px; font-weight: 650; }
+.experience-schedule-field select { width: 100%; min-height: 34px; padding: 5px 7px; border: 1px solid #d8e2da; border-radius: 7px; background: #fff; color: #294536; font: inherit; font-size: 11px; }
+.experience-actions .selection-button { flex: 1 1 100%; }
+.trip-selection-summary { margin-top: 20px; padding: 17px; border: 1px solid #cfded1; border-radius: var(--radius-inner); background: #f1f6f1; }
+.trip-selection-summary-heading { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 12px; }
+.trip-selection-summary-heading h4 { margin: 0; color: #1c3428; font-size: 16px; }
+.trip-selection-summary-heading p { margin: 4px 0 0; color: #5c7063; font-size: 11px; }
+.trip-selection-summary-heading > span { color: #315941; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.trip-selection-summary-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.trip-selection-summary-grid > div { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 11px; border: 1px solid #dfe8df; border-radius: 9px; background: #fff; }
+.trip-selection-summary-grid small { color: #67786c; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .35px; }
+.trip-selection-summary-grid strong { color: #243c2e; font-size: 12px; }
+.trip-selection-summary-grid span { color: #5d7064; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.trip-selection-summary-grid b { color: #294d38; font-size: 11px; }
+.itinerary-activity.is-meal { padding: 8px 10px; border: 1px solid #e4eade; border-radius: 8px; background: #fff; }
+.itinerary-activity.is-meal > span { color: #9b6039; font-weight: 750; }
+.itinerary-activity.is-meal > small { color: #98603e; }
+@media (max-width: 760px) {
+  .trip-selection-summary-grid { grid-template-columns: 1fr; }
+  .trip-selection-summary-heading { flex-direction: column; }
+}
+@media (max-width: 620px) {
+  .live-offer-price .selection-button, .live-hotel-price .selection-button { white-space: normal; }
+  .experience-actions { grid-column: 1 / -1; }
+  .experience-schedule-field { flex-basis: 120px; }
+}

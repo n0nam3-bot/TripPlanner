@@ -71,10 +71,6 @@ function scoreDestination(destination: Destination, input: TripSearchInput, typi
   return { score: Math.max(0, Math.min(100, Math.round(score))), reasons };
 }
 
-function activityPeriod(index: number): "Morning" | "Afternoon" | "Evening" {
-  return (["Morning", "Afternoon", "Evening"] as const)[index] ?? "Morning";
-}
-
 function buildItinerary(destination: Destination, input: TripSearchInput): ItineraryDay[] {
   const nights = Math.max(1, daysBetween(input.departureDate, input.returnDate));
   const days = Math.max(2, Math.min(15, nights + 1));
@@ -83,23 +79,39 @@ function buildItinerary(destination: Destination, input: TripSearchInput): Itine
     const lastDay = index === days - 1;
     const template = destination.itinerary[index] ?? [
       { title: `Choose one local experience for day ${index + 1}`, description: "Use the live places list to pick an attraction or tour that is open on this date. Check ticket availability and travel time before adding it.", category: "Choose an experience" },
-      { title: "Keep time for the area around your stay", description: "Use the map to find restaurants, beaches, parks or neighbourhoods close to your accommodation.", category: "Explore nearby" },
+      { title: "Explore the area around your stay", description: "Keep time for nearby beaches, parks, shops or neighbourhoods, and allow for transport.", category: "Explore nearby" },
       { title: "Leave the evening flexible", description: "Choose dinner or entertainment near your base after confirming current hours and transport.", category: "Flexible" },
     ];
-    const activities = template.map((item, activityIndex) => ({ ...item, period: activityPeriod(activityIndex) }));
-    if (arrivalDay) {
-      activities[0] = { period: "Morning", title: "Arrival and check-in", description: "Confirm transfer, luggage and hotel check-in arrangements. The rest of the day is intentionally flexible.", category: "Arrival" };
-    }
-    if (lastDay) {
-      activities[2] = { period: "Evening", title: "Departure buffer", description: "Confirm checkout, airport transfer and airline check-in times. Do not rely on estimated travel times on departure day.", category: "Departure" };
-    }
+
+    const morning = arrivalDay
+      ? { title: "Arrival and check-in", description: "Confirm transfer, luggage and accommodation check-in arrangements. Keep the morning flexible around your arrival time.", category: "Arrival" }
+      : lastDay
+        ? { title: "Pack and prepare for departure", description: "Confirm checkout, luggage storage and airport transfer timing before leaving your accommodation.", category: "Departure" }
+        : template[0];
+    const afternoon = lastDay
+      ? { title: "Departure transfer and airport check-in", description: "Allow enough time to reach the airport, return a rental car if needed, and complete airline check-in.", category: "Departure" }
+      : template[1];
+    const evening = lastDay
+      ? { title: "Travel home", description: "Follow the confirmed flight schedule. Keep this period clear of sightseeing or other reservations.", category: "Departure" }
+      : template[2];
+
+    const activities = [
+      { ...morning, period: "Morning" as const },
+      { period: "Lunch" as const, title: "Plan lunch", description: "Choose a restaurant or casual dining option near the day's activities. Add a restaurant from the live results to place it here.", category: "Meal" },
+      { ...afternoon, period: "Afternoon" as const },
+      { period: "Dinner" as const, title: "Plan dinner", description: "Choose a restaurant near your accommodation or evening plans. Add a restaurant from the live results to place it here.", category: "Meal" },
+      { ...evening, period: "Evening" as const },
+    ];
+
     const d = new Date(`${input.departureDate}T12:00:00Z`);
     d.setUTCDate(d.getUTCDate() + index);
     return {
       date: d.toISOString().slice(0, 10),
       label: arrivalDay ? "Arrival day" : lastDay ? "Departure day" : DAY_NAMES[Math.min(index, DAY_NAMES.length - 1)],
       activities,
-      paceNote: arrivalDay || lastDay ? "Light schedule — allow for travel and check-in time." : "Suggested pacing only. Verify opening hours, tickets, transport and local conditions before booking.",
+      paceNote: arrivalDay || lastDay
+        ? "Light schedule — allow for airport transfers, check-in or checkout, and meal breaks."
+        : "Suggested pacing only. Leave time for lunch and dinner, and verify opening hours, tickets, transport and local conditions before booking.",
     };
   });
 }

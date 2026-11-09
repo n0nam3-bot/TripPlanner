@@ -49,6 +49,7 @@ export type LiveHotel = {
 
 export type LiveExperience = {
   id: string;
+  kind: "activity" | "restaurant";
   name: string;
   category: string;
   address: string;
@@ -479,21 +480,23 @@ function makeHotelParams(input: TripSearchInput, destinationName: string, airpor
 }
 
 function experienceQueryForStyle(style: TripSearchInput["style"]): string {
+  // Style is a ranking preference, not a hard filter. Keep the live result set
+  // broad so a beach trip can still include landmarks, tours, museums and parks.
   const terms: Record<TripSearchInput["style"], string> = {
-    any: "top attractions and things to do",
-    beach: "best beaches and water activities",
-    city: "top sights, museums and city attractions",
-    food: "food tours, markets and local experiences",
-    nature: "nature attractions, parks and outdoor activities",
-    romantic: "romantic experiences, scenic places and top attractions",
-    family: "family-friendly attractions and activities",
-    adventure: "adventure activities and outdoor experiences",
-    culture: "historic attractions, museums and cultural experiences",
+    any: "top attractions, guided tours, museums, landmarks, outdoor activities and local experiences",
+    beach: "island attractions, beaches, guided tours, museums, landmarks and outdoor activities",
+    city: "top city attractions, landmarks, museums, markets, parks and guided tours",
+    food: "food markets, cooking tours, cultural attractions, museums and local experiences",
+    nature: "nature attractions, national parks, scenic landmarks, outdoor tours and local experiences",
+    romantic: "scenic attractions, guided tours, gardens, landmarks and local experiences",
+    family: "family attractions, interactive museums, parks, beaches and guided tours",
+    adventure: "outdoor adventure tours, nature attractions, scenic landmarks and water activities",
+    culture: "historic attractions, museums, cultural landmarks, markets and guided tours",
   };
   return terms[style];
 }
 
-function normalizeExperiences(data: JsonObject, destinationName: string): LiveExperience[] {
+function normalizeExperiences(data: JsonObject, destinationName: string, kind: "activity" | "restaurant"): LiveExperience[] {
   const asEntries = (value: unknown): unknown[] => Array.isArray(value) ? value : value && typeof value === "object" ? [value] : [];
   const entries = [
     ...asEntries(data.local_results),
@@ -511,7 +514,8 @@ function normalizeExperiences(data: JsonObject, destinationName: string): LiveEx
       ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}&query_place_id=${encodeURIComponent(placeId)}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name} ${address || destinationName}`)}`;
     return {
-      id: placeId || str(place.data_id, `${name}-${index}`).replace(/[^a-z0-9-]/gi, "-"),
+      id: `${kind}-${placeId || str(place.data_id, `${name}-${index}`).replace(/[^a-z0-9-]/gi, "-")}`,
+      kind,
       name,
       category: str(place.type, arr(place.types).map((v) => String(v)).slice(0, 2).join(" · ") || "Place to visit"),
       address,
@@ -529,30 +533,26 @@ function normalizeExperiences(data: JsonObject, destinationName: string): LiveEx
   return [...new Map(normalized.map((item) => [item.id, item])).values()].slice(0, 18);
 }
 
-async function searchExperiencesWithFallback(input: TripSearchInput, destinationName: string, clientUsageKey: string): Promise<ProviderResponse> {
-  const terms = experienceQueryForStyle(input.style);
-  // Google Maps performs better with a concise place/category query than a
-  // long natural-language sentence. Keep the selected travel style as the
-  // category, but ask Google Local broadly if the first pass is empty.
-  const mapsQuery = `${terms} ${destinationName}`;
-  const mapsParams: Record<string, string> = { engine: "google_maps", type: "search", q: mapsQuery, hl: "en", gl: "us" };
+async function searchPlacesWithFallback(query: string, destinationName: string, kind: "activity" | "restaurant", clientUsageKey: string): Promise<ProviderResponse> {
+  const mapsParams: Record<string, string> = { engine: "google_maps", type: "search", q: `${query} ${destinationName}`, hl: "en", gl: "us" };
   let mapsError: unknown;
   try {
     const mapsResult = await querySerpApi(mapsParams, 21600, clientUsageKey);
-    if (normalizeExperiences(mapsResult.data, destinationName).length) return mapsResult;
+    if (normalizeExperiences(mapsResult.data, destinationName, kind).length) return mapsResult;
   } catch (error) {
     mapsError = error;
     const code = error instanceof Error ? error.message : "";
     if (["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_QUOTA_CHECK_FAILED", "SERPAPI_CLIENT_RATE_LIMITED", "DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED", "SERPAPI_NOT_CONFIGURED"].includes(code)) throw error;
   }
 
-  // Google Local is a second, separately cached result shape. Use it only when
-  // Maps Search has no usable places, not for every request. For country-wide
-  // searches, include the country in q instead of asking Local to infer a city.
   try {
-    const isCountryWide = !destinationName.includes(",") && /^(dominican republic|mexico|portugal|puerto rico|jamaica|united states|canada|france|italy|spain|japan)$/i.test(destinationName.trim());
-    const broadTerms = input.style === "beach" ? "top beaches and coastal attractions" : input.style === "food" ? "popular food markets and food tours" : input.style === "nature" ? "parks and nature attractions" : input.style === "adventure" ? "outdoor adventure attractions" : input.style === "family" ? "family attractions" : input.style === "culture" ? "museums and historic attractions" : "top tourist attractions";
-    const localParams: Record<string, string> = { engine: "google_local", q: isCountryWide ? `${broadTerms} in ${destinationName}` : broadTerms, hl: "en", gl: "us" };
+    const isCountryWide = !destinationName.includes(",") && /^(aruba|dominican republic|mexico|portugal|puerto rico|jamaica|united states|canada|france|italy|spain|japan)$/i.test(destinationName.trim());
+    const localParams: Record<string, string> = {
+      engine: "google_local",
+      q: isCountryWide ? `${query} in ${destinationName}` : query,
+      hl: "en",
+      gl: "us",
+    };
     if (!isCountryWide) localParams.location = destinationName;
     return await querySerpApi(localParams, 21600, clientUsageKey);
   } catch (fallbackError) {
@@ -571,7 +571,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   if (components.includes("flights") && !originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (components.includes("flights") && (!destinationCode || !/^[A-Z]{3}$/.test(destinationCode))) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
 
-  const tasks: Array<{ key: "flights" | "hotels" | "vacation_rentals" | "experiences"; promise: Promise<ProviderResponse> }> = [];
+  const tasks: Array<{ key: "flights" | "hotels" | "vacation_rentals" | "experiences" | "restaurants"; promise: Promise<ProviderResponse> }> = [];
   if (components.includes("flights")) tasks.push({ key: "flights", promise: querySerpApi(makeFlightParams(input, originCode!, destinationCode!), 3600, clientUsageKey) });
   if (components.includes("stays")) {
     for (const stayType of input.stayTypes) {
@@ -579,7 +579,8 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     }
   }
   if (components.includes("activities")) {
-    tasks.push({ key: "experiences", promise: searchExperiencesWithFallback(input, normalizedDestinationName, clientUsageKey) });
+    tasks.push({ key: "experiences", promise: searchPlacesWithFallback(experienceQueryForStyle(input.style), normalizedDestinationName, "activity", clientUsageKey) });
+    tasks.push({ key: "restaurants", promise: searchPlacesWithFallback("popular restaurants, highly rated local dining, casual restaurants and local food", normalizedDestinationName, "restaurant", clientUsageKey) });
   }
 
   const outcomes = await Promise.allSettled(tasks.map((task) => task.promise));
@@ -595,6 +596,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   let flights: LiveFlight[] = [];
   let hotels: LiveHotel[] = [];
   let experiences: LiveExperience[] = [];
+  let restaurants: LiveExperience[] = [];
   const fetchedAt: string[] = [];
   const cacheFlags: boolean[] = [];
   let providerSearchLinks: { flights?: string } = {};
@@ -602,7 +604,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   outcomes.forEach((outcome, index) => {
     const key = tasks[index].key;
     if (outcome.status === "rejected") {
-      warnings.push(providerWarning(outcome.reason, key === "flights" ? "Flight search" : key === "experiences" ? "Things-to-do search" : key === "vacation_rentals" ? "Vacation-rental search" : "Hotel search"));
+      warnings.push(providerWarning(outcome.reason, key === "flights" ? "Flight search" : key === "experiences" ? "Things-to-do search" : key === "restaurants" ? "Restaurant search" : key === "vacation_rentals" ? "Vacation-rental search" : "Hotel search"));
       return;
     }
     fetchedAt.push(outcome.value.fetchedAt);
@@ -625,15 +627,18 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
         warnings.push(key === "vacation_rentals" ? "No vacation-rental properties were returned for those dates, guests and destination." : "No hotel properties were returned for those dates, guests and destination.");
       }
     } else if (key === "experiences") {
-      experiences = normalizeExperiences(outcome.value.data, normalizedDestinationName);
-      if (!experiences.length) warnings.push("No local attractions or experiences were returned for this destination. Try a specific category or nearby town.");
+      experiences = normalizeExperiences(outcome.value.data, normalizedDestinationName, "activity");
+      if (!experiences.length) warnings.push("No local attractions or activities were returned for this destination. Try a nearby town or search directly on a tour provider.");
+    } else if (key === "restaurants") {
+      restaurants = normalizeExperiences(outcome.value.data, normalizedDestinationName, "restaurant");
+      if (!restaurants.length) warnings.push("No restaurant results were returned for this destination. Try searching Maps directly for current dining options.");
     }
   });
 
   const uniqueHotels = [...new Map(hotels.map((item) => [item.id, item])).values()].slice(0, 18);
   const hasFlights = !components.includes("flights") || flights.length > 0;
   const hasStays = !components.includes("stays") || uniqueHotels.length > 0;
-  const hasActivities = !components.includes("activities") || experiences.length > 0;
+  const hasActivities = !components.includes("activities") || experiences.length > 0 || restaurants.length > 0;
   const fulfilledRequestedCategories = [hasFlights, hasStays, hasActivities].filter(Boolean).length;
   const status = fulfilledRequestedCategories === 0 ? "empty" : fulfilledRequestedCategories === components.length ? "live" : "partial";
   if (input.rooms > 1 && components.includes("stays")) warnings.push("The provider returned property-level prices but does not expose a confirmed multi-room allocation in this result. Open each property and reconfirm the exact room count and guest distribution before relying on the total.");
@@ -647,7 +652,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     requested: components,
     flights,
     hotels: uniqueHotels,
-    experiences,
+    experiences: [...new Map([...experiences, ...restaurants].map((item) => [item.id, item])).values()],
     providerSearchLinks,
     warnings,
   };
@@ -764,16 +769,17 @@ export async function getFlightBookingOptions(
   if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
 
-  // The provider documentation says to retain the original search context for
-  // seller lookup. Only the opaque booking token is replaced; never construct it.
+  // Retain the original round-trip search context and replace the token with
+  // the selected booking token. SerpApi currently validates outbound_date even
+  // for some booking-token requests, so keep both original dates in the query.
   const original = makeFlightParams(input, originCode, destinationAirportCode);
-  // The selected token pins the itinerary. Keep the route, travelers, cabin and
-  // localization, but omit dates and advanced filters that the provider says do
-  // not affect booking-token lookups (and would only create duplicate cache keys).
   const params = {
     engine: "google_flights",
+    type: original.type,
     departure_id: original.departure_id,
     arrival_id: original.arrival_id,
+    outbound_date: original.outbound_date,
+    return_date: original.return_date,
     adults: original.adults,
     children: original.children,
     travel_class: original.travel_class,
