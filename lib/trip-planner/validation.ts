@@ -1,9 +1,11 @@
-import type { CabinClass, StopPreference, TripSearchInput, TripStyle } from "./types";
+import type { CabinClass, StopPreference, StayType, TripComponent, TripSearchInput, TripStyle } from "./types";
 
 const styles = new Set<TripStyle>(["any", "beach", "city", "food", "nature", "romantic", "family", "adventure", "culture"]);
 const cabins = new Set<CabinClass>(["economy", "premium_economy", "business", "first"]);
 const stops = new Set<StopPreference>(["any", "nonstop", "one_stop", "two_stops"]);
 const currencies = new Set(["USD", "CAD", "EUR", "GBP"]);
+const tripComponents = new Set<TripComponent>(["flights", "stays", "activities"]);
+const stayTypes = new Set<StayType>(["hotels", "vacation_rentals"]);
 
 function read(params: URLSearchParams, key: string, fallback: string): string {
   return params.get(key)?.trim() || fallback;
@@ -17,8 +19,14 @@ function validDate(value: string): boolean {
 
 export function parseTripSearch(params: URLSearchParams): { input?: TripSearchInput; errors: string[] } {
   const errors: string[] = [];
-  const origin = read(params, "origin", "New York");
+  const origin = read(params, "origin", "New York (NYC)");
+  const originAirportCode = read(params, "originAirportCode", "NYC").toUpperCase();
   const destination = read(params, "destination", "Anywhere");
+  const destinationAirportCode = read(params, "destinationAirportCode", "").toUpperCase();
+  const rawComponents = read(params, "components", "flights,stays,activities").split(",").filter(Boolean) as TripComponent[];
+  const components = [...new Set(rawComponents.filter((item) => tripComponents.has(item)))];
+  const rawStayTypes = read(params, "stayTypes", "hotels,vacation_rentals").split(",").filter(Boolean) as StayType[];
+  const selectedStayTypes = [...new Set(rawStayTypes.filter((item) => stayTypes.has(item)))];
   const departureDate = read(params, "depart", "");
   const returnDate = read(params, "return", "");
   const adults = Number(read(params, "adults", "2"));
@@ -34,8 +42,12 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   const stopsValue = read(params, "stops", "any") as StopPreference;
   const ratingValue = Number(read(params, "hotelRating", "0"));
 
-  if (!origin || origin.length > 90) errors.push("Enter a departure city or three-letter airport code.");
-  if (!destination || destination.length > 90) errors.push("Enter a destination or choose Anywhere.");
+  if (components.length === 0) errors.push("Choose at least one: flights, stays or things to do.");
+  if (components.includes("flights") && (!origin || origin.length > 90)) errors.push("Enter a departure city or airport.");
+  if (!destination || destination.length > 120) errors.push("Enter a destination or choose Anywhere.");
+  if (components.includes("flights") && originAirportCode && !/^[A-Z]{3}$/.test(originAirportCode)) errors.push("Choose a valid departure airport.");
+  if (destinationAirportCode && !/^[A-Z]{3}$/.test(destinationAirportCode)) errors.push("Choose a valid destination airport.");
+  if (components.includes("stays") && selectedStayTypes.length === 0) errors.push("Choose hotels, vacation rentals, or both.");
   if (!validDate(departureDate) || !validDate(returnDate)) errors.push("Enter valid departure and return dates.");
   if (validDate(departureDate) && validDate(returnDate) && returnDate <= departureDate) errors.push("Return date must be after departure date.");
   if (validDate(departureDate) && new Date(`${departureDate}T00:00:00Z`).getTime() < Date.now() - 86400000) errors.push("Departure date must be today or later.");
@@ -54,7 +66,7 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   return {
     errors,
     input: {
-      origin, destination, departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
+      origin, originAirportCode, destination, destinationAirportCode, components, stayTypes: selectedStayTypes, departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
       currency, style: styleValue, flexible: flexibleDays > 0, flexibleDays, cabinClass, stops: stopsValue,
       minimumHotelRating: ratingValue as 0 | 3 | 4 | 5, freeCancellation: read(params, "freeCancellation", "false") === "true",
     },
@@ -66,13 +78,13 @@ export function validateTripSearchInput(value: unknown): { input?: TripSearchInp
   const record = value as Record<string, unknown>;
   const params = new URLSearchParams();
   const mapping: Record<string, string> = {
-    origin: "origin", destination: "destination", departureDate: "depart", returnDate: "return", adults: "adults",
+    origin: "origin", originAirportCode: "originAirportCode", destination: "destination", destinationAirportCode: "destinationAirportCode", components: "components", stayTypes: "stayTypes", departureDate: "depart", returnDate: "return", adults: "adults",
     rooms: "rooms", budget: "budget", budgetMode: "budgetMode", currency: "currency", style: "style", flexibleDays: "flexibleDays",
     cabinClass: "cabin", stops: "stops", minimumHotelRating: "hotelRating", freeCancellation: "freeCancellation",
   };
   for (const [source, target] of Object.entries(mapping)) {
     const item = record[source];
-    if (item !== undefined && item !== null) params.set(target, String(item));
+    if (item !== undefined && item !== null) params.set(target, Array.isArray(item) ? item.map(String).join(",") : String(item));
   }
   if (Array.isArray(record.childrenAges)) params.set("childrenAges", record.childrenAges.map(String).join(","));
   return parseTripSearch(params);
