@@ -41,6 +41,12 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   const cabinClass = read(params, "cabin", "economy") as CabinClass;
   const stopsValue = read(params, "stops", "any") as StopPreference;
   const ratingValue = Number(read(params, "hotelRating", "0"));
+  const temperatureMinRaw = params.get("temperatureMin")?.trim() ?? "";
+  const temperatureMaxRaw = params.get("temperatureMax")?.trim() ?? "";
+  const temperatureMin = temperatureMinRaw === "" ? null : Number(temperatureMinRaw);
+  const temperatureMax = temperatureMaxRaw === "" ? null : Number(temperatureMaxRaw);
+  const temperatureUnitValue = read(params, "temperatureUnit", "F").toUpperCase();
+  const temperatureUnit = temperatureUnitValue === "C" ? "C" : "F";
 
   if (components.length === 0) errors.push("Choose at least one: flights, stays or things to do.");
   if (components.includes("flights") && (!origin || origin.length > 90)) errors.push("Enter a departure city or airport.");
@@ -61,6 +67,12 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   if (!cabins.has(cabinClass)) errors.push("Choose a valid cabin class.");
   if (!stops.has(stopsValue)) errors.push("Choose a valid stop preference.");
   if (![0, 3, 4, 5].includes(ratingValue)) errors.push("Choose a valid minimum hotel rating.");
+  if (temperatureUnitValue !== "F" && temperatureUnitValue !== "C") errors.push("Choose Fahrenheit or Celsius for the temperature preference.");
+  const temperatureMinBound = temperatureUnit === "F" ? -40 : -40;
+  const temperatureMaxBound = temperatureUnit === "F" ? 130 : 55;
+  if (temperatureMin !== null && (!Number.isFinite(temperatureMin) || temperatureMin < temperatureMinBound || temperatureMin > temperatureMaxBound)) errors.push(`Minimum temperature must be between ${temperatureMinBound} and ${temperatureMaxBound}°${temperatureUnit}.`);
+  if (temperatureMax !== null && (!Number.isFinite(temperatureMax) || temperatureMax < temperatureMinBound || temperatureMax > temperatureMaxBound)) errors.push(`Maximum temperature must be between ${temperatureMinBound} and ${temperatureMaxBound}°${temperatureUnit}.`);
+  if (temperatureMin !== null && temperatureMax !== null && temperatureMin >= temperatureMax) errors.push("Maximum temperature must be higher than minimum temperature.");
 
   if (errors.length) return { errors };
   return {
@@ -69,6 +81,7 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
       origin, originAirportCode, destination, destinationAirportCode, components, stayTypes: selectedStayTypes, departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
       currency, style: styleValue, flexible: flexibleDays > 0, flexibleDays, cabinClass, stops: stopsValue,
       minimumHotelRating: ratingValue as 0 | 3 | 4 | 5, freeCancellation: read(params, "freeCancellation", "false") === "true",
+      temperatureMin, temperatureMax, temperatureUnit,
     },
   };
 }
@@ -81,6 +94,7 @@ export function validateTripSearchInput(value: unknown): { input?: TripSearchInp
     origin: "origin", originAirportCode: "originAirportCode", destination: "destination", destinationAirportCode: "destinationAirportCode", components: "components", stayTypes: "stayTypes", departureDate: "depart", returnDate: "return", adults: "adults",
     rooms: "rooms", budget: "budget", budgetMode: "budgetMode", currency: "currency", style: "style", flexibleDays: "flexibleDays",
     cabinClass: "cabin", stops: "stops", minimumHotelRating: "hotelRating", freeCancellation: "freeCancellation",
+    temperatureMin: "temperatureMin", temperatureMax: "temperatureMax", temperatureUnit: "temperatureUnit",
   };
   for (const [source, target] of Object.entries(mapping)) {
     const item = record[source];
