@@ -215,6 +215,23 @@ export function normalizeDestinationQuery(value: string): string {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+/**
+ * Builds a readable destination label for provider queries and result cards.
+ * Avoids repeating the country when the supplied city and country are the same
+ * (for example, when a destination is entered as a country-level search).
+ */
+export function formatDestinationLabel(city: string, country: string): string {
+  const cleanCity = city.trim();
+  const cleanCountry = country.trim();
+
+  if (!cleanCity) return cleanCountry;
+  if (!cleanCountry || normalizeDestinationQuery(cleanCity) === normalizeDestinationQuery(cleanCountry)) {
+    return cleanCity;
+  }
+
+  return `${cleanCity}, ${cleanCountry}`;
+}
+
 export function findDestination(value: string): Destination | undefined {
   const query = normalizeDestinationQuery(value);
   if (!query || ["anywhere", "surprise me", "no preference", "open to ideas"].includes(query)) return undefined;
