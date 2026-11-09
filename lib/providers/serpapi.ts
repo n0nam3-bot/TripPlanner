@@ -375,12 +375,16 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     warnings.push(providerWarning(flightOutcome.reason, "Flight search"));
   }
 
-  if (hotelOutcome.status === "fulfilled" && hotelOutcome.value) {
-    hotels = arr(hotelOutcome.value.data.properties).map((item, index) => normalizeHotel(item, index, input.currency)).filter((item): item is LiveHotel => Boolean(item)).slice(0, 8);
-    if (!hotels.length) warnings.push("The hotel provider returned no properties for these dates and traveler details.");
-  } else if (hotelOutcome.status === "fulfilled" && !hotelOutcome.value) {
-    // Multi-room offers are intentionally withheld rather than misrepresented.
-  } else {
+  if (hotelOutcome.status === "fulfilled") {
+    if (hotelOutcome.value) {
+      hotels = arr(hotelOutcome.value.data.properties).map((item, index) => normalizeHotel(item, index, input.currency)).filter((item): item is LiveHotel => Boolean(item)).slice(0, 8);
+      if (!hotels.length) warnings.push("The hotel provider returned no properties for these dates and traveler details.");
+    } else {
+      // Multi-room offers are intentionally withheld rather than misrepresented.
+    }
+  } else if (hotelOutcome.status === "rejected") {
+    // Keep the rejected-result branch explicit so TypeScript safely narrows
+    // PromiseSettledResult before reading its `reason` property.
     warnings.push(providerWarning(hotelOutcome.reason, "Hotel search"));
   }
 
