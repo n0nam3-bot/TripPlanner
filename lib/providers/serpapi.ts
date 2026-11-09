@@ -882,6 +882,8 @@ export type FlightBookingOption = {
   url?: string;
   /** Exact Google booking_request payload. It must be POSTed without re-encoding. */
   postData?: string;
+  /** Exact route/date search to use if Google cannot resolve its opaque booking POST. */
+  fallbackUrl?: string;
   type: string;
   baggage: string[];
   fareTerms: string[];
@@ -894,6 +896,20 @@ function safeGoogleBookingUrl(value: unknown): string | undefined {
     const host = url.hostname.toLowerCase();
     return url.protocol === "https:" && (host === "www.google.com" || host === "google.com") && url.pathname === "/travel/clk/f" ? url.toString() : undefined;
   } catch { return undefined; }
+}
+
+function makeGoogleFlightsFallbackUrl(input: TripSearchInput, originCode: string, destinationAirportCode: string, seller = ""): string {
+  const query = [
+    `round trip flights from ${originCode} to ${destinationAirportCode}`,
+    `departing ${input.departureDate}`,
+    `returning ${input.returnDate}`,
+    `${input.adults} adults${input.childrenAges.length ? ` and ${input.childrenAges.length} children` : ""}`,
+  ];
+  if (seller && !/^booking provider$/i.test(seller)) query.push(`with ${seller}`);
+  const url = new URL("https://www.google.com/travel/flights");
+  url.searchParams.set("q", query.join(" "));
+  url.searchParams.set("curr", input.currency);
+  return url.toString();
 }
 
 export async function getFlightBookingOptions(
@@ -932,22 +948,32 @@ export async function getFlightBookingOptions(
   return arr(response.data.booking_options).map((item) => {
     const option = obj(item);
     const together = obj(option.together);
+    const departing = obj(option.departing);
+    const returning = obj(option.returning);
+    // A single Continue action is valid only for a combined booking request.
+    // Separate-ticket leg requests are not presented as one complete booking.
     const bookingRequest = obj(together.booking_request ?? option.booking_request);
-    const rawDirectUrl = safeHttpUrl(option.link);
+    const rawDirectUrl = safeHttpUrl(together.link) ?? safeHttpUrl(option.link);
     const directUrl = rawDirectUrl && !/https?:\/\/(?:www\.)?google\.com\/travel\/clk\/f(?:[/?#]|$)/i.test(rawDirectUrl)
       ? rawDirectUrl
       : undefined;
     const googleUrl = safeGoogleBookingUrl(bookingRequest.url) ?? safeGoogleBookingUrl(option.link);
     const rawPostData = str(bookingRequest.post_data) || str(option.post_data) || str(together.post_data);
     const postData = rawPostData && rawPostData.length <= 30000 ? rawPostData : undefined;
-    const postUrl = googleUrl && postData ? googleUrl : undefined;
+    const postUrl = googleUrl && postData && option.separate_tickets !== true ? googleUrl : undefined;
+    const legOnlyBooking = !bookingRequest.url && (Object.keys(departing).length > 0 || Object.keys(returning).length > 0);
+    const seller = str(together.book_with, str(option.book_with, "Booking provider"));
+    const fallbackUrl = makeGoogleFlightsFallbackUrl(input, originCode, destinationAirportCode, seller);
     return {
-      seller: str(together.book_with, str(option.book_with, "Booking provider")),
+      seller,
       price: num(together.price) ?? num(option.price),
       currency: input.currency,
-      url: directUrl ?? postUrl,
-      postData: directUrl ? undefined : postData,
-      type: str(together.option_title, str(option.type, "Online booking")),
+      // Never expose Google's /travel/clk/f endpoint as a normal GET link.
+      // If a POST cannot be used, send the traveler to an exact route/date search.
+      url: directUrl ?? postUrl ?? fallbackUrl,
+      postData: directUrl || !postUrl ? undefined : postData,
+      fallbackUrl,
+      type: `${str(together.option_title, str(option.type, "Online booking"))}${option.separate_tickets === true || legOnlyBooking ? " · separate tickets" : ""}`,
       baggage: arr(together.baggage_prices).filter((entry): entry is string => typeof entry === "string").slice(0, 5),
       fareTerms: arr(together.extensions).filter((entry): entry is string => typeof entry === "string").slice(0, 6),
     };

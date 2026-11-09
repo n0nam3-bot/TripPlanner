@@ -3,22 +3,53 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function validatedGoogleBookingUrl(value: FormDataEntryValue | null): URL | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && ["www.google.com", "google.com"].includes(url.hostname.toLowerCase()) && url.pathname === "/travel/clk/f"
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function validatedGoogleFlightsFallback(value: FormDataEntryValue | null): URL | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && ["www.google.com", "google.com"].includes(url.hostname.toLowerCase()) && url.pathname === "/travel/flights"
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function redirectNoStore(url: URL) {
+  const response = NextResponse.redirect(url, 303);
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  return response;
+}
+
 /**
- * Relays Google's opaque booking_request POST without decoding or re-encoding
- * the form body. Google returns a redirect to the airline/booking seller.
+ * Resolves Google's opaque booking POST. Google may redirect through more than
+ * one hop; fetch follows the chain and exposes the final URL as response.url.
+ * If Google does not produce a seller destination, return to an exact search
+ * rather than showing a dead-end error page.
  */
 export async function POST(request: Request) {
+  let fallbackUrl: URL | null = null;
   try {
     const form = await request.formData();
-    const rawUrl = form.get("url");
+    const bookingUrl = validatedGoogleBookingUrl(form.get("url"));
+    fallbackUrl = validatedGoogleFlightsFallback(form.get("fallbackUrl"));
     const rawPostData = form.get("postData");
-    if (typeof rawUrl !== "string" || typeof rawPostData !== "string" || !rawPostData || rawPostData.length > 30000) {
-      return new NextResponse("The booking request is incomplete. Return to Tripfinder and choose another seller option.", { status: 400 });
-    }
-
-    const bookingUrl = new URL(rawUrl);
-    if (bookingUrl.protocol !== "https:" || !["www.google.com", "google.com"].includes(bookingUrl.hostname) || bookingUrl.pathname !== "/travel/clk/f") {
-      return new NextResponse("The booking destination was not recognized. Return to Tripfinder and choose another seller option.", { status: 400 });
+    if (!bookingUrl || typeof rawPostData !== "string" || !rawPostData || rawPostData.length > 30000) {
+      return fallbackUrl
+        ? redirectNoStore(fallbackUrl)
+        : new NextResponse("The booking request is incomplete. Return to Tripfinder and choose another seller option.", { status: 400 });
     }
 
     const upstream = await fetch(bookingUrl.toString(), {
@@ -26,24 +57,34 @@ export async function POST(request: Request) {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
         Accept: "text/html,application/xhtml+xml",
+        "User-Agent": request.headers.get("user-agent") || "Mozilla/5.0 (compatible; Tripfinder/1.0)",
       },
       body: rawPostData,
-      redirect: "manual",
+      // Follow Google's complete redirect chain. The response body itself is
+      // not rendered; only the final HTTPS destination is handed to the user.
+      redirect: "follow",
       cache: "no-store",
       signal: AbortSignal.timeout(15000),
     });
 
-    const location = upstream.headers.get("location");
-    if (location) {
-      const destination = new URL(location, bookingUrl);
-      if (destination.protocol !== "https:") {
-        return new NextResponse("The booking provider returned an insecure destination. No link was opened.", { status: 502 });
-      }
-      return NextResponse.redirect(destination, 303);
+    const finalUrl = new URL(upstream.url || bookingUrl.toString());
+    const isGoogleHost = ["www.google.com", "google.com"].includes(finalUrl.hostname.toLowerCase());
+    if (finalUrl.protocol === "https:" && !isGoogleHost) {
+      return redirectNoStore(finalUrl);
     }
 
-    return new NextResponse("Google did not return a booking destination for this fare. Return to Tripfinder and use the airline's direct website or Google Flights search.", { status: 502, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    return fallbackUrl
+      ? redirectNoStore(fallbackUrl)
+      : new NextResponse("Google did not return a seller destination. Return to Tripfinder and open the exact flight search.", {
+        status: 502,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
   } catch {
-    return new NextResponse("Unable to resolve this booking link right now. Return to Tripfinder and try another seller.", { status: 502, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    return fallbackUrl
+      ? redirectNoStore(fallbackUrl)
+      : new NextResponse("Unable to resolve this booking link right now. Return to Tripfinder and use the exact Google Flights search.", {
+        status: 502,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
   }
 }

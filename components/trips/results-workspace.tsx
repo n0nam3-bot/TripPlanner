@@ -72,6 +72,7 @@ function BookingContinue({ option }: { option: FlightBookingOption }) {
     return <form action="/api/travel/flight-booking-redirect" method="post" target="_blank">
       <input type="hidden" name="url" value={option.url}/>
       <input type="hidden" name="postData" value={option.postData}/>
+      {option.fallbackUrl && <input type="hidden" name="fallbackUrl" value={option.fallbackUrl}/>}
       <button className="booking-submit-button" type="submit">Continue <ArrowUpRight size={12}/></button>
     </form>;
   }
