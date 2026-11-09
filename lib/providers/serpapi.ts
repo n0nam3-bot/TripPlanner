@@ -1,6 +1,6 @@
 import { getProviderCache, providerCacheKey, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
-import type { TripSearchInput } from "@/lib/trip-planner/types";
+import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
 
 const ENDPOINT = "https://serpapi.com/search.json";
 type JsonObject = Record<string, unknown>;
@@ -27,6 +27,11 @@ export type LiveHotel = {
   id: string;
   name: string;
   source: string;
+  propertyType: string;
+  propertyToken?: string;
+  latitude: number | null;
+  longitude: number | null;
+  nearbyPlaces: Array<{ name: string; category: string; transportations: Array<{ type: string; duration: string }> }>;
   rating: number | null;
   reviews: number | null;
   nightlyPrice: number | null;
@@ -37,16 +42,38 @@ export type LiveHotel = {
   freeCancellation: boolean;
   image?: string;
   bookingUrl?: string;
+  bookingUrlLabel: string;
+  providerOffers: Array<{ seller: string; price: number | null; priceBasis: "stay" | "night" | "unknown"; currency: string; url?: string }>;
 };
+
+export type LiveExperience = {
+  id: string;
+  name: string;
+  category: string;
+  address: string;
+  rating: number | null;
+  reviews: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  thumbnail?: string;
+  openState?: string;
+  price?: string;
+  website?: string;
+  mapsUrl: string;
+};
+
+export type HotelBookingOption = { seller: string; price: number | null; currency: string; url?: string; terms: string[] };
 
 export type LiveTravelSearchResult = {
   status: "live" | "partial" | "empty";
-  provider: "SerpApi / Google Travel";
+  provider: "SerpApi / Google Travel and Maps";
   checkedAt: string;
   dataAsOf: string;
   servedFromCache: boolean;
+  requested: TripComponent[];
   flights: LiveFlight[];
   hotels: LiveHotel[];
+  experiences: LiveExperience[];
   warnings: string[];
 };
 
@@ -261,7 +288,7 @@ function normalizeFlight(item: unknown, index: number, currency: string): LiveFl
   };
 }
 
-function normalizeHotel(item: unknown, index: number, currency: string): LiveHotel | null {
+function normalizeHotel(item: unknown, index: number, currency: string, destinationName: string, checkIn: string, checkOut: string): LiveHotel | null {
   const hotel = obj(item);
   const name = str(hotel.name);
   if (!name) return null;
@@ -269,10 +296,46 @@ function normalizeHotel(item: unknown, index: number, currency: string): LiveHot
   const total = obj(hotel.total_rate);
   const imageList = arr(hotel.images);
   const firstImage = obj(imageList[0]);
+  const coordinates = obj(hotel.gps_coordinates);
+  const nearbyPlaces = arr(hotel.nearby_places).map((entry) => {
+    const place = obj(entry);
+    return {
+      name: str(place.name, "Nearby place"),
+      category: str(place.category, str(place.type, "Place")),
+      transportations: arr(place.transportations).map((transport) => { const item = obj(transport); return { type: str(item.type, "Route"), duration: str(item.duration, "") }; }).filter((item) => item.duration),
+    };
+  }).filter((place) => place.name !== "Nearby place").slice(0, 8);
+  const hotelSearchUrl = new URL("https://www.google.com/travel/search");
+  hotelSearchUrl.searchParams.set("q", `${name} ${destinationName}`);
+  hotelSearchUrl.searchParams.set("checkin", checkIn);
+  hotelSearchUrl.searchParams.set("checkout", checkOut);
+  const providerOffers = arr(hotel.prices).map((entry) => {
+    const offer = obj(entry);
+    const offerNightly = obj(offer.rate_per_night);
+    const offerTotal = obj(offer.total_rate);
+    const stayPrice = num(offerTotal.extracted_after_taxes_fees) ?? num(offerTotal.extracted_lowest);
+    const nightPrice = num(offerNightly.extracted_after_taxes_fees) ?? num(offerNightly.extracted_lowest) ?? num(offer.extracted_price);
+    return {
+      seller: str(offer.source, str(offer.name, "Booking provider")),
+      price: stayPrice ?? nightPrice,
+      priceBasis: stayPrice !== null ? "stay" as const : nightPrice !== null ? "night" as const : "unknown" as const,
+      currency: str(offer.currency, currency),
+      url: safeHttpUrl(offer.link) ?? safeHttpUrl(offer.url),
+    };
+  }).filter((offer) => offer.url || offer.price !== null).slice(0, 8);
+  const officialWebsite = safeHttpUrl(hotel.website);
+  const propertyDetailsUrl = safeHttpUrl(hotel.link);
+  const mapUrl = safeHttpUrl(hotel.google_place_url) ?? safeHttpUrl(hotel.directions);
+  const propertyUrl = officialWebsite ?? propertyDetailsUrl ?? mapUrl ?? hotelSearchUrl.toString();
   return {
     id: str(hotel.property_token, `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${index}`),
     name,
     source: str(hotel.source, "Google Hotels"),
+    propertyType: str(hotel.type, "hotel"),
+    propertyToken: str(hotel.property_token) || undefined,
+    latitude: num(coordinates.latitude),
+    longitude: num(coordinates.longitude),
+    nearbyPlaces,
     rating: num(hotel.overall_rating),
     reviews: num(hotel.reviews),
     nightlyPrice: num(nightly.extracted_after_taxes_fees) ?? num(nightly.extracted_lowest),
@@ -282,7 +345,9 @@ function normalizeHotel(item: unknown, index: number, currency: string): LiveHot
     amenities: arr(hotel.amenities).filter((item): item is string => typeof item === "string").slice(0, 8),
     freeCancellation: hotel.free_cancellation === true,
     image: safeHttpUrl(firstImage.thumbnail) ?? safeHttpUrl(hotel.thumbnail),
-    bookingUrl: safeHttpUrl(hotel.link),
+    bookingUrl: propertyUrl,
+    bookingUrlLabel: officialWebsite ? "Official website" : propertyDetailsUrl ? "Property details" : mapUrl ? "View on Maps" : "View on Google Hotels",
+    providerOffers,
   };
 }
 
@@ -313,93 +378,247 @@ function normalizeFlights(data: JsonObject, currency: string): LiveFlight[] {
   return source.map((item, index) => normalizeFlight(item, index, currency)).filter((item): item is LiveFlight => Boolean(item)).slice(0, 8);
 }
 
-export async function searchLiveTravel(input: TripSearchInput, destinationAirportCode: string, destinationName: string, clientUsageKey = "shared"): Promise<LiveTravelSearchResult> {
-  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
-  const originCode = resolveAirportCode(input.origin);
-  if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
-  if (!destinationAirportCode || !/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
-
-  const children = input.childrenAges.length;
-  const flightParams = makeFlightParams(input, originCode, destinationAirportCode);
-  const hotelParams: Record<string, string> = {
+function makeHotelParams(input: TripSearchInput, destinationName: string, stayType: StayType): Record<string, string> {
+  const params: Record<string, string> = {
     engine: "google_hotels",
-    q: `Hotels in ${destinationName}`,
+    q: `${stayType === "vacation_rentals" ? "Vacation rentals" : "Hotels"} in ${destinationName}`,
     check_in_date: input.departureDate,
     check_out_date: input.returnDate,
     adults: String(input.adults),
-    children: String(children),
+    children: String(input.childrenAges.length),
     currency: input.currency,
     gl: "us",
     hl: "en",
     sort_by: "3",
   };
-  if (children) hotelParams.children_ages = input.childrenAges.join(",");
-  if (input.minimumHotelRating === 3) hotelParams.hotel_class = "3,4,5";
-  else if (input.minimumHotelRating === 4) hotelParams.hotel_class = "4,5";
-  else if (input.minimumHotelRating === 5) hotelParams.hotel_class = "5";
-  if (input.freeCancellation) hotelParams.free_cancellation = "true";
+  if (stayType === "vacation_rentals") params.vacation_rentals = "true";
+  if (input.childrenAges.length) params.children_ages = input.childrenAges.join(",");
+  if (input.minimumHotelRating === 3) params.hotel_class = "3,4,5";
+  else if (input.minimumHotelRating === 4) params.hotel_class = "4,5";
+  else if (input.minimumHotelRating === 5) params.hotel_class = "5";
+  if (input.freeCancellation && stayType === "hotels") params.free_cancellation = "true";
+  return params;
+}
 
-  const warnings: string[] = [
-    "Round-trip search begins with outbound options. Select an outbound flight to retrieve matching return flights; no round-trip fare is confirmed until a seller option is checked.",
+function experienceQueryForStyle(style: TripSearchInput["style"]): string {
+  const terms: Record<TripSearchInput["style"], string> = {
+    any: "top attractions and things to do",
+    beach: "best beaches and water activities",
+    city: "top sights, museums and city attractions",
+    food: "food tours, markets and local experiences",
+    nature: "nature attractions, parks and outdoor activities",
+    romantic: "romantic experiences, scenic places and top attractions",
+    family: "family-friendly attractions and activities",
+    adventure: "adventure activities and outdoor experiences",
+    culture: "historic attractions, museums and cultural experiences",
+  };
+  return terms[style];
+}
+
+function normalizeExperiences(data: JsonObject, destinationName: string): LiveExperience[] {
+  const asEntries = (value: unknown): unknown[] => Array.isArray(value) ? value : value && typeof value === "object" ? [value] : [];
+  const entries = [
+    ...asEntries(data.local_results),
+    ...asEntries(data.place_results),
+    ...asEntries(data.discover_more_places),
   ];
-  if (children) warnings.push("Google Flights receives the child count but not each child's age. Verify age-specific fares with the airline or seller. Google Hotels receives the exact child ages.");
-  if (input.rooms > 1) warnings.push("Hotel results are withheld because this provider query cannot confirm your requested number of rooms. Use the provider link and set the room count there.");
+  const normalized = entries.map((entry, index) => {
+    const place = obj(entry);
+    const coords = obj(place.gps_coordinates);
+    const name = str(place.title);
+    if (!name) return null;
+    const address = str(place.address);
+    const placeId = str(place.place_id);
+    const mapsUrl = placeId
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}&query_place_id=${encodeURIComponent(placeId)}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name} ${address || destinationName}`)}`;
+    return {
+      id: placeId || str(place.data_id, `${name}-${index}`).replace(/[^a-z0-9-]/gi, "-"),
+      name,
+      category: str(place.type, arr(place.types).map((v) => String(v)).slice(0, 2).join(" · ") || "Place to visit"),
+      address,
+      rating: num(place.rating),
+      reviews: num(place.reviews),
+      latitude: num(coords.latitude),
+      longitude: num(coords.longitude),
+      thumbnail: safeHttpUrl(place.thumbnail) ?? safeHttpUrl(place.serpapi_thumbnail),
+      openState: str(place.open_state) || undefined,
+      price: str(place.price) || undefined,
+      website: safeHttpUrl(place.website) ?? safeHttpUrl(obj(place.links).website),
+      mapsUrl: safeHttpUrl(obj(place.links).directions) ?? mapsUrl,
+    } as LiveExperience;
+  }).filter((item): item is LiveExperience => Boolean(item));
+  return [...new Map(normalized.map((item) => [item.id, item])).values()].slice(0, 18);
+}
 
-  const [flightOutcome, hotelOutcome] = await Promise.allSettled([
-    // Match the provider's documented one-hour response cache so repeat searches
-    // reuse the same itinerary tokens without repeatedly requesting the provider.
-    querySerpApi(flightParams, 3600, clientUsageKey),
-    input.rooms === 1 ? querySerpApi(hotelParams, 3600, clientUsageKey) : Promise.resolve(null),
-  ]);
-
-  const rejectedMessages = [flightOutcome, hotelOutcome]
-    .filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected")
-    .map((outcome) => outcome.reason instanceof Error ? outcome.reason.message : "");
-  if (flightOutcome.status === "rejected" && hotelOutcome.status === "rejected") {
-    if (rejectedMessages.includes("SERPAPI_MONTHLY_CAP_REACHED")) throw new Error("SERPAPI_MONTHLY_CAP_REACHED");
-    if (rejectedMessages.includes("SERPAPI_HOURLY_CAP_REACHED")) throw new Error("SERPAPI_HOURLY_CAP_REACHED");
-    if (rejectedMessages.includes("SERPAPI_PROVIDER_QUOTA_LOW")) throw new Error("SERPAPI_PROVIDER_QUOTA_LOW");
-    if (rejectedMessages.includes("SERPAPI_PROVIDER_HOURLY_LIMIT")) throw new Error("SERPAPI_PROVIDER_HOURLY_LIMIT");
-    if (rejectedMessages.includes("SERPAPI_QUOTA_CHECK_FAILED")) throw new Error("SERPAPI_QUOTA_CHECK_FAILED");
-    if (rejectedMessages.includes("SERPAPI_CLIENT_RATE_LIMITED")) throw new Error("SERPAPI_CLIENT_RATE_LIMITED");
-    if (rejectedMessages.includes("DATABASE_UNAVAILABLE")) throw new Error("DATABASE_UNAVAILABLE");
+async function searchExperiencesWithFallback(input: TripSearchInput, destinationName: string, clientUsageKey: string): Promise<ProviderResponse> {
+  const terms = experienceQueryForStyle(input.style);
+  // Google Maps performs better with a concise place/category query than a
+  // long natural-language sentence. Keep the selected travel style as the
+  // category, but ask Google Local broadly if the first pass is empty.
+  const mapsQuery = `${terms} ${destinationName}`;
+  const mapsParams: Record<string, string> = { engine: "google_maps", type: "search", q: mapsQuery, hl: "en", gl: "us" };
+  let mapsError: unknown;
+  try {
+    const mapsResult = await querySerpApi(mapsParams, 21600, clientUsageKey);
+    if (normalizeExperiences(mapsResult.data, destinationName).length) return mapsResult;
+  } catch (error) {
+    mapsError = error;
+    const code = error instanceof Error ? error.message : "";
+    if (["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_QUOTA_CHECK_FAILED", "SERPAPI_CLIENT_RATE_LIMITED", "DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED", "SERPAPI_NOT_CONFIGURED"].includes(code)) throw error;
   }
 
+  // Google Local is a second, separately cached result shape. Use it only when
+  // Maps Search has no usable places, not for every request. For country-wide
+  // searches, include the country in q instead of asking Local to infer a city.
+  try {
+    const isCountryWide = !destinationName.includes(",") && /^(dominican republic|mexico|portugal|puerto rico|jamaica|united states|canada|france|italy|spain|japan)$/i.test(destinationName.trim());
+    const broadTerms = input.style === "beach" ? "top beaches and coastal attractions" : input.style === "food" ? "popular food markets and food tours" : input.style === "nature" ? "parks and nature attractions" : input.style === "adventure" ? "outdoor adventure attractions" : input.style === "family" ? "family attractions" : input.style === "culture" ? "museums and historic attractions" : "top tourist attractions";
+    const localParams: Record<string, string> = { engine: "google_local", q: isCountryWide ? `${broadTerms} in ${destinationName}` : broadTerms, hl: "en", gl: "us" };
+    if (!isCountryWide) localParams.location = destinationName;
+    return await querySerpApi(localParams, 21600, clientUsageKey);
+  } catch (fallbackError) {
+    if (mapsError) throw mapsError;
+    throw fallbackError;
+  }
+}
+
+export async function searchLiveTravel(input: TripSearchInput, destinationAirportCode: string, destinationName: string, clientUsageKey = "shared"): Promise<LiveTravelSearchResult> {
+  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
+  const components = input.components;
+  const originCode = input.originAirportCode || resolveAirportCode(input.origin);
+  const destinationCode = input.destinationAirportCode || destinationAirportCode;
+  if (components.includes("flights") && !originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
+  if (components.includes("flights") && (!destinationCode || !/^[A-Z]{3}$/.test(destinationCode))) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
+
+  const tasks: Array<{ key: "flights" | "hotels" | "vacation_rentals" | "experiences"; promise: Promise<ProviderResponse> }> = [];
+  if (components.includes("flights")) tasks.push({ key: "flights", promise: querySerpApi(makeFlightParams(input, originCode!, destinationCode!), 3600, clientUsageKey) });
+  if (components.includes("stays")) {
+    for (const stayType of input.stayTypes) {
+      tasks.push({ key: stayType === "hotels" ? "hotels" : "vacation_rentals", promise: querySerpApi(makeHotelParams(input, destinationName, stayType), 3600, clientUsageKey) });
+    }
+  }
+  if (components.includes("activities")) {
+    tasks.push({ key: "experiences", promise: searchExperiencesWithFallback(input, destinationName, clientUsageKey) });
+  }
+
+  const outcomes = await Promise.allSettled(tasks.map((task) => task.promise));
+  const errors = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected").map((outcome) => outcome.reason instanceof Error ? outcome.reason.message : "");
+  const successfulCount = outcomes.filter((outcome) => outcome.status === "fulfilled").length;
+  if (successfulCount === 0 && errors.length) {
+    const priority = ["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_QUOTA_CHECK_FAILED", "SERPAPI_CLIENT_RATE_LIMITED", "DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED", "SERPAPI_NOT_CONFIGURED"];
+    const selected = priority.find((code) => errors.includes(code));
+    if (selected) throw new Error(selected);
+  }
+
+  const warnings: string[] = [];
   let flights: LiveFlight[] = [];
   let hotels: LiveHotel[] = [];
-  if (flightOutcome.status === "fulfilled") {
-    flights = normalizeFlights(flightOutcome.value.data, input.currency);
-    if (!flights.length) warnings.push("The flight provider returned no matching outbound options for this exact search.");
-  } else {
-    warnings.push(providerWarning(flightOutcome.reason, "Flight search"));
-  }
+  let experiences: LiveExperience[] = [];
+  const fetchedAt: string[] = [];
+  const cacheFlags: boolean[] = [];
 
-  if (hotelOutcome.status === "fulfilled") {
-    if (hotelOutcome.value) {
-      hotels = arr(hotelOutcome.value.data.properties).map((item, index) => normalizeHotel(item, index, input.currency)).filter((item): item is LiveHotel => Boolean(item)).slice(0, 8);
-      if (!hotels.length) warnings.push("The hotel provider returned no properties for these dates and traveler details.");
-    } else {
-      // Multi-room offers are intentionally withheld rather than misrepresented.
+  outcomes.forEach((outcome, index) => {
+    const key = tasks[index].key;
+    if (outcome.status === "rejected") {
+      warnings.push(providerWarning(outcome.reason, key === "flights" ? "Flight search" : key === "experiences" ? "Things-to-do search" : key === "vacation_rentals" ? "Vacation-rental search" : "Hotel search"));
+      return;
     }
-  } else if (hotelOutcome.status === "rejected") {
-    // Keep the rejected-result branch explicit so TypeScript safely narrows
-    // PromiseSettledResult before reading its `reason` property.
-    warnings.push(providerWarning(hotelOutcome.reason, "Hotel search"));
-  }
+    fetchedAt.push(outcome.value.fetchedAt);
+    cacheFlags.push(outcome.value.fromCache);
+    if (key === "flights") {
+      flights = normalizeFlights(outcome.value.data, input.currency);
+      if (!flights.length) warnings.push("Google Flights returned no outbound options for this route and date combination. Try a different departure airport or open the route directly in Google Flights.");
+    } else if (key === "hotels" || key === "vacation_rentals") {
+      const properties = arr(outcome.value.data.properties);
+      const normalized = properties.map((item, itemIndex) => normalizeHotel(item, itemIndex, input.currency, destinationName, input.departureDate, input.returnDate)).filter((item): item is LiveHotel => Boolean(item));
+      hotels = [...hotels, ...normalized];
+      if (!normalized.length) warnings.push(key === "vacation_rentals" ? "No vacation-rental properties were returned for those dates and guests." : "No hotel properties were returned for those dates and guests.");
+    } else if (key === "experiences") {
+      experiences = normalizeExperiences(outcome.value.data, destinationName);
+      if (!experiences.length) warnings.push("No local attractions or experiences were returned for this destination. Try a specific category or nearby town.");
+    }
+  });
 
-  const status = flights.length && hotels.length ? "live" : flights.length || hotels.length ? "partial" : "empty";
-  const fetchedAt = [flightOutcome.status === "fulfilled" ? flightOutcome.value.fetchedAt : null, hotelOutcome.status === "fulfilled" && hotelOutcome.value ? hotelOutcome.value.fetchedAt : null].filter((value): value is string => Boolean(value));
-  const cacheFlags = [flightOutcome.status === "fulfilled" ? flightOutcome.value.fromCache : null, hotelOutcome.status === "fulfilled" && hotelOutcome.value ? hotelOutcome.value.fromCache : null].filter((value): value is boolean => value !== null);
+  const uniqueHotels = [...new Map(hotels.map((item) => [item.id, item])).values()].slice(0, 18);
+  const hasFlights = !components.includes("flights") || flights.length > 0;
+  const hasStays = !components.includes("stays") || uniqueHotels.length > 0;
+  const hasActivities = !components.includes("activities") || experiences.length > 0;
+  const fulfilledRequestedCategories = [hasFlights, hasStays, hasActivities].filter(Boolean).length;
+  const status = fulfilledRequestedCategories === 0 ? "empty" : fulfilledRequestedCategories === components.length ? "live" : "partial";
+  if (input.rooms > 1 && components.includes("stays")) warnings.push("The provider returned property-level prices but does not expose a confirmed multi-room allocation in this result. Open each property and reconfirm the exact room count and guest distribution before relying on the total.");
+  if (input.childrenAges.length && components.includes("flights")) warnings.push("The flight provider applies child count but does not confirm age-specific fare rules here. Verify passenger ages and fares with the airline or seller.");
   return {
     status,
-    provider: "SerpApi / Google Travel",
+    provider: "SerpApi / Google Travel and Maps",
     checkedAt: new Date().toISOString(),
     dataAsOf: fetchedAt.sort()[0] ?? new Date().toISOString(),
     servedFromCache: cacheFlags.length > 0 && cacheFlags.every(Boolean),
+    requested: components,
     flights,
-    hotels,
+    hotels: uniqueHotels,
+    experiences,
     warnings,
+  };
+}
+
+export async function getHotelBookingOptions(propertyToken: string, input: TripSearchInput, clientUsageKey = "shared"): Promise<HotelBookingOption[]> {
+  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
+  if (!propertyToken || propertyToken.length > 12000) throw new Error("INVALID_PROPERTY_TOKEN");
+  const params: Record<string, string> = {
+    engine: "google_hotels", property_token: propertyToken,
+    check_in_date: input.departureDate, check_out_date: input.returnDate,
+    adults: String(input.adults), children: String(input.childrenAges.length),
+    currency: input.currency, gl: "us", hl: "en",
+  };
+  if (input.childrenAges.length) params.children_ages = input.childrenAges.join(",");
+  const result = await querySerpApi(params, 3600, clientUsageKey);
+  const candidates = [...arr(result.data.ads), ...arr(result.data.prices)];
+  const offers = candidates.map((entry) => {
+    const offer = obj(entry);
+    const rate = obj(offer.rate_per_night);
+    const total = obj(offer.total_rate);
+    const price = num(total.extracted_after_taxes_fees) ?? num(total.extracted_lowest) ?? num(offer.extracted_price) ?? num(rate.extracted_after_taxes_fees) ?? num(rate.extracted_lowest) ?? num(offer.price);
+    const link = safeHttpUrl(offer.link) ?? safeHttpUrl(offer.url);
+    const terms = [...arr(offer.extensions), ...arr(offer.terms)].filter((value): value is string => typeof value === "string").slice(0, 5);
+    return { seller: str(offer.name, str(offer.source, str(offer.provider, "Booking provider"))), price, currency: str(offer.currency, input.currency), url: link, terms };
+  }).filter((offer) => Boolean(offer.url) || offer.price !== null);
+  return [...new Map(offers.map((offer) => [`${offer.seller}:${offer.url ?? offer.price}`, offer])).values()].slice(0, 12);
+}
+
+export type DrivingRouteResult = { distance: string; duration: string; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string };
+
+export async function getDrivingRoute(origin: string, destination: string, clientUsageKey = "shared"): Promise<DrivingRouteResult | null> {
+  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
+  const cleanOrigin = origin.trim().slice(0, 300);
+  const cleanDestination = destination.trim().slice(0, 300);
+  if (!cleanOrigin || !cleanDestination) throw new Error("INVALID_ROUTE_ENDPOINTS");
+  const result = await querySerpApi({
+    engine: "google_maps_directions",
+    start_addr: cleanOrigin,
+    end_addr: cleanDestination,
+    travel_mode: "0",
+    distance_unit: "1",
+    hl: "en",
+    gl: "us",
+  }, 21600, clientUsageKey);
+  const routeList = arr(result.data.directions);
+  const route = obj(routeList[0]);
+  const distance = str(route.formatted_distance, str(route.distance));
+  const duration = str(route.formatted_duration, str(route.duration));
+  const traffic = str(route.duration_in_traffic, str(route.formatted_duration_in_traffic)) || undefined;
+  if (!distance || !duration) return null;
+  return {
+    distance,
+    duration,
+    durationInTraffic: traffic,
+    startAddress: str(route.start_address) || undefined,
+    endAddress: str(route.end_address) || undefined,
+    source: "Google Maps directions via SerpApi",
+    checkedAt: result.fetchedAt,
   };
 }
 
@@ -407,7 +626,7 @@ export async function searchReturnFlights(input: TripSearchInput, destinationAir
   if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   if (!departureToken || departureToken.length > 12000) throw new Error("INVALID_DEPARTURE_TOKEN");
-  const originCode = resolveAirportCode(input.origin);
+  const originCode = input.originAirportCode || resolveAirportCode(input.origin);
   if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
   const params = { ...makeFlightParams(input, originCode, destinationAirportCode), departure_token: departureToken };
@@ -451,7 +670,7 @@ export async function getFlightBookingOptions(
   if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   if (!bookingToken || bookingToken.length > 12000) throw new Error("INVALID_BOOKING_TOKEN");
-  const originCode = resolveAirportCode(input.origin);
+  const originCode = input.originAirportCode || resolveAirportCode(input.origin);
   if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
 

@@ -11,10 +11,16 @@ export type TripStyle =
 
 export type CabinClass = "economy" | "premium_economy" | "business" | "first";
 export type StopPreference = "any" | "nonstop" | "one_stop" | "two_stops";
+export type TripComponent = "flights" | "stays" | "activities";
+export type StayType = "hotels" | "vacation_rentals";
 
 export type TripSearchInput = {
   origin: string;
+  originAirportCode: string;
   destination: string;
+  destinationAirportCode: string;
+  components: TripComponent[];
+  stayTypes: StayType[];
   departureDate: string;
   returnDate: string;
   adults: number;
@@ -66,8 +72,6 @@ export type Destination = {
 
 export type TripRecommendation = {
   destination: Destination;
-  score: number;
-  reasons: string[];
   itinerary: ItineraryDay[];
   liveSearchSupported: boolean;
   flightSearchUrl: string;

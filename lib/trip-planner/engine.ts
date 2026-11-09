@@ -1,5 +1,6 @@
 import { DESTINATIONS, findDestination, normalizeDestinationQuery, styleLabel } from "./destinations";
 import { resolveAirportCode } from "./airports";
+import { destinationMetadata, getDestinationGateways } from "./location-suggestions";
 import type { Destination, ItineraryDay, TripRecommendation, TripSearchInput, TripStyle } from "./types";
 
 const DAY_NAMES = ["Arrival and getting oriented", "A full day to explore", "A slower local day", "A day for a signature experience", "Room for a favourite repeat", "A final easy day"];
@@ -70,9 +71,13 @@ function buildItinerary(destination: Destination, input: TripSearchInput): Itine
   const nights = Math.max(1, daysBetween(input.departureDate, input.returnDate));
   const days = Math.max(2, Math.min(15, nights + 1));
   return Array.from({ length: days }, (_, index) => {
-    const template = destination.itinerary[index % destination.itinerary.length] ?? destination.itinerary[0];
     const arrivalDay = index === 0;
     const lastDay = index === days - 1;
+    const template = destination.itinerary[index] ?? [
+      { title: `Choose one local experience for day ${index + 1}`, description: "Use the live places list to pick an attraction or tour that is open on this date. Check ticket availability and travel time before adding it.", category: "Choose an experience" },
+      { title: "Keep time for the area around your stay", description: "Use the map to find restaurants, beaches, parks or neighbourhoods close to your accommodation.", category: "Explore nearby" },
+      { title: "Leave the evening flexible", description: "Choose dinner or entertainment near your base after confirming current hours and transport.", category: "Flexible" },
+    ];
     const activities = template.map((item, activityIndex) => ({ ...item, period: activityPeriod(activityIndex) }));
     if (arrivalDay) {
       activities[0] = { period: "Morning", title: "Arrival and check-in", description: "Confirm transfer, luggage and hotel check-in arrangements. The rest of the day is intentionally flexible.", category: "Arrival" };
@@ -91,11 +96,17 @@ function buildItinerary(destination: Destination, input: TripSearchInput): Itine
   });
 }
 
-function makeCustomDestination(query: string): Destination {
+function makeCustomDestination(query: string, selectedAirportCode = ""): Destination {
+  const metadata = destinationMetadata(query);
+  const gateway = getDestinationGateways(query).find((item) => item.code === selectedAirportCode);
+  const city = gateway?.city || metadata.city || query;
+  const country = gateway ? query : metadata.country;
+  const airportCode = gateway?.code || metadata.airportCode || resolveAirportCode(query) || "";
+  const destinationLabel = country ? `${city}, ${country}` : city;
   return {
-    id: `custom-${query.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, city: query, country: "Custom destination", airportCode: resolveAirportCode(query) ?? "", airportLabel: resolveAirportCode(query) ?? "Airport needs confirmation",
+    id: `custom-${query.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, city, country, airportCode, airportLabel: airportCode || "Choose an arrival airport for flights",
     image: "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1400&q=88",
-    summary: `A flexible planning outline for ${query}. Add a matching airport code to enable live search for flights.`,
+    summary: `Live travel options and local places for ${destinationLabel}. Check the details against your selected dates and traveler count.`,
     bestFor: ["Custom destination"], styles: ["any", "city", "food", "culture"], costLevel: 2, suggestedNights: [3, 6], goodMonths: [],
     highlights: ["Confirm the right airport", "Choose a neighbourhood", "Verify attractions and transport"],
     itinerary: [
@@ -109,7 +120,7 @@ function makeCustomDestination(query: string): Destination {
 
 function buildProviderLinks(origin: string, destination: Destination, input: TripSearchInput) {
   const originQuery = origin.trim();
-  const destinationQuery = `${destination.city}, ${destination.country}`;
+  const destinationQuery = destination.country ? `${destination.city}, ${destination.country}` : destination.city;
   const flightQuery = `Flights from ${originQuery} to ${destinationQuery} on ${input.departureDate} returning ${input.returnDate} for ${input.adults + input.childrenAges.length} travelers`;
   const hotelQuery = `Hotels in ${destinationQuery} from ${input.departureDate} to ${input.returnDate} for ${input.adults + input.childrenAges.length} guests`;
   const activityQuery = `Things to do in ${destinationQuery}`;
@@ -123,24 +134,28 @@ function buildProviderLinks(origin: string, destination: Destination, input: Tri
 }
 
 export function buildTripRecommendations(input: TripSearchInput): TripRecommendation[] {
-  const exact = findDestination(input.destination);
+  // Country/region searches must not silently resolve to the first city in
+  // that country. Keep the whole region for stays/activities-only searches;
+  // when flights are included, use the user's chosen gateway to set the base.
+  const isRegionSearch = getDestinationGateways(input.destination).length > 0;
+  const exact = isRegionSearch ? undefined : findDestination(input.destination);
   const candidates = exact ? [exact] : input.destination.trim() && !["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination))
-    ? [makeCustomDestination(input.destination.trim())]
+    ? [makeCustomDestination(input.destination.trim(), input.destinationAirportCode)]
     : [...DESTINATIONS];
   return candidates
     .map((destination) => {
-      const scored = scoreDestination(destination, input);
+      const ranking = scoreDestination(destination, input).score;
       return {
         destination,
-        score: scored.score,
-        reasons: scored.reasons.slice(0, 3),
+        ranking,
         itinerary: buildItinerary(destination, input),
         liveSearchSupported: Boolean(destination.airportCode),
         ...buildProviderLinks(input.origin, destination, input),
       };
     })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, exact || (input.destination.trim() && !["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination))) ? 1 : 6);
+    .sort((a, b) => b.ranking - a.ranking)
+    .slice(0, exact || (input.destination.trim() && !["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination))) ? 1 : 6)
+    .map(({ ranking: _ranking, ...recommendation }) => recommendation);
 }
 
 export function tripLength(input: TripSearchInput): number {

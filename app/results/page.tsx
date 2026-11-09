@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, CalendarDays, Check, MapPin, Plane, ShieldCheck, Sparkles, Users, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, MapPin, Plane, Users, Wallet } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { ResultsWorkspace } from "@/components/trips/results-workspace";
 import { buildTripRecommendations, tripLength } from "@/lib/trip-planner/engine";
-import { styleLabel } from "@/lib/trip-planner/destinations";
 import { parseTripSearch } from "@/lib/trip-planner/validation";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -32,7 +31,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
         <section className="results-content shell validation-error-page">
           <Link href="/#plan" className="back-link"><ArrowLeft size={15} /> Back to trip planner</Link>
           <span className="eyebrow">WE NEED A LITTLE MORE INFORMATION</span>
-          <h1>Let’s get the details <em>right.</em></h1>
+          <h1>Check your trip details</h1>
           <p>Some trip details were missing or invalid, so we haven't searched or generated recommendations.</p>
           <ul>{parsed.errors.map((error) => <li key={error}>{error}</li>)}</ul>
           <Link href="/#plan" className="button button-dark">Update my search <ArrowRight size={16}/></Link>
@@ -49,44 +48,43 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
   const dateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
   const dateLabel = `${dateFormat.format(new Date(`${search.departureDate}T12:00:00Z`))} – ${dateFormat.format(new Date(`${search.returnDate}T12:00:00Z`))}`;
 
+  const requested = search.components.map((item) => item === "flights" ? "Flights" : item === "stays" ? (search.stayTypes.length > 1 ? "Hotels and rentals" : search.stayTypes[0] === "vacation_rentals" ? "Rentals" : "Hotels") : "Activities");
+  const heading = search.destination.toLowerCase() === "anywhere" ? "Destinations worth comparing" : `Travel options for ${search.destination}`;
+
   return (
     <main className="results-page">
       <SiteHeader />
       <section className="results-hero shell">
-        <Link href="/#plan" className="back-link"><ArrowLeft size={15} /> Edit your search</Link>
+        <Link href="/#plan" className="back-link"><ArrowLeft size={15} /> Edit search</Link>
         <div className="results-title-row">
-          <div><span className="eyebrow">YOUR SEARCH, THOUGHTFULLY CONSIDERED</span><h1>Let’s see where<br /><em>you could go.</em></h1></div>
-          <div className="results-search-note"><Sparkles size={16} /><span>We’ve matched your dates, budget and travel preferences against our destination planning catalog.</span></div>
+          <div><span className="eyebrow">TRIP SEARCH</span><h1>{heading}</h1><p className="results-intro">Flights, places to stay and activities based on the dates, travelers and filters you chose.</p></div>
         </div>
         <div className="search-summary">
-          <div><Plane size={16}/><span><small>FROM</small><strong>{search.origin}</strong></span></div>
-          <div><MapPin size={16}/><span><small>TO</small><strong>{search.destination}</strong></span></div>
+          {search.components.includes("flights") && <div><Plane size={16}/><span><small>FROM</small><strong>{search.origin}</strong></span></div>}
+          <div><MapPin size={16}/><span><small>DESTINATION</small><strong>{search.destination}</strong></span></div>
           <div><CalendarDays size={16}/><span><small>DATES</small><strong>{dateLabel}</strong></span></div>
           <div><Users size={16}/><span><small>TRAVELERS</small><strong>{travelerLabel}</strong></span></div>
           <div><Wallet size={16}/><span><small>BUDGET</small><strong>{budgetLabel}</strong></span></div>
         </div>
-        <div className="results-filter-line">
-          <span><Check size={14}/> {styleLabel(search.style)}</span>
-          <span><Check size={14}/> {search.flexibleDays ? `±${search.flexibleDays} date flexibility` : "Exact dates"}</span>
-          <span><ShieldCheck size={14}/> {search.rooms} room{search.rooms === 1 ? "" : "s"} · {search.cabinClass.replaceAll("_", " ")}</span>
-        </div>
+        <div className="results-filter-line"><span>{requested.join(" + ")}</span>{search.components.includes("stays") && <span>{search.rooms} room{search.rooms === 1 ? "" : "s"}</span>}{search.components.includes("flights") && <span>{search.cabinClass.replaceAll("_", " ")}</span>}</div>
       </section>
       <section className="results-content shell">
         <div className="results-section-heading">
-          <div><span className="eyebrow">PERSONALIZED DESTINATION MATCHES</span><h2>{search.destination.toLowerCase() === "anywhere" ? "Places that could fit your trip" : `Planning your trip to ${search.destination}`}</h2><p>{recommendations.length} {recommendations.length === 1 ? "destination match" : "destination matches"} · {tripLength(search)} nights · {travelers} traveler{travelers === 1 ? "" : "s"}</p></div>
+          <div><h2>{recommendations.length === 1 ? "Your search" : "Destination ideas"}</h2><p>{recommendations.length} {recommendations.length === 1 ? "destination" : "destinations"} · {tripLength(search)} nights · {travelers} traveler{travelers === 1 ? "" : "s"}</p></div>
         </div>
-        <div className="results-truth-note"><span className="results-truth-icon"><ShieldCheck size={17}/></span><div><strong>What is live and what is planning guidance?</strong><p>Destination matches and day-by-day outlines are generated from our curated planning catalog. Current flights and hotel rates are fetched only when you ask us to check them and the live provider is configured. Search results are price snapshots, not guaranteed reservations.</p></div></div>
+        <p className="results-truth-note">Destination ideas and itinerary outlines are planning guidance. Flight, stay and activity results are retrieved only for the categories you select. Prices and availability can change before checkout.</p>
         <ResultsWorkspace
           search={search}
           recommendations={recommendations}
           liveSearchConfigured={Boolean(process.env.SERPAPI_API_KEY && process.env.DATABASE_URL)}
           providerKeyConfigured={Boolean(process.env.SERPAPI_API_KEY)}
           databaseConfigured={Boolean(process.env.DATABASE_URL)}
+          weatherKeyConfigured={Boolean(process.env.WEATHERAPI_API_KEY)}
         />
       </section>
       <footer className="site-footer shell results-footer">
-        <div className="footer-top"><div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Make room for somewhere new.</p></div><Link href="/#plan" className="text-link dark-link">Start another search <ArrowRight size={16}/></Link></div>
-        <div className="footer-bottom"><span>© {new Date().getFullYear()} Tripfinder</span><span>Independent planning tool · Bookings completed with travel providers</span></div>
+        <div className="footer-top"><div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Plan the whole trip in one place.</p></div><Link href="/#plan" className="text-link dark-link">New search <ArrowRight size={16}/></Link></div>
+        <div className="footer-bottom"><span>© {new Date().getFullYear()} Tripfinder</span><span>Independent planning tool · Bookings completed with providers</span></div>
       </footer>
     </main>
   );
