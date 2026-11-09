@@ -47,4 +47,25 @@ You are continuing development of Tripfinder, a travel discovery, planning, and 
 
 ## Current implementation state
 
-The current starter includes a landing page, interactive search form, sample results page, expandable cost breakdowns, provider interface placeholder and health endpoint. Live flight/hotel provider integrations, Neon persistence, authentication, and affiliate tracking are not implemented yet.
+- Editorial homepage and responsive trip-search UI are implemented.
+- Server-side search validation and a curated destination-matching/itinerary engine are implemented.
+- SerpApi Google Flights and Google Hotels search adapters are implemented behind server API routes. The round-trip flow is staged: outbound search, `departure_token` return-leg lookup, then `booking_token` seller lookup.
+- Neon is used for a persistent one-hour search cache, a 60-second cached SerpApi Account API quota snapshot, and atomic shared hourly/monthly/per-connection counters. The required tables are created automatically on first provider request.
+- Live search requires server-side `SERPAPI_API_KEY` and `DATABASE_URL` in Vercel. `SERPAPI_MONTHLY_SEARCH_CAP` defaults to 200 (hard-clamped to 230), `SERPAPI_HOURLY_SEARCH_CAP` defaults to 30 (hard-clamped to 45), and `SERPAPI_PROVIDER_QUOTA_RESERVE` defaults to 75, and `SERPAPI_PROVIDER_HOURLY_RESERVE` defaults to 10.
+- Results are not sample fares. Without credentials the site remains in planning-only mode; with credentials it can query current provider snapshots.
+- The curated destination catalog and itinerary templates are not worldwide live discovery. Attraction hours, transit times, entry rules, flexible-date alternatives, multi-room hotels and exact child-age flight fares are not verified yet.
+- Neon does not yet store user accounts, saved trip records or synchronized trip histories.
+- No affiliate tracking, checkout, reservation or payment processing is implemented.
+
+## Live-data and provider safeguards
+
+- The free SerpApi plan is for controlled development/testing until its data-display, caching, public/commercial-use and liability terms have been reviewed and appropriate authorization is confirmed.
+- Do not treat Google Flights initial round-trip results as a complete round-trip itinerary. Retrieve the return choices with the selected outbound's `departure_token`; only then retrieve seller options with a return-stage `booking_token`.
+- SerpApi's stops filter means `0=any`, `1=nonstop`, `2=one stop or fewer`, `3=two stops or fewer`. Do not describe this as exact one-stop/two-stop matching.
+- Google Hotels search has no room-count parameter in this adapter. Withhold offers for multi-room requests.
+- Google Flights accepts the child count, not the individual child ages in this implementation. Hotel search accepts the exact ages.
+- Every provider query must pass through the Neon cache, actual SerpApi Account API monthly and hourly quota check and shared monthly/hourly/per-client counters. Do not add a direct SerpApi search call that bypasses `querySerpApi`. Account API calls do not consume search credits and are cached for 60 seconds.
+- Cache by all search parameters except the secret API key. Keep secrets out of cache keys, client props, logs and API responses.
+- Never raise the provider request cap above 230 without changing the documented free-plan assumptions and reviewing account billing.
+- Provider links and booking tokens are opaque supplier data. Validate outbound URLs as HTTPS, allowlist Google hostnames for Google booking-form POSTs, preserve the provider-supplied `post_data` fields, and never manufacture tokens or seller URLs. Seller lookups must preserve the original route, passenger count, cabin and localization context. Per the current provider documentation, omit dates and advanced filters from booking-token lookups because they do not alter the token-selected itinerary.
+- Do not claim the provider snapshot is guaranteed or that a seller link reserves a trip.
