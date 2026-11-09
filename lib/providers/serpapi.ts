@@ -795,6 +795,11 @@ export type FlightBookingOption = {
   price: number | null;
   currency: string;
   url?: string;
+  /** Exact Google booking_request body. Keep the original encoding for POST. */
+  postData?: string;
+  /** Exact route/date fallback when Google cannot resolve its opaque booking POST. */
+  fallbackUrl?: string;
+  /** Legacy parsed fields retained for compatibility with older result components. */
   postFields: Array<{ name: string; value: string }>;
   type: string;
   baggage: string[];
@@ -806,8 +811,24 @@ function safeGoogleBookingUrl(value: unknown): string | undefined {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
-    return url.protocol === "https:" && (host === "google.com" || host.endsWith(".google.com")) ? url.toString() : undefined;
+    return url.protocol === "https:" && ["google.com", "www.google.com"].includes(host) && url.pathname === "/travel/clk/f"
+      ? url.toString()
+      : undefined;
   } catch { return undefined; }
+}
+
+function makeGoogleFlightsFallbackUrl(input: TripSearchInput, originCode: string, destinationAirportCode: string, seller = ""): string {
+  const query = [
+    `round trip flights from ${originCode} to ${destinationAirportCode}`,
+    `departing ${input.departureDate}`,
+    `returning ${input.returnDate}`,
+    `${input.adults} adults${input.childrenAges.length ? ` and ${input.childrenAges.length} children` : ""}`,
+  ];
+  if (seller && !/^booking provider$/i.test(seller)) query.push(`with ${seller}`);
+  const url = new URL("https://www.google.com/travel/flights");
+  url.searchParams.set("q", query.join(" "));
+  url.searchParams.set("curr", input.currency);
+  return url.toString();
 }
 
 export async function getFlightBookingOptions(
@@ -823,16 +844,17 @@ export async function getFlightBookingOptions(
   if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
 
-  // The provider documentation says to retain the original search context for
-  // seller lookup. Only the opaque booking token is replaced; never construct it.
+  // Keep the original route, dates, passenger mix, cabin and localization with
+  // the opaque token. SerpApi can reject token lookups when outbound_date is
+  // omitted, even though the token identifies the selected itinerary.
   const original = makeFlightParams(input, originCode, destinationAirportCode);
-  // The selected token pins the itinerary. Keep the route, travelers, cabin and
-  // localization, but omit dates and advanced filters that the provider says do
-  // not affect booking-token lookups (and would only create duplicate cache keys).
   const params = {
     engine: "google_flights",
+    type: original.type,
     departure_id: original.departure_id,
     arrival_id: original.arrival_id,
+    outbound_date: original.outbound_date,
+    return_date: original.return_date,
     adults: original.adults,
     children: original.children,
     travel_class: original.travel_class,
@@ -845,22 +867,37 @@ export async function getFlightBookingOptions(
   return arr(response.data.booking_options).map((item) => {
     const option = obj(item);
     const together = obj(option.together);
-    const bookingRequest = obj(together.booking_request);
-    const directUrl = safeHttpUrl(option.link);
-    const googleUrl = safeGoogleBookingUrl(bookingRequest.url);
-    const rawPostData = str(bookingRequest.post_data);
-    const postFields = rawPostData
+    const departing = obj(option.departing);
+    const returning = obj(option.returning);
+    const bookingRequest = obj(together.booking_request ?? option.booking_request);
+
+    const rawDirectUrl = safeHttpUrl(together.link) ?? safeHttpUrl(option.link);
+    // Google's opaque booking endpoint must never be opened as a normal GET.
+    const directUrl = rawDirectUrl && !/https?:\/\/(?:www\.)?google\.com\/travel\/clk\/f(?:[/?#]|$)/i.test(rawDirectUrl)
+      ? rawDirectUrl
+      : undefined;
+    const googleUrl = safeGoogleBookingUrl(bookingRequest.url) ?? safeGoogleBookingUrl(option.link);
+    const rawPostData = str(bookingRequest.post_data) || str(option.post_data) || str(together.post_data);
+    const postData = rawPostData && rawPostData.length <= 30000 ? rawPostData : undefined;
+    const postUrl = googleUrl && postData && option.separate_tickets !== true ? googleUrl : undefined;
+    const legacyPostFields = rawPostData
       ? Array.from(new URLSearchParams(rawPostData).entries()).slice(0, 50).map(([name, value]) => ({ name, value }))
       : [];
-    const formUrl = googleUrl && postFields.length ? googleUrl : undefined;
+    const legOnlyBooking = !bookingRequest.url && (Object.keys(departing).length > 0 || Object.keys(returning).length > 0);
+    const seller = str(together.book_with, str(option.book_with, "Booking provider"));
+    const fallbackUrl = makeGoogleFlightsFallbackUrl(input, originCode, destinationAirportCode, seller);
+
     return {
-      seller: str(together.book_with, str(option.book_with, "Booking provider")),
+      seller,
       price: num(together.price) ?? num(option.price),
-      // The booking_options price is returned in the requested search currency.
       currency: input.currency,
-      url: directUrl ?? formUrl,
-      postFields: directUrl ? [] : postFields,
-      type: str(together.option_title, str(option.type, "Online booking")),
+      // Prefer verified direct seller links, then Google's exact POST, and
+      // finally a usable route/date search instead of a dead-end /travel/clk/f GET.
+      url: directUrl ?? postUrl ?? fallbackUrl,
+      postData: directUrl || !postUrl ? undefined : postData,
+      fallbackUrl,
+      postFields: directUrl ? [] : legacyPostFields,
+      type: `${str(together.option_title, str(option.type, "Online booking"))}${option.separate_tickets === true || legOnlyBooking ? " · separate tickets" : ""}`,
       baggage: arr(together.baggage_prices).filter((entry): entry is string => typeof entry === "string").slice(0, 5),
       fareTerms: arr(together.extensions).filter((entry): entry is string => typeof entry === "string").slice(0, 6),
     };
