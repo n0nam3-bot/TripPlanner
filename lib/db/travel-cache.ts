@@ -144,8 +144,15 @@ export async function reserveProviderSearch(clientKey = "shared"): Promise<numbe
   const hourBucket = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours())).toISOString();
   const sql = getSql();
 
-  // Per-client guard runs first so a rate-limited browser does not consume the
-  // global monthly provider budget. Stored identifiers are hashed, not IPs.
+  // This counter records individual provider subrequests, not user-facing trip
+  // searches. A single combined search may fan out to flights, hotels, rentals,
+  // activities and dining in parallel, so the old 15/hour per-client limit could
+  // block the final category mid-search. Keep per-client protection no tighter
+  // than the shared hourly cap; the global monthly/hourly caps remain authoritative.
+  const rawClientDailyCap = Number(process.env.SERPAPI_CLIENT_DAILY_SEARCH_CAP ?? "120");
+  const clientDailyCap = Number.isInteger(rawClientDailyCap) ? Math.max(30, Math.min(180, rawClientDailyCap)) : 120;
+  const rawClientHourlyCap = Number(process.env.SERPAPI_CLIENT_HOURLY_SEARCH_CAP ?? "30");
+  const clientHourlyCap = Number.isInteger(rawClientHourlyCap) ? Math.max(5, Math.min(45, rawClientHourlyCap)) : 30;
   const clientRows = await sql`INSERT INTO tripfinder_client_usage
       (client_key, usage_date, hour_bucket, hour_count, day_count, updated_at)
     VALUES (${clientKey}, ${usageDate}, ${hourBucket}, 1, 1, now())
@@ -155,9 +162,9 @@ export async function reserveProviderSearch(clientKey = "shared"): Promise<numbe
       hour_bucket = EXCLUDED.hour_bucket,
       day_count = tripfinder_client_usage.day_count + 1,
       updated_at = now()
-    WHERE tripfinder_client_usage.day_count < 45
+    WHERE tripfinder_client_usage.day_count < ${clientDailyCap}
       AND CASE WHEN tripfinder_client_usage.hour_bucket = EXCLUDED.hour_bucket
-        THEN tripfinder_client_usage.hour_count < 15 ELSE true END
+        THEN tripfinder_client_usage.hour_count < ${clientHourlyCap} ELSE true END
     RETURNING hour_count, day_count`;
   if (!clientRows.length) throw new Error("SERPAPI_CLIENT_RATE_LIMITED");
 

@@ -347,6 +347,16 @@ const DESTINATION_LOCATIONS: LocationSuggestion[] = [
   { value: "Puerto Plata, Dominican Republic", label: "Puerto Plata", detail: "Dominican Republic · Gregorio Luperón International Airport", kind: "city", airportCode: "POP", country: "Dominican Republic" },
   { value: "Santiago de los Caballeros, Dominican Republic", label: "Santiago de los Caballeros", detail: "Dominican Republic · Cibao International Airport", kind: "city", airportCode: "STI", country: "Dominican Republic" },
   { value: "La Romana, Dominican Republic", label: "La Romana", detail: "Dominican Republic · La Romana International Airport", kind: "city", airportCode: "LRM", country: "Dominican Republic" },
+  { value: "Bávaro, Punta Cana, Dominican Republic", label: "Bávaro", detail: "Punta Cana resort area · Dominican Republic · PUJ", kind: "area", airportCode: "PUJ", country: "Dominican Republic" },
+  { value: "Cap Cana, Punta Cana, Dominican Republic", label: "Cap Cana", detail: "Punta Cana resort area · Dominican Republic · PUJ", kind: "area", airportCode: "PUJ", country: "Dominican Republic" },
+  { value: "Uvero Alto, Punta Cana, Dominican Republic", label: "Uvero Alto", detail: "Punta Cana resort area · Dominican Republic · PUJ", kind: "area", airportCode: "PUJ", country: "Dominican Republic" },
+  { value: "Bayahibe, La Altagracia, Dominican Republic", label: "Bayahibe", detail: "Coastal town · La Romana area · Dominican Republic · LRM", kind: "area", airportCode: "LRM", country: "Dominican Republic" },
+  { value: "Sosúa, Puerto Plata, Dominican Republic", label: "Sosúa", detail: "Beach town · Puerto Plata area · Dominican Republic · POP", kind: "area", airportCode: "POP", country: "Dominican Republic" },
+  { value: "Cabarete, Puerto Plata, Dominican Republic", label: "Cabarete", detail: "Beach and watersports town · Dominican Republic · POP", kind: "area", airportCode: "POP", country: "Dominican Republic" },
+  { value: "Las Terrenas, Samaná, Dominican Republic", label: "Las Terrenas", detail: "Coastal town · Samaná · Dominican Republic · AZS", kind: "area", airportCode: "AZS", country: "Dominican Republic" },
+  { value: "Samaná, Dominican Republic", label: "Samaná", detail: "Coastal region · Dominican Republic · AZS", kind: "city", airportCode: "AZS", country: "Dominican Republic" },
+  { value: "Jarabacoa, La Vega, Dominican Republic", label: "Jarabacoa", detail: "Mountain town · Dominican Republic · STI", kind: "area", airportCode: "STI", country: "Dominican Republic" },
+  { value: "Constanza, La Vega, Dominican Republic", label: "Constanza", detail: "Mountain town · Dominican Republic · STI", kind: "area", airportCode: "STI", country: "Dominican Republic" },
   { value: "San Juan, Puerto Rico", label: "San Juan", detail: "Puerto Rico · Luis Muñoz Marín International Airport", kind: "city", airportCode: "SJU", country: "Puerto Rico" },
   { value: "Montego Bay, Jamaica", label: "Montego Bay", detail: "Jamaica · Sangster International Airport", kind: "city", airportCode: "MBJ", country: "Jamaica" },
   { value: "Orlando, United States", label: "Orlando", detail: "United States · Orlando International Airport", kind: "city", airportCode: "MCO", country: "United States" },
@@ -562,6 +572,30 @@ const DESTINATION_AREA_GEOS: Array<{ aliases: string[]; geo: DestinationAreaGeo 
       addressAliases: ["stroudsburg", "east stroudsburg", "mount pocono", "tannersville", "jim thorpe", "lake harmony", "hawley", "milford", "tobyhanna", "long pond", "blakeslee", "swiftwater", "bushkill", "scranton"],
     },
   },
+  {
+    aliases: ["punta cana", "bavaro", "bávaro", "cap cana", "uvero alto", "cabeza de toro", "macao", "friusa", "veron"],
+    geo: { latitude: 18.5601, longitude: -68.3725, activityRadiusMiles: 42, restaurantRadiusMiles: 28, hotelRadiusMiles: 38, addressAliases: ["punta cana", "bavaro", "bávaro", "cap cana", "uvero alto", "cabeza de toro", "macao", "friusa", "veron"] },
+  },
+  {
+    aliases: ["santo domingo", "zona colonial", "colonial zone", "piantini", "naco", "bella vista", "gazcue", "malecon"],
+    geo: { latitude: 18.4861, longitude: -69.9312, activityRadiusMiles: 34, restaurantRadiusMiles: 22, hotelRadiusMiles: 30, addressAliases: ["santo domingo", "zona colonial", "colonial zone", "piantini", "naco", "bella vista", "gazcue", "malecon"] },
+  },
+  {
+    aliases: ["puerto plata", "sosua", "sosúa", "cabarete", "playa dorada", "cofresi", "cofrési"],
+    geo: { latitude: 19.7934, longitude: -70.6884, activityRadiusMiles: 42, restaurantRadiusMiles: 28, hotelRadiusMiles: 38, addressAliases: ["puerto plata", "sosua", "sosúa", "cabarete", "playa dorada", "cofresi", "cofrési"] },
+  },
+  {
+    aliases: ["santiago", "santiago de los caballeros", "jarabacoa", "constanza", "la vega"],
+    geo: { latitude: 19.4517, longitude: -70.6970, activityRadiusMiles: 38, restaurantRadiusMiles: 22, hotelRadiusMiles: 32, addressAliases: ["santiago", "santiago de los caballeros", "jarabacoa", "constanza", "la vega"] },
+  },
+  {
+    aliases: ["la romana", "bayahibe", "dominicus", "casa de campo"],
+    geo: { latitude: 18.4273, longitude: -68.9728, activityRadiusMiles: 38, restaurantRadiusMiles: 24, hotelRadiusMiles: 34, addressAliases: ["la romana", "bayahibe", "dominicus", "casa de campo"] },
+  },
+  {
+    aliases: ["samana", "samaná", "las terrenas", "las galeras", "el limon"],
+    geo: { latitude: 19.2050, longitude: -69.3360, activityRadiusMiles: 42, restaurantRadiusMiles: 25, hotelRadiusMiles: 36, addressAliases: ["samana", "samaná", "las terrenas", "las galeras", "el limon"] },
+  },
 ];
 
 export function getDestinationAreaGeo(value: string): DestinationAreaGeo | undefined {
@@ -643,6 +677,20 @@ export function getDestinationStateRegion(value: string): USState | undefined {
   return value.split(",").map((part) => getUSStateRegion(part.trim())).find((state): state is USState => Boolean(state));
 }
 
+/** Returns the selected top-level state/country so the search form can ask for a city or area within it. */
+export function getDestinationRegionScope(value: string): string | undefined {
+  const state = getUSStateRegion(value);
+  if (state) return state.name;
+  const region = DESTINATION_REGIONS.find((entry) => norm(entry.value) === norm(value) || norm(entry.label) === norm(value));
+  if (!region) return undefined;
+  // Some island destinations (for example Aruba) are also their own practical
+  // base. Do not force users to select the same name again as a nested city.
+  const sameNameBase = DESTINATION_LOCATIONS.find((item) =>
+    norm(item.value) === norm(value) && norm(item.label) === norm(value) && Boolean(item.airportCode)
+  );
+  return sameNameBase ? undefined : region.value;
+}
+
 export function getUSStateAddressAliases(value: string): string[] {
   const state = getDestinationStateRegion(value);
   return state ? [norm(state.name), norm(state.abbreviation)] : [];
@@ -651,7 +699,7 @@ export function getUSStateAddressAliases(value: string): string[] {
 const AIRPORT_NAMES: Record<string, string> = {
   PUJ: "Punta Cana International Airport", SDQ: "Las Américas International Airport",
   POP: "Gregorio Luperón International Airport", STI: "Cibao International Airport",
-  LRM: "La Romana International Airport", CUN: "Cancún International Airport",
+  LRM: "La Romana International Airport", AZS: "Samaná El Catey International Airport", CUN: "Cancún International Airport",
   MEX: "Mexico City International Airport", LIS: "Humberto Delgado Airport",
   SJU: "Luis Muñoz Marín International Airport", MBJ: "Sangster International Airport",
   BCN: "Barcelona–El Prat Airport", PAR: "Paris Charles de Gaulle Airport",
@@ -703,7 +751,9 @@ export function getLocationSuggestions(
   const scope = norm(regionScope);
   const source = scope
     ? allSource.filter((item) => item.kind !== "region" && item.kind !== "airport" && (
-      norm(item.value).includes(scope) || norm(item.country) === scope || norm(item.detail).includes(scope)
+      norm(item.country) === scope
+      || item.value.split(",").some((part) => norm(part) === scope)
+      || item.detail.split(/[·,]/).some((part) => norm(part) === scope)
     ))
     : allSource;
   if (q.length < 2) return source.slice(0, 20);
@@ -744,6 +794,7 @@ export const AIRPORT_COORDINATES: Record<string, { latitude: number; longitude: 
   POP: { latitude: 19.7579, longitude: -70.5700, name: "Gregorio Luperón International Airport" },
   STI: { latitude: 19.4061, longitude: -70.6047, name: "Cibao International Airport" },
   LRM: { latitude: 18.4507, longitude: -68.9118, name: "La Romana International Airport" },
+  AZS: { latitude: 19.2690, longitude: -69.7370, name: "Samaná El Catey International Airport" },
   SJU: { latitude: 18.4394, longitude: -66.0018, name: "Luis Muñoz Marín International Airport" },
   MBJ: { latitude: 18.5037, longitude: -77.9134, name: "Sangster International Airport" },
   LIS: { latitude: 38.7742, longitude: -9.1342, name: "Lisbon Airport" },

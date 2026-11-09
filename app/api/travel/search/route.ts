@@ -59,6 +59,9 @@ export async function POST(request: Request) {
     if (message === "SERPAPI_CLIENT_RATE_LIMITED") {
       return NextResponse.json({ error: "This connection has reached its travel-search limit. Please use the cached results or try again later.", code: message }, { status: 429 });
     }
+    if (message === "DESTINATION_AREA_REQUIRED") {
+      return NextResponse.json({ error: "Choose a city or area within this country or region before searching for stays, attractions or restaurants. This prevents unrelated results from across the entire country.", code: message }, { status: 422 });
+    }
     if (message === "ORIGIN_AIRPORT_UNRESOLVED") {
       return NextResponse.json({ error: "We could not match that departure city to an airport. Enter its three-letter IATA code, such as JFK or LAX.", code: message }, { status: 422 });
     }

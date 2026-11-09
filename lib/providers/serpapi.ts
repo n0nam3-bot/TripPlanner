@@ -1,6 +1,6 @@
 import { getProviderCache, providerCacheKey, recordProviderEvent, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
-import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
+import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationRegionScope, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
 
 const ENDPOINT = "https://serpapi.com/search.json";
@@ -142,7 +142,9 @@ function providerWarning(error: unknown, label: string): string {
   return `${label}: ${messages[code] ?? (code ? code.slice(0, 180) : "The provider could not complete this search.")}`;
 }
 
-async function getSerpApiQuota(apiKey: string): Promise<ProviderQuota> {
+let quotaLookupInFlight: Promise<ProviderQuota> | null = null;
+
+async function fetchSerpApiQuota(apiKey: string): Promise<ProviderQuota> {
   const cacheKey = providerCacheKey({ internal: "serpapi-account-quota-v1" });
   try {
     const cached = await getProviderCache(cacheKey);
@@ -205,6 +207,15 @@ async function getSerpApiQuota(apiKey: string): Promise<ProviderQuota> {
   }
   await recordProviderEvent({ provider: "SerpApi", category: "Account quota", eventType: "account_check", outcome: "success", cacheStatus: "miss", httpStatus, durationMs: Date.now() - startedAt });
   return quota;
+}
+
+async function getSerpApiQuota(apiKey: string): Promise<ProviderQuota> {
+  if (!quotaLookupInFlight) {
+    quotaLookupInFlight = fetchSerpApiQuota(apiKey).finally(() => {
+      quotaLookupInFlight = null;
+    });
+  }
+  return quotaLookupInFlight;
 }
 
 function telemetryCategory(params: Record<string, string>): string {
@@ -366,14 +377,40 @@ function cleanDestinationSearchName(value: string): string {
 
 function isCountryWideSearch(destinationName: string): boolean {
   const metadata = destinationMetadata(destinationName);
-  return Boolean(metadata.country) && normalizeLocationText(metadata.city) === normalizeLocationText(metadata.country);
+  // An island destination such as Aruba can be searched as one practical base;
+  // broad multi-city countries must be narrowed to a city/area first.
+  return Boolean(metadata.country)
+    && normalizeLocationText(metadata.city) === normalizeLocationText(metadata.country)
+    && !metadata.airportCode;
 }
 
 function destinationLocalityTokens(destinationName: string): string[] {
   const state = getDestinationStateRegion(destinationName);
-  return destinationName.split(",").map(normalizeLocationText).filter((part) =>
-    part.length >= 3 && part !== "united states" && (!state || part !== normalizeLocationText(state.name))
+  const metadataCountry = normalizeLocationText(destinationMetadata(destinationName).country);
+  const parts = destinationName.split(",").map(normalizeLocationText);
+  const countryPart = parts.find((part) => Boolean(getDestinationRegionScope(part)) && !getUSStateRegion(part));
+  return parts.filter((part) =>
+    part.length >= 3
+    && part !== "united states"
+    && part !== metadataCountry
+    && part !== countryPart
+    && (!state || part !== normalizeLocationText(state.name))
   );
+}
+
+function googleCountryCode(destinationName: string): string {
+  const metadata = destinationMetadata(destinationName);
+  const parts = destinationName.split(",").map((part) => part.trim()).filter(Boolean);
+  const country = normalizeLocationText(metadata.country || parts[parts.length - 1] || destinationName);
+  const codes: Record<string, string> = {
+    "dominican republic": "do", mexico: "mx", portugal: "pt", "puerto rico": "us", jamaica: "jm", aruba: "aw",
+    "united states": "us", canada: "ca", france: "fr", italy: "it", spain: "es", japan: "jp", iceland: "is",
+    "united kingdom": "uk", netherlands: "nl", germany: "de", switzerland: "ch", ireland: "ie", greece: "gr",
+    bahamas: "bs", barbados: "bb", "costa rica": "cr", panama: "pa", colombia: "co", brazil: "br", argentina: "ar",
+    chile: "cl", peru: "pe", australia: "au", "new zealand": "nz", thailand: "th", india: "in", "south korea": "kr",
+    "united arab emirates": "ae", "south africa": "za", turkey: "tr", türkiye: "tr",
+  };
+  return codes[country] || "us";
 }
 
 function addressMatchesState(address: string, aliases: string[]): boolean {
@@ -420,15 +457,15 @@ function hotelMatchesDestination(hotel: LiveHotel, airportCode: string, destinat
   const localityTokens = destinationLocalityTokens(destinationName);
   const address = normalizeLocationText(`${hotel.address} ${hotel.name}`);
 
-  if (!airport && isCountryWideSearch(destinationName)) return Boolean(hotel.address);
-  if (broadState) return Boolean(hotel.address) && addressMatchesState(normalizeLocationText(hotel.address), stateAliases);
-
   if (area) {
     if (hotel.latitude !== null && hotel.longitude !== null) {
       return milesBetween(area.latitude, area.longitude, hotel.latitude, hotel.longitude) <= area.hotelRadiusMiles;
     }
     return Boolean(hotel.address) && area.addressAliases.some((alias) => address.includes(normalizeLocationText(alias)));
   }
+
+  if (!airport && isCountryWideSearch(destinationName)) return Boolean(hotel.address);
+  if (broadState) return Boolean(hotel.address) && addressMatchesState(normalizeLocationText(hotel.address), stateAliases);
 
   // For a specific city plus state, match the city and verify the state when
   // the provider includes it. This also works when a city is not an airport.
@@ -562,7 +599,7 @@ function makeHotelParams(input: TripSearchInput, destinationName: string, airpor
     adults: String(input.adults),
     children: String(input.childrenAges.length),
     currency: input.currency,
-    gl: "us",
+    gl: googleCountryCode(destinationName),
     hl: "en",
     sort_by: "3",
   };
@@ -648,9 +685,6 @@ function filterDestinationExperiences(
 
   return items.filter((item) => {
     const address = normalizeLocationText(item.address);
-    if (broadCountrySearch) return Boolean(address);
-    if (broadState) return Boolean(address) && addressMatchesState(address, stateAliases);
-
     if (area) {
       if (item.latitude !== null && item.longitude !== null) {
         const limit = kind === "restaurant" ? area.restaurantRadiusMiles : area.activityRadiusMiles;
@@ -658,6 +692,9 @@ function filterDestinationExperiences(
       }
       return Boolean(address) && area.addressAliases.some((alias) => address.includes(normalizeLocationText(alias)));
     }
+
+    if (broadCountrySearch) return Boolean(address);
+    if (broadState) return Boolean(address) && addressMatchesState(address, stateAliases);
 
     if (localityTokens.length && address) {
       const localityMatch = localityTokens.some((token) => address.includes(token));
@@ -688,7 +725,7 @@ async function searchPlacesWithFallback(
     type: "search",
     q: `${query} in ${destinationName}`,
     hl: "en",
-    gl: "us",
+    gl: googleCountryCode(destinationName),
   };
   if (area) mapsParams.ll = `@${area.latitude},${area.longitude},10z`;
   else if (airport) mapsParams.ll = `@${airport.latitude},${airport.longitude},12z`;
@@ -728,7 +765,7 @@ async function searchPlacesWithFallback(
       q: `${query} in ${destinationName}`,
       location: destinationName,
       hl: "en",
-      gl: "us",
+      gl: googleCountryCode(destinationName),
     }, 21600, clientUsageKey);
     const fallbackEntries = [
       ...arr(fallbackResult.data.local_results),
@@ -750,6 +787,9 @@ async function searchPlacesWithFallback(
 }
 
 export async function searchLiveTravel(input: TripSearchInput, destinationAirportCode: string, destinationName: string, clientUsageKey = "shared"): Promise<LiveTravelSearchResult> {
+  if ((input.components.includes("stays") || input.components.includes("activities")) && isCountryWideSearch(destinationName)) {
+    throw new Error("DESTINATION_AREA_REQUIRED");
+  }
   if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   const components = input.components;

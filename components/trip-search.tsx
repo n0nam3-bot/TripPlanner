@@ -4,7 +4,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, Users, Wallet } from "lucide-react";
 import type { TripComponent, StayType } from "@/lib/trip-planner/types";
-import { getDestinationGateways, getLocationSuggestions, getUSStateRegion, type LocationSuggestion } from "@/lib/trip-planner/location-suggestions";
+import { getDestinationGateways, getDestinationRegionScope, getLocationSuggestions, type LocationSuggestion } from "@/lib/trip-planner/location-suggestions";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
 
 const dateAfter = (days: number) => {
@@ -90,7 +90,7 @@ export function TripSearch() {
   const [destinationAirportCode, setDestinationAirportCode] = useState("");
   const [destinationArea, setDestinationArea] = useState("");
   const destinationGateways = useMemo(() => getDestinationGateways(destination), [destination]);
-  const destinationState = useMemo(() => getUSStateRegion(destination), [destination]);
+  const destinationScope = useMemo(() => getDestinationRegionScope(destination), [destination]);
   const [depart, setDepart] = useState(dateAfter(45));
   const [returnDate, setReturnDate] = useState(dateAfter(50));
   const [adults, setAdults] = useState("2");
@@ -145,7 +145,14 @@ export function TripSearch() {
     if (submitting) return;
     if (components.length === 0) return setError("Choose at least one search: flights, places to stay or things to do.");
     const selectedOriginCode = originAirportCode || resolveAirportCode(origin) || "";
-    const selectedDestination = destinationArea.trim() || destination.trim();
+    const typedArea = destinationArea.trim();
+    const selectedDestination = typedArea
+      ? (typedArea.includes(",") || typedArea.toLocaleLowerCase() === destination.trim().toLocaleLowerCase() ? typedArea : `${typedArea}, ${destination.trim()}`)
+      : destination.trim();
+    const hasLocalTravelComponents = components.includes("stays") || components.includes("activities");
+    if (destinationScope && hasLocalTravelComponents && !typedArea) {
+      return setError(`Choose a city or area within ${destinationScope} so Tripfinder can return nearby stays, attractions and restaurants instead of unrelated results across the entire region.`);
+    }
     if (components.includes("flights") && !selectedOriginCode) return setError("Choose a departure city or airport from the suggestions so we can search the correct route.");
     if (components.includes("flights") && selectedDestination.toLowerCase() !== "anywhere" && !destinationAirportCode && !resolveAirportCode(selectedDestination)) return setError(destinationGateways.length ? "Choose an arrival airport for this state or area before searching flights." : "Choose a destination city or arrival airport from the suggestions for flight searches.");
     if (!selectedDestination) return setError("Enter a destination or choose Anywhere.");
@@ -208,8 +215,8 @@ export function TripSearch() {
 
       <div className={`search-fields ${components.includes("flights") ? "has-origin" : "no-origin"}`}>
         {components.includes("flights") && <LocationField field="origin" label="Leaving from" value={origin} airportCode={originAirportCode} placeholder="City or airport" onChange={(value) => { setOrigin(value); setOriginAirportCode(resolveAirportCode(value) || ""); }} onSelect={(item) => { setOrigin(item.value); setOriginAirportCode(item.airportCode); }}/ >}
-        <LocationField field="destination" label="Going to" value={destination} airportCode={destinationAirportCode} placeholder="Country, state, city or area" includeAttractions={components.includes("activities")} includeAirports={components.includes("flights")} onChange={(value) => { setDestination(value); setDestinationArea(""); setDestinationAirportCode(""); }} onSelect={(item) => { setDestination(item.value); setDestinationArea(""); setDestinationAirportCode(item.airportCode); }}/>
-        {destinationState && <LocationField field="destination" label={`City or area in ${destinationState.name} (optional)`} value={destinationArea} airportCode="" placeholder="Choose a city, town, resort or nearby area" scope={destinationState.name} includeAttractions={components.includes("activities")} onChange={setDestinationArea} onSelect={(item) => { setDestinationArea(item.value); if (item.airportCode) setDestinationAirportCode(item.airportCode); }}/ >}
+        <LocationField field="destination" label="Going to" value={destination} airportCode={components.includes("flights") ? destinationAirportCode : ""} placeholder="Country, state, city or area" includeAttractions={components.includes("activities")} includeAirports={components.includes("flights")} onChange={(value) => { setDestination(value); setDestinationArea(""); setDestinationAirportCode(""); }} onSelect={(item) => { setDestination(item.value); setDestinationArea(""); setDestinationAirportCode(item.airportCode); }}/>
+        {destinationScope && <LocationField field="destination" label={`City or area in ${destinationScope}`} value={destinationArea} airportCode="" placeholder="Choose or type a city, town, resort or nearby area" scope={destinationScope} onChange={(value) => { setDestinationArea(value); setDestinationAirportCode(""); }} onSelect={(item) => { setDestinationArea(item.value); if (item.airportCode) setDestinationAirportCode(item.airportCode); }}/ >}
         {components.includes("flights") && destinationGateways.length > 0 && <label className="search-field gateway-field"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">Arrival airport</span><select value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value)} aria-label="Choose arrival airport"><option value="">Choose a gateway</option>{destinationAirportCode && !destinationGateways.some((gateway) => gateway.code === destinationAirportCode) && <option value={destinationAirportCode}>Selected nearby airport · {destinationAirportCode}</option>}{destinationGateways.map((gateway) => <option value={gateway.code} key={gateway.code}>{gateway.label}</option>)}</select></span><ChevronDown className="select-chevron" size={14}/></label>}
         {components.includes("flights") && (destinationArea || destination).trim().toLowerCase() !== "anywhere" && destinationGateways.length === 0 && !destinationAirportCode && !resolveAirportCode(destinationArea || destination) && <label className="search-field gateway-field"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">Arrival airport code</span><input value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3))} placeholder="3-letter IATA code" maxLength={3} autoCapitalize="characters" aria-label="Arrival airport three-letter IATA code"/><small className="location-code">Enter the airport code serving your selected country or area.</small></span></label>}
 
