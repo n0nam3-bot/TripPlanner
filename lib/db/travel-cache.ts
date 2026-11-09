@@ -50,6 +50,21 @@ async function ensureTravelTables() {
   await schemaReady;
 }
 
+/** Ensure the persistent cache and shared request-limit tables exist. Safe to call on startup/health checks. */
+export async function initializeTravelDatabase(): Promise<void> {
+  await ensureTravelTables();
+  const sql = getSql();
+  const rows = await sql`SELECT
+    to_regclass('public.tripfinder_provider_cache') IS NOT NULL AS cache_ready,
+    to_regclass('public.tripfinder_provider_usage') IS NOT NULL AS monthly_usage_ready,
+    to_regclass('public.tripfinder_provider_hourly_usage') IS NOT NULL AS hourly_usage_ready,
+    to_regclass('public.tripfinder_client_usage') IS NOT NULL AS client_usage_ready`;
+  const row = rows[0] as unknown as Record<string, boolean> | undefined;
+  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready) {
+    throw new Error("DATABASE_SCHEMA_UNAVAILABLE");
+  }
+}
+
 export function providerCacheKey(params: Record<string, string>): string {
   const stable = Object.fromEntries(Object.entries(params).sort(([a], [b]) => a.localeCompare(b)));
   return createHash("sha256").update(JSON.stringify(stable)).digest("hex");

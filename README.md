@@ -27,7 +27,7 @@ The importer is overlay-only: matching files are replaced and new files are adde
 The site can still run in planning-only mode without credentials. To enable provider search, create these two accounts/values:
 
 1. **SerpApi API key** — register at [SerpApi](https://serpapi.com/) and copy the private API key from the dashboard. The current free plan advertises 250 searches per month. Review current plan details and provider terms before enabling search on a public or commercial site.
-2. **Neon PostgreSQL** — create a database at [Neon](https://neon.tech/) and copy its pooled connection string. The application creates its provider-cache and usage-control tables automatically on its first live search.
+2. **Neon PostgreSQL** — create a database at [Neon](https://neon.tech/) and copy its pooled connection string. Once `DATABASE_URL` is configured and deployed, opening `/api/health` automatically creates and verifies the provider-cache and usage-control tables. No SQL editor step is required. An auditable, repeatable manual schema is also included at `db/schema.sql`.
 
 In Vercel, open **TripPlanner → Settings → Environment Variables** and add:
 
@@ -101,7 +101,11 @@ Open http://localhost:3000. Without environment variables the site remains in pl
 2. Import or connect the repository in Vercel using the Next.js framework preset.
 3. Add `SERPAPI_API_KEY` and `DATABASE_URL` under Vercel project environment variables to enable live search.
 4. Redeploy after changing environment variables.
-5. Open `/api/health` to check which configuration variables are present.
+5. Open `/api/health` on the production website. This performs a real Neon connectivity check, creates the four required tables if missing, and reports whether the schema is ready. It does not consume a SerpApi flight/hotel search credit.
+
+### One public website address
+
+Vercel automatically generates unique deployment URLs for build records and previews. Tripfinder now redirects alternate deployment/domain hosts to Vercel's stable production domain (`VERCEL_PROJECT_PRODUCTION_URL`). The production branch is `main`; commits from that branch update the same public address. If you later attach a custom domain, Vercel's production-domain variable selects the primary production domain. You can optionally set `SITE_URL` in Vercel to force a specific canonical domain. Preview links intentionally redirect to production so visitors see one public website rather than separate versions.
 
 **Commercial hosting note:** Vercel Hobby is restricted to personal, non-commercial use. Before earning affiliate revenue or otherwise operating the site commercially, review current Vercel terms and move to an eligible plan or another host. See [Vercel plans](https://vercel.com/docs/plans/hobby).
 

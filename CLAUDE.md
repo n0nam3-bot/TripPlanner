@@ -69,3 +69,11 @@ You are continuing development of Tripfinder, a travel discovery, planning, and 
 - Never raise the provider request cap above 230 without changing the documented free-plan assumptions and reviewing account billing.
 - Provider links and booking tokens are opaque supplier data. Validate outbound URLs as HTTPS, allowlist Google hostnames for Google booking-form POSTs, preserve the provider-supplied `post_data` fields, and never manufacture tokens or seller URLs. Seller lookups must preserve the original route, passenger count, cabin and localization context. Per the current provider documentation, omit dates and advanced filters from booking-token lookups because they do not alter the token-selected itinerary.
 - Do not claim the provider snapshot is guaranteed or that a seller link reserves a trip.
+
+
+## Canonical production domain and database initialization
+
+- Keep one public site URL. `middleware.ts` redirects alternate deployment/domain hosts to `VERCEL_PROJECT_PRODUCTION_URL`; `SITE_URL` can override it if the owner later selects a custom primary domain. Do not create version-specific public domains. Vercel may still retain unique deployment URLs internally for diagnostics/rollback.
+- `app/api/health/route.ts` calls `initializeTravelDatabase()`. With a valid `DATABASE_URL`, opening `/api/health` creates and verifies the four cache/usage tables without consuming a SerpApi search credit.
+- `db/schema.sql` is the repeatable manual equivalent. Keep its definitions in sync with `lib/db/travel-cache.ts`.
+- Health status confirms Neon connection/schema readiness and that the SerpApi key is present; actual provider credential validation occurs on the first uncached live search via SerpApi's account endpoint.
