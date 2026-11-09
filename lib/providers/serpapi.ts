@@ -1,4 +1,4 @@
-import { getProviderCache, providerCacheKey, recordProviderEvent, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
+import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordProviderEvent, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
 import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationRegionScope, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
@@ -66,12 +66,15 @@ export type LiveExperience = {
 
 export type HotelBookingOption = { seller: string; price: number | null; currency: string; url?: string; terms: string[] };
 
+export type SearchCacheSummary = { key: string; label: string; status: "live" | "cached" | "stale"; fetchedAt: string };
+
 export type LiveTravelSearchResult = {
   status: "live" | "partial" | "empty";
   provider: "SerpApi / Google Travel and Maps";
   checkedAt: string;
   dataAsOf: string;
   servedFromCache: boolean;
+  cacheSummary: SearchCacheSummary[];
   requested: TripComponent[];
   flights: LiveFlight[];
   hotels: LiveHotel[];
@@ -105,7 +108,7 @@ function safeHttpUrl(value: unknown): string | undefined {
   } catch { return undefined; }
 }
 
-type ProviderResponse = { data: JsonObject; fetchedAt: string; fromCache: boolean };
+type ProviderResponse = { data: JsonObject; fetchedAt: string; fromCache: boolean; isStale?: boolean };
 type ProviderQuota = {
   remaining: number;
   monthlyLimit: number | null;
@@ -235,88 +238,146 @@ function telemetryCategory(params: Record<string, string>): string {
   return engine.slice(0, 60);
 }
 
-async function querySerpApi(params: Record<string, string>, ttlSeconds = 3600, clientUsageKey = "shared"): Promise<ProviderResponse> {
-  const apiKey = process.env.SERPAPI_API_KEY;
-  if (!apiKey) throw new Error("SERPAPI_NOT_CONFIGURED");
+function daysUntilProviderDate(value: string | undefined): number | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const target = Date.UTC(Number(value.slice(0, 4)), Number(value.slice(5, 7)) - 1, Number(value.slice(8, 10)));
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.floor((target - today) / 86400000);
+}
+
+type ProviderCachePolicy = { ttlSeconds: number; staleMaxAgeSeconds: number };
+
+/** Category-specific freshness windows. Search parameters remain part of the cache key. */
+export function getProviderCachePolicy(params: Record<string, string>): ProviderCachePolicy {
+  const engine = params.engine ?? "";
+  if (engine === "google_flights") {
+    const days = daysUntilProviderDate(params.outbound_date);
+    if (days !== null && days <= 7) return { ttlSeconds: 900, staleMaxAgeSeconds: 6 * 3600 };
+    if (days !== null && days <= 30) return { ttlSeconds: 3600, staleMaxAgeSeconds: 12 * 3600 };
+    return { ttlSeconds: 7200, staleMaxAgeSeconds: 24 * 3600 };
+  }
+  if (engine === "google_hotels") {
+    const days = daysUntilProviderDate(params.check_in_date);
+    if (days !== null && days <= 7) return { ttlSeconds: 1800, staleMaxAgeSeconds: 12 * 3600 };
+    if (days !== null && days <= 30) return { ttlSeconds: 7200, staleMaxAgeSeconds: 24 * 3600 };
+    return { ttlSeconds: 21600, staleMaxAgeSeconds: 72 * 3600 };
+  }
+  if (engine === "google_maps" || engine === "google_local") {
+    return { ttlSeconds: 12 * 3600, staleMaxAgeSeconds: 7 * 86400 };
+  }
+  if (engine === "google_maps_directions") {
+    return { ttlSeconds: 12 * 3600, staleMaxAgeSeconds: 24 * 3600 };
+  }
+  return { ttlSeconds: 3600, staleMaxAgeSeconds: 24 * 3600 };
+}
+
+async function querySerpApi(
+  params: Record<string, string>,
+  clientUsageKey = "shared",
+  forceRefresh = false,
+): Promise<ProviderResponse> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
 
   const category = telemetryCategory(params);
   const cacheKey = providerCacheKey(params);
   const startedAt = Date.now();
-  let cached: Awaited<ReturnType<typeof getProviderCache>>;
+  const policy = getProviderCachePolicy(params);
+  let cached: Awaited<ReturnType<typeof getProviderCache>> = null;
+  let staleCandidate: Awaited<ReturnType<typeof getProviderCacheFallback>> = null;
   try {
     cached = await getProviderCache(cacheKey);
+    if (cached && !forceRefresh) {
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "cache_hit", outcome: "success", cacheStatus: "hit", durationMs: Date.now() - startedAt });
+      return { data: cached.payload, fetchedAt: dataTimestamp(cached.payload, cached.fetchedAt), fromCache: true };
+    }
+    // A forced refresh can still fall back to the current response if the
+    // provider cannot refresh it. On an expired cache miss this finds recent
+    // entries that are retained for up to seven days.
+    staleCandidate = await getProviderCacheFallback(cacheKey, policy.staleMaxAgeSeconds);
   } catch {
     throw new Error("DATABASE_UNAVAILABLE");
   }
-  if (cached) {
-    await recordProviderEvent({ provider: "SerpApi", category, eventType: "cache_hit", outcome: "success", cacheStatus: "hit", durationMs: Date.now() - startedAt });
-    return { data: cached.payload, fetchedAt: dataTimestamp(cached.payload, cached.fetchedAt), fromCache: true };
-  }
 
-  // SerpApi's Account API does not consume search credits. Check the real account
-  // balance before reserving an app slot, so searches from other projects are
-  // accounted for and this app can keep a fixed safety reserve.
-  let quota: ProviderQuota;
-  try {
-    quota = await getSerpApiQuota(apiKey);
-  } catch (error) {
-    await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
-    throw error;
-  }
-  const rawReserve = Number(process.env.SERPAPI_PROVIDER_QUOTA_RESERVE ?? "75");
-  const reserve = Number.isInteger(rawReserve) ? Math.max(10, Math.min(200, rawReserve)) : 75;
-  if (quota.remaining <= reserve) {
-    await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
-    throw new Error("SERPAPI_PROVIDER_QUOTA_LOW");
-  }
-  const rawHourlyReserve = Number(process.env.SERPAPI_PROVIDER_HOURLY_RESERVE ?? "10");
-  const hourlyReserve = Number.isInteger(rawHourlyReserve) ? Math.max(1, Math.min(45, rawHourlyReserve)) : 10;
-  if (quota.hourlyRemaining !== null && quota.hourlyRemaining <= hourlyReserve) {
-    await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
-    throw new Error("SERPAPI_PROVIDER_HOURLY_LIMIT");
-  }
+  const useStaleFallback = async (cause: unknown): Promise<ProviderResponse> => {
+    if (!staleCandidate) throw cause;
+    await recordProviderEvent({ provider: "SerpApi", category, eventType: "cache_hit", outcome: "success", cacheStatus: "stale", durationMs: Date.now() - startedAt });
+    return {
+      data: staleCandidate.payload,
+      fetchedAt: dataTimestamp(staleCandidate.payload, staleCandidate.fetchedAt),
+      fromCache: true,
+      isStale: true,
+    };
+  };
 
-  // The persistent counter reserves a slot before calling the provider. Failed
-  // attempts count conservatively so automated retries cannot exhaust the free quota.
-  try {
-    await reserveProviderSearch(clientUsageKey);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
-    if (["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_CLIENT_RATE_LIMITED"].includes(message)) throw error;
-    throw new Error("DATABASE_UNAVAILABLE");
-  }
+  const apiKey = process.env.SERPAPI_API_KEY;
+  if (!apiKey) return useStaleFallback(new Error("SERPAPI_NOT_CONFIGURED"));
 
-  const url = new URL(ENDPOINT);
-  for (const [key, value] of Object.entries({ ...params, api_key: apiKey, output: "json" })) url.searchParams.set(key, value);
-  let response: Response;
   try {
-    response = await fetch(url.toString(), {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(25000),
-    });
-  } catch (error) {
-    await recordProviderEvent({ provider: "SerpApi", category, eventType: "provider_error", outcome: "error", cacheStatus: "miss", durationMs: Date.now() - startedAt });
-    throw error;
-  }
-  const data = obj(await response.json().catch(() => ({})));
-  if (!response.ok || data.error) {
-    await recordProviderEvent({ provider: "SerpApi", category, eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
-    const message = str(data.error, `Travel search provider returned HTTP ${response.status}.`);
-    throw new Error(message.replaceAll(apiKey, "[redacted]").slice(0, 220));
-  }
-  try {
-    await setProviderCache(cacheKey, data, ttlSeconds);
-  } catch {
+    // Account quota checks are free and cached separately for 60 seconds.
+    let quota: ProviderQuota;
+    try {
+      quota = await getSerpApiQuota(apiKey);
+    } catch (error) {
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
+      throw error;
+    }
+    const rawReserve = Number(process.env.SERPAPI_PROVIDER_QUOTA_RESERVE ?? "75");
+    const reserve = Number.isInteger(rawReserve) ? Math.max(10, Math.min(200, rawReserve)) : 75;
+    if (quota.remaining <= reserve) {
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
+      throw new Error("SERPAPI_PROVIDER_QUOTA_LOW");
+    }
+    const rawHourlyReserve = Number(process.env.SERPAPI_PROVIDER_HOURLY_RESERVE ?? "10");
+    const hourlyReserve = Number.isInteger(rawHourlyReserve) ? Math.max(1, Math.min(45, rawHourlyReserve)) : 10;
+    if (quota.hourlyRemaining !== null && quota.hourlyRemaining <= hourlyReserve) {
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
+      throw new Error("SERPAPI_PROVIDER_HOURLY_LIMIT");
+    }
+
+    // Reserve a slot before making the billable provider request.
+    try {
+      await reserveProviderSearch(clientUsageKey);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss", durationMs: Date.now() - startedAt });
+      if (["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_CLIENT_RATE_LIMITED"].includes(message)) throw error;
+      throw new Error("DATABASE_UNAVAILABLE");
+    }
+
+    const url = new URL(ENDPOINT);
+    for (const [key, value] of Object.entries({ ...params, api_key: apiKey, output: "json" })) url.searchParams.set(key, value);
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(25000),
+      });
+    } catch (error) {
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "provider_error", outcome: "error", cacheStatus: "miss", durationMs: Date.now() - startedAt });
+      throw error;
+    }
+    const data = obj(await response.json().catch(() => ({})));
+    if (!response.ok || data.error) {
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
+      const message = str(data.error, `Travel search provider returned HTTP ${response.status}.`);
+      throw new Error(message.replaceAll(apiKey, "[redacted]").slice(0, 220));
+    }
+    try {
+      await setProviderCache(cacheKey, data, policy.ttlSeconds);
+    } catch {
+      await recordProviderEvent({ provider: "SerpApi", category, eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
+      // A successful live response is more useful than an older cached result.
+      // Return it even if the Neon write fails; telemetry still records the live call.
+      return { data, fetchedAt: dataTimestamp(data, new Date().toISOString()), fromCache: false };
+    }
     await recordProviderEvent({ provider: "SerpApi", category, eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
-    throw new Error("DATABASE_UNAVAILABLE");
+    return { data, fetchedAt: dataTimestamp(data, new Date().toISOString()), fromCache: false };
+  } catch (error) {
+    return useStaleFallback(error);
   }
-  await recordProviderEvent({ provider: "SerpApi", category, eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
-  const fetchedAt = dataTimestamp(data, new Date().toISOString());
-  return { data, fetchedAt, fromCache: false };
 }
 
 function normalizeFlight(item: unknown, index: number, currency: string): LiveFlight | null {
@@ -717,6 +778,7 @@ async function searchPlacesWithFallback(
   destinationAirportCode: string,
   kind: "activity" | "restaurant",
   clientUsageKey: string,
+  forceRefresh = false,
 ): Promise<ProviderResponse> {
   const airport = AIRPORT_COORDINATES[destinationAirportCode];
   const area = getDestinationAreaGeo(destinationName);
@@ -735,7 +797,7 @@ async function searchPlacesWithFallback(
   let mapEntries: unknown[] = [];
   let localCount = 0;
   try {
-    mapsResult = await querySerpApi(mapsParams, 21600, clientUsageKey);
+    mapsResult = await querySerpApi(mapsParams, clientUsageKey, forceRefresh);
     mapEntries = [
       ...arr(mapsResult.data.local_results),
       ...arr(mapsResult.data.place_results),
@@ -766,15 +828,26 @@ async function searchPlacesWithFallback(
       location: destinationName,
       hl: "en",
       gl: googleCountryCode(destinationName),
-    }, 21600, clientUsageKey);
+    }, clientUsageKey, forceRefresh);
     const fallbackEntries = [
       ...arr(fallbackResult.data.local_results),
       ...arr(fallbackResult.data.place_results),
       ...arr(fallbackResult.data.discover_more_places),
     ];
     if (mapsResult) {
+      // The combined list is only as fresh as its least-fresh contributing
+      // provider response. Preserve that state so the UI cannot label stale
+      // Maps entries as live just because the Google Local fallback was fresh.
+      const isStale = Boolean(mapsResult.isStale || fallbackResult.isStale);
+      const fetchedAt = [mapsResult.fetchedAt, fallbackResult.fetchedAt]
+        .filter(Boolean)
+        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0]
+        || fallbackResult.fetchedAt;
       return {
         ...fallbackResult,
+        fetchedAt,
+        fromCache: Boolean(mapsResult.fromCache && fallbackResult.fromCache),
+        isStale,
         data: { ...fallbackResult.data, local_results: [...mapEntries, ...fallbackEntries] },
       };
     }
@@ -786,11 +859,10 @@ async function searchPlacesWithFallback(
   }
 }
 
-export async function searchLiveTravel(input: TripSearchInput, destinationAirportCode: string, destinationName: string, clientUsageKey = "shared"): Promise<LiveTravelSearchResult> {
+export async function searchLiveTravel(input: TripSearchInput, destinationAirportCode: string, destinationName: string, clientUsageKey = "shared", forceRefresh = false): Promise<LiveTravelSearchResult> {
   if ((input.components.includes("stays") || input.components.includes("activities")) && isCountryWideSearch(destinationName)) {
     throw new Error("DESTINATION_AREA_REQUIRED");
   }
-  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   const components = input.components;
   const normalizedDestinationName = cleanDestinationSearchName(destinationName);
@@ -800,15 +872,15 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   if (components.includes("flights") && (!destinationCode || !/^[A-Z]{3}$/.test(destinationCode))) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
 
   const tasks: Array<{ key: "flights" | "hotels" | "vacation_rentals" | "experiences" | "restaurants"; promise: Promise<ProviderResponse> }> = [];
-  if (components.includes("flights")) tasks.push({ key: "flights", promise: querySerpApi(makeFlightParams(input, originCode!, destinationCode!), 3600, clientUsageKey) });
+  if (components.includes("flights")) tasks.push({ key: "flights", promise: querySerpApi(makeFlightParams(input, originCode!, destinationCode!), clientUsageKey, forceRefresh) });
   if (components.includes("stays")) {
     for (const stayType of input.stayTypes) {
-      tasks.push({ key: stayType === "hotels" ? "hotels" : "vacation_rentals", promise: querySerpApi(makeHotelParams(input, normalizedDestinationName, destinationCode || destinationAirportCode, stayType), 3600, clientUsageKey) });
+      tasks.push({ key: stayType === "hotels" ? "hotels" : "vacation_rentals", promise: querySerpApi(makeHotelParams(input, normalizedDestinationName, destinationCode || destinationAirportCode, stayType), clientUsageKey, forceRefresh) });
     }
   }
   if (components.includes("activities")) {
-    tasks.push({ key: "experiences", promise: searchPlacesWithFallback(experienceQueryForStyle(input.style), normalizedDestinationName, destinationCode || destinationAirportCode, "activity", clientUsageKey) });
-    tasks.push({ key: "restaurants", promise: searchPlacesWithFallback("popular restaurants, highly rated local dining, casual restaurants and local food", normalizedDestinationName, destinationCode || destinationAirportCode, "restaurant", clientUsageKey) });
+    tasks.push({ key: "experiences", promise: searchPlacesWithFallback(experienceQueryForStyle(input.style), normalizedDestinationName, destinationCode || destinationAirportCode, "activity", clientUsageKey, forceRefresh) });
+    tasks.push({ key: "restaurants", promise: searchPlacesWithFallback("popular restaurants, highly rated local dining, casual restaurants and local food", normalizedDestinationName, destinationCode || destinationAirportCode, "restaurant", clientUsageKey, forceRefresh) });
   }
 
   const outcomes = await Promise.allSettled(tasks.map((task) => task.promise));
@@ -827,6 +899,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   let restaurants: LiveExperience[] = [];
   const fetchedAt: string[] = [];
   const cacheFlags: boolean[] = [];
+  const cacheSummary: SearchCacheSummary[] = [];
   let providerSearchLinks: { flights?: string } = {};
 
   outcomes.forEach((outcome, index) => {
@@ -837,6 +910,11 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     }
     fetchedAt.push(outcome.value.fetchedAt);
     cacheFlags.push(outcome.value.fromCache);
+    const categoryLabel = key === "flights" ? "Flights" : key === "hotels" ? "Hotels" : key === "vacation_rentals" ? "Vacation rentals" : key === "experiences" ? "Activities" : "Restaurants";
+    cacheSummary.push({ key, label: categoryLabel, status: outcome.value.isStale ? "stale" : outcome.value.fromCache ? "cached" : "live", fetchedAt: outcome.value.fetchedAt });
+    if (outcome.value.isStale) {
+      warnings.push(`${categoryLabel} are showing saved results from ${new Date(outcome.value.fetchedAt).toLocaleString()} because a live refresh was unavailable. Prices and availability may have changed.`);
+    }
     if (key === "flights") {
       const metadata = obj(outcome.value.data.search_metadata);
       providerSearchLinks.flights = safeHttpUrl(metadata.google_flights_url);
@@ -879,7 +957,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   const hasActivities = !components.includes("activities") || experiences.length > 0 || restaurants.length > 0;
   const fulfilledRequestedCategories = [hasFlights, hasStays, hasActivities].filter(Boolean).length;
   const status = fulfilledRequestedCategories === 0 ? "empty" : fulfilledRequestedCategories === components.length ? "live" : "partial";
-  if (input.rooms > 1 && components.includes("stays")) warnings.push("The provider returned property-level prices but does not expose a confirmed multi-room allocation in this result. Open each property and reconfirm the exact room count and guest distribution before relying on the total.");
+  if (input.rooms > 1 && components.includes("stays")) warnings.push(`Google Hotels does not expose a room-count parameter for this search endpoint. These are property-level rates and may not represent ${input.rooms} rooms; reconfirm the room allocation, guest distribution, taxes and total directly with the seller.`);
   if (input.childrenAges.length && components.includes("flights")) warnings.push("The flight provider applies child count but does not confirm age-specific fare rules here. Verify passenger ages and fares with the airline or seller.");
   return {
     status,
@@ -887,6 +965,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     checkedAt: new Date().toISOString(),
     dataAsOf: fetchedAt.sort()[0] ?? new Date().toISOString(),
     servedFromCache: cacheFlags.length > 0 && cacheFlags.every(Boolean),
+    cacheSummary,
     requested: components,
     flights,
     hotels: uniqueHotels,
@@ -897,7 +976,6 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
 }
 
 export async function getHotelBookingOptions(propertyToken: string, input: TripSearchInput, clientUsageKey = "shared"): Promise<HotelBookingOption[]> {
-  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   if (!propertyToken || propertyToken.length > 12000) throw new Error("INVALID_PROPERTY_TOKEN");
   const params: Record<string, string> = {
@@ -907,7 +985,7 @@ export async function getHotelBookingOptions(propertyToken: string, input: TripS
     currency: input.currency, gl: "us", hl: "en",
   };
   if (input.childrenAges.length) params.children_ages = input.childrenAges.join(",");
-  const result = await querySerpApi(params, 3600, clientUsageKey);
+  const result = await querySerpApi(params, clientUsageKey);
   const candidates = [...arr(result.data.ads), ...arr(result.data.prices)];
   const offers = candidates.map((entry) => {
     const offer = obj(entry);
@@ -924,7 +1002,6 @@ export async function getHotelBookingOptions(propertyToken: string, input: TripS
 export type DrivingRouteResult = { distance: string; duration: string; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string };
 
 export async function getDrivingRoute(origin: string, destination: string, clientUsageKey = "shared"): Promise<DrivingRouteResult | null> {
-  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   const cleanOrigin = origin.trim().slice(0, 300);
   const cleanDestination = destination.trim().slice(0, 300);
@@ -937,7 +1014,7 @@ export async function getDrivingRoute(origin: string, destination: string, clien
     distance_unit: "1",
     hl: "en",
     gl: "us",
-  }, 21600, clientUsageKey);
+  }, clientUsageKey);
   const routeList = arr(result.data.directions);
   const route = obj(routeList[0]);
   const distance = str(route.formatted_distance, str(route.distance));
@@ -956,14 +1033,13 @@ export async function getDrivingRoute(origin: string, destination: string, clien
 }
 
 export async function searchReturnFlights(input: TripSearchInput, destinationAirportCode: string, departureToken: string, clientUsageKey = "shared"): Promise<ReturnFlightSearchResult> {
-  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   if (!departureToken || departureToken.length > 12000) throw new Error("INVALID_DEPARTURE_TOKEN");
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
   if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
   const params = { ...makeFlightParams(input, originCode, destinationAirportCode), departure_token: departureToken };
-  const result = await querySerpApi(params, 3600, clientUsageKey);
+  const result = await querySerpApi(params, clientUsageKey);
   const flights = normalizeFlights(result.data, input.currency);
   return {
     flights,
@@ -1017,7 +1093,6 @@ export async function getFlightBookingOptions(
   destinationAirportCode: string,
   clientUsageKey = "shared",
 ): Promise<FlightBookingOption[]> {
-  if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   if (!bookingToken || bookingToken.length > 12000) throw new Error("INVALID_BOOKING_TOKEN");
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
@@ -1043,7 +1118,7 @@ export async function getFlightBookingOptions(
     hl: original.hl,
     booking_token: bookingToken,
   };
-  const response = await querySerpApi(params, 3600, clientUsageKey);
+  const response = await querySerpApi(params, clientUsageKey);
   return arr(response.data.booking_options).map((item) => {
     const option = obj(item);
     const together = obj(option.together);

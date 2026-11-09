@@ -9,7 +9,7 @@ export type ProviderEventInput = {
   category: string;
   eventType: "provider_request" | "cache_hit" | "provider_error" | "request_blocked" | "account_check";
   outcome: "success" | "error" | "blocked";
-  cacheStatus?: "hit" | "miss" | "bypass" | "none";
+  cacheStatus?: "hit" | "miss" | "stale" | "bypass" | "none";
   httpStatus?: number | null;
   durationMs?: number | null;
 };
@@ -112,6 +112,28 @@ export async function getProviderCache(cacheKey: string): Promise<{ payload: Jso
   if (!row) return null;
   const payload = typeof row.payload === "string" ? JSON.parse(row.payload) as JsonRecord : row.payload;
   return { payload, fetchedAt: row.created_at };
+}
+
+/** Return a recent cache entry even when its TTL has elapsed, for controlled stale fallback. */
+export async function getProviderCacheFallback(
+  cacheKey: string,
+  maxAgeSeconds: number,
+): Promise<{ payload: JsonRecord; fetchedAt: string; ageSeconds: number } | null> {
+  await ensureTravelTables();
+  const sql = getSql();
+  const safeMaxAge = Math.max(60, Math.min(604800, Math.floor(maxAgeSeconds)));
+  const rows = await sql`SELECT payload, created_at::text AS created_at
+    FROM tripfinder_provider_cache
+    WHERE cache_key = ${cacheKey}
+      AND created_at >= now() - (${safeMaxAge} * interval '1 second')
+    ORDER BY created_at DESC
+    LIMIT 1`;
+  const row = rows[0] as unknown as CacheRow | undefined;
+  if (!row) return null;
+  const payload = typeof row.payload === "string" ? JSON.parse(row.payload) as JsonRecord : row.payload;
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(row.created_at).getTime()) / 1000));
+  if (!Number.isFinite(ageSeconds) || ageSeconds > safeMaxAge) return null;
+  return { payload, fetchedAt: row.created_at, ageSeconds };
 }
 
 export async function setProviderCache(cacheKey: string, payload: JsonRecord, ttlSeconds: number): Promise<void> {
@@ -267,8 +289,8 @@ export async function clearAdminLoginFailures(clientKey: string): Promise<void> 
 export type AdminDashboardSnapshot = {
   generatedAt: string;
   appUsage: { month: string; monthlyUsed: number; monthlyCap: number; monthlyRemaining: number; hourlyUsed: number; hourlyCap: number; todayReservedSearches: number };
-  periodTotals: { events24h: number; apiCalls24h: number; accountChecks24h: number; cacheHits24h: number; failures24h: number; blocked24h: number; averageProviderMs: number | null };
-  providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; failures: number; averageMs: number | null }>;
+  periodTotals: { events24h: number; apiCalls24h: number; accountChecks24h: number; cacheHits24h: number; staleCacheHits24h: number; failures24h: number; blocked24h: number; averageProviderMs: number | null };
+  providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; staleCacheHits: number; failures: number; averageMs: number | null }>;
   dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
   recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; createdAt: string }>;
   cache: { totalEntries: number; validEntries: number; expiredEntries: number; lastUpdatedAt: string | null };
@@ -295,6 +317,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota')::int AS api_calls,
         count(*) FILTER (WHERE category = 'Account quota' AND event_type IN ('account_check', 'provider_error'))::int AS account_checks,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
+        count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale' AND category <> 'Account quota')::int AS stale_cache_hits,
         count(*) FILTER (WHERE outcome = 'error')::int AS failures,
         count(*) FILTER (WHERE outcome = 'blocked')::int AS blocked,
         round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms
@@ -303,6 +326,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota')::int AS api_calls,
         count(*) FILTER (WHERE category = 'Account quota' AND event_type IN ('account_check', 'provider_error'))::int AS account_checks,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
+        count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale' AND category <> 'Account quota')::int AS stale_cache_hits,
         count(*) FILTER (WHERE outcome = 'error')::int AS failures,
         round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms
       FROM tripfinder_api_event_log WHERE created_at >= now() - interval '30 days'
@@ -343,13 +367,14 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
       apiCalls24h: asNumber(totals?.api_calls),
       accountChecks24h: asNumber(totals?.account_checks),
       cacheHits24h: asNumber(totals?.cache_hits),
+      staleCacheHits24h: asNumber(totals?.stale_cache_hits),
       failures24h: asNumber(totals?.failures),
       blocked24h: asNumber(totals?.blocked),
       averageProviderMs: totals?.avg_ms === null || totals?.avg_ms === undefined ? null : asNumber(totals.avg_ms),
     },
     providerBreakdown: (breakdownRows as unknown as Array<Record<string, unknown>>).map((row) => ({
       provider: String(row.provider), category: String(row.category), apiCalls: asNumber(row.api_calls),
-      accountChecks: asNumber(row.account_checks), cacheHits: asNumber(row.cache_hits), failures: asNumber(row.failures), averageMs: row.avg_ms === null ? null : asNumber(row.avg_ms),
+      accountChecks: asNumber(row.account_checks), cacheHits: asNumber(row.cache_hits), staleCacheHits: asNumber(row.stale_cache_hits), failures: asNumber(row.failures), averageMs: row.avg_ms === null ? null : asNumber(row.avg_ms),
     })),
     dailyTrend: (trendRows as unknown as Array<Record<string, unknown>>).map((row) => ({
       hour: String(row.hour), apiCalls: asNumber(row.api_calls), cacheHits: asNumber(row.cache_hits), failures: asNumber(row.failures),

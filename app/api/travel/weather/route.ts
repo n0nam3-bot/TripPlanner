@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getProviderCache, providerCacheKey, recordProviderEvent, setProviderCache } from "@/lib/db/travel-cache";
+import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordProviderEvent, setProviderCache } from "@/lib/db/travel-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,13 +56,12 @@ function weatherApiError(payload: JsonObject): { code: number; message: string }
 
 export async function POST(request: Request) {
   try {
-    const key = process.env.WEATHERAPI_API_KEY;
-    if (!key) return NextResponse.json({ status: "unavailable", days: [], message: "Weather is not connected. Add WEATHERAPI_API_KEY in Vercel to enable forecasts." }, { status: 503 });
     const raw: unknown = await request.json();
     const body = asObject(raw);
     const location = typeof body.location === "string" ? body.location.trim().slice(0, 160) : "";
     const startDate = typeof body.startDate === "string" ? body.startDate : "";
     const endDate = typeof body.endDate === "string" ? body.endDate : "";
+    const forceRefresh = body.forceRefresh === true;
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
     const startTimestamp = Date.parse(`${startDate}T00:00:00Z`);
     const endTimestamp = Date.parse(`${endDate}T00:00:00Z`);
@@ -81,10 +80,12 @@ export async function POST(request: Request) {
       return date.toISOString().slice(0, 10);
     });
     const days: WeatherDay[] = [];
+    const staleDates: string[] = [];
     let planMessage = "";
+    const key = process.env.WEATHERAPI_API_KEY;
 
-    // Weather forecasts use an explicit Neon cache so the admin dashboard can
-    // distinguish real WeatherAPI calls from cached responses.
+    // The one-hour fresh cache is date-specific. A saved forecast up to six
+    // hours old can be shown as a clearly labelled fallback if refresh fails.
     for (const date of requestedDates) {
       const offset = utcDayOffset(date);
       const endpoint = offset <= 14 ? "forecast.json" : "future.json";
@@ -92,7 +93,7 @@ export async function POST(request: Request) {
       const cacheStartedAt = Date.now();
       const cached = await getProviderCache(cacheKey);
       const cachedDay = cached?.payload.normalizedDay;
-      if (cachedDay && typeof cachedDay === "object" && !Array.isArray(cachedDay)) {
+      if (!forceRefresh && cachedDay && typeof cachedDay === "object" && !Array.isArray(cachedDay)) {
         const normalized = cachedDay as unknown as WeatherDay;
         if (normalized.date === date && typeof normalized.condition === "string") {
           days.push(normalized);
@@ -100,6 +101,26 @@ export async function POST(request: Request) {
           continue;
         }
       }
+
+      const staleEntry = await getProviderCacheFallback(cacheKey, 6 * 3600);
+      const staleRaw = staleEntry?.payload.normalizedDay;
+      const staleDay = staleRaw && typeof staleRaw === "object" && !Array.isArray(staleRaw)
+        ? staleRaw as unknown as WeatherDay
+        : null;
+      const useStale = async () => {
+        if (!staleDay || staleDay.date !== date || typeof staleDay.condition !== "string") return false;
+        days.push(staleDay);
+        staleDates.push(date);
+        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "cache_hit", outcome: "success", cacheStatus: "stale", durationMs: Date.now() - cacheStartedAt });
+        return true;
+      };
+
+      if (!key) {
+        if (await useStale()) continue;
+        planMessage = "Weather is not connected. Add WEATHERAPI_API_KEY in Vercel to retrieve new forecasts.";
+        break;
+      }
+
       const url = new URL(`https://api.weatherapi.com/v1/${endpoint}`);
       url.searchParams.set("key", key);
       url.searchParams.set("q", location);
@@ -113,12 +134,15 @@ export async function POST(request: Request) {
         response = await fetch(url.toString(), { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15000) });
       } catch {
         await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", durationMs: Date.now() - providerStartedAt });
+        if (await useStale()) continue;
         return NextResponse.json({ status: "error", days, message: "The weather provider could not be reached. Try again later." }, { status: 502 });
       }
+
       const text = await response.text();
       let payload: JsonObject;
       try { payload = asObject(JSON.parse(text)); } catch {
         await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
+        if (await useStale()) continue;
         return NextResponse.json({ status: "error", days, message: "The weather provider returned an unreadable response. Try again later." }, { status: 502 });
       }
       const providerError = weatherApiError(payload);
@@ -135,23 +159,35 @@ export async function POST(request: Request) {
         } else {
           planMessage = providerError?.message || `Weather provider returned HTTP ${response.status}.`;
         }
+        if (await useStale()) continue;
         break;
       }
+
       const forecast = asObject(payload.forecast);
       const forecastDays = Array.isArray(forecast.forecastday) ? forecast.forecastday : [];
       const normalized = normalizeDay(forecastDays[0], date);
       await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
       if (normalized) {
         days.push(normalized);
-        await setProviderCache(cacheKey, { normalizedDay: normalized as unknown as JsonObject }, 3600);
+        // A database/cache write failure must not discard a successful live
+        // forecast. The response still reaches the traveler; it simply will
+        // not be reusable from Neon on the next request.
+        try {
+          await setProviderCache(cacheKey, { normalizedDay: normalized as unknown as JsonObject }, 3600);
+        } catch {
+          // The provider response is already valid and should remain visible.
+        }
       }
     }
 
+    const staleMessage = staleDates.length
+      ? `Showing saved weather data for ${staleDates.join(", ")}. A live refresh was unavailable, so conditions may have changed.`
+      : "";
     if (days.length === requestedDates.length) {
-      return NextResponse.json({ status: "ok", days, attribution: "Weather data by WeatherAPI.com" }, { headers: { "Cache-Control": "private, max-age=1800" } });
+      return NextResponse.json({ status: staleDates.length ? "partial" : "ok", days, message: staleMessage || undefined, attribution: "Weather data by WeatherAPI.com" }, { headers: { "Cache-Control": "private, max-age=1800" } });
     }
     if (days.length > 0) {
-      return NextResponse.json({ status: "partial", days, message: planMessage || "Weather is available for only part of the selected date range on the current plan.", attribution: "Weather data by WeatherAPI.com" });
+      return NextResponse.json({ status: "partial", days, message: staleMessage || planMessage || "Weather is available for only part of the selected date range on the current plan.", attribution: "Weather data by WeatherAPI.com" });
     }
     return NextResponse.json({ status: "unavailable", days: [], message: planMessage || "No forecast data was returned for these dates." });
   } catch {

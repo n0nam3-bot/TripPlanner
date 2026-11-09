@@ -1243,3 +1243,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 @media (max-width: 430px) { .admin-metric-grid { grid-template-columns: 1fr; } .admin-wordmark { display: none; } .admin-title-row h1 { font-size: 31px; } }
 .admin-page button:focus-visible, .admin-page input:focus-visible, .admin-page a:focus-visible { outline: 2px solid #617e68; outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { .admin-spin, .admin-loading-line { animation: none; } }
+
+/* Per-category cache freshness and explicit refresh guidance. */
+.cache-freshness-list { display: flex; flex-wrap: wrap; gap: 7px; margin: 9px 0 4px; }
+.cache-freshness { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; border: 1px solid #dce5dc; border-radius: 999px; padding: 5px 9px; background: #f2f7f2; color: #536b59; font-size: 10px; line-height: 1.35; }
+.cache-freshness strong { color: #283f30; }
+.cache-freshness.cache-stale { border-color: #e7d6b8; background: #fbf5e9; color: #8a6840; }
+.cache-freshness.cache-stale strong { color: #6f4e2e; }
+.cache-freshness.cache-live { border-color: #d5e4ed; background: #f0f6fa; color: #45677d; }

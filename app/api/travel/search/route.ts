@@ -31,7 +31,8 @@ export async function POST(request: Request) {
     }
 
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
-    const result = await searchLiveTravel(validated.input, airportCode, destinationName, hashClientAddress(address));
+    const forceRefresh = record.forceRefresh === true;
+    const result = await searchLiveTravel(validated.input, airportCode, destinationName, hashClientAddress(address), forceRefresh);
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected travel search error.";

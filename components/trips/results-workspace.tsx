@@ -47,6 +47,23 @@ function haversineMiles(aLat: number, aLon: number, bLat: number, bLon: number):
   return 3958.8 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 function distanceLabel(miles: number): string { return miles < 0.2 ? "under 0.2 mi" : `${miles.toFixed(1)} mi`; }
+function cacheAgeLabel(value: string): string {
+  const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
+  if (!Number.isFinite(elapsed)) return "time unknown";
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+function resultSourceLabel(result: LiveTravelSearchResult): string {
+  const summary = result.cacheSummary ?? [];
+  if (summary.some((entry) => entry.status === "stale")) return "includes saved fallback data";
+  if (summary.length && summary.every((entry) => entry.status === "cached")) return "cached provider data";
+  if (summary.some((entry) => entry.status === "cached")) return "mixed cached and live provider data";
+  return "new provider search";
+}
 function directionsUrl(origin: string, destination: string): string {
   const url = new URL("https://www.google.com/maps/dir/");
   url.searchParams.set("api", "1"); url.searchParams.set("origin", origin); url.searchParams.set("destination", destination); url.searchParams.set("travelmode", "driving");
@@ -326,10 +343,10 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
   const attempted = useRef(false);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const daysUntilTrip = Math.ceil((new Date(`${startDate}T00:00:00`).getTime() - today.getTime()) / 86400000);
-  const load = useCallback(async () => {
-    setState({ loading: true, status: "loading", days: [] });
+  const load = useCallback(async (forceRefresh = false) => {
+    setState((current) => ({ loading: true, status: "loading", days: current?.days ?? [] }));
     try {
-      const response = await fetch("/api/travel/weather", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location, startDate, endDate }) });
+      const response = await fetch("/api/travel/weather", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location, startDate, endDate, forceRefresh }) });
       const data = await response.json();
       setState({ loading: false, status: String(data.status || "error"), message: typeof data.message === "string" ? data.message : undefined, days: Array.isArray(data.days) ? data.days as WeatherDay[] : [], attribution: typeof data.attribution === "string" ? data.attribution : undefined });
     } catch { setState({ loading: false, status: "error", message: "Weather information is unavailable right now.", days: [] }); }
@@ -338,7 +355,7 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
     if (configured && !attempted.current) { attempted.current = true; void load(); }
   }, [configured, load]);
   return <section className="weather-panel">
-    <div className="weather-panel-heading"><div><h4>Weather</h4><p>{location}</p></div>{configured && <button className="text-action" type="button" onClick={() => { attempted.current = true; void load(); }} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={12} className="spin"/> Checking</> : "Refresh"}</button>}</div>
+    <div className="weather-panel-heading"><div><h4>Weather</h4><p>{location}</p></div>{configured && <button className="text-action" type="button" onClick={() => { attempted.current = true; void load(true); }} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={12} className="spin"/> Checking</> : "Refresh"}</button>}</div>
     {!configured && <p className="weather-explainer">{daysUntilTrip > 2 ? `A day-by-day forecast for ${dateLabel(startDate)} is too far ahead to be dependable. Add WEATHERAPI_API_KEY in Vercel for short-range forecasts, then check again closer to departure. Tripfinder will not substitute a made-up forecast.` : "Live forecasts are not connected. Add WEATHERAPI_API_KEY in Vercel to retrieve the short-range forecast."}</p>}
     {state?.loading && <p className="inline-loading"><RefreshCw size={13} className="spin"/> Checking the forecast…</p>}
     {state?.message && <p className="weather-explainer">{state.message}</p>}
@@ -353,7 +370,6 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const [returnStates, setReturnStates] = useState<Record<string, ReturnState>>({});
   const [bookingStates, setBookingStates] = useState<Record<string, BookingState>>({});
   const [hotelBookingStates, setHotelBookingStates] = useState<Record<string, HotelBookingState>>({});
-  const [checkedDestinations, setCheckedDestinations] = useState<string[]>([]);
   const [selections, setSelections] = useState<Record<string, DestinationSelection>>({});
   const [flightAirlineFilters, setFlightAirlineFilters] = useState<Record<string, string>>({});
   const people = search.adults + search.childrenAges.length;
@@ -362,16 +378,15 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const perPersonDaily = useMemo(() => totalBudget / Math.max(1, nights * people), [totalBudget, nights, people]);
   const singleDestination = recommendations.length === 1;
 
-  async function checkLiveOffers(recommendation: TripRecommendation) {
+  async function checkLiveOffers(recommendation: TripRecommendation, forceRefresh = false) {
     const id = recommendation.destination.id;
     setExpanded(id);
     setStates((current) => ({ ...current, [id]: { loading: true, error: "", result: current[id]?.result ?? null } }));
     try {
-      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: formatDestinationLabel(recommendation.destination.city, recommendation.destination.country), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode }) });
+      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: formatDestinationLabel(recommendation.destination.city, recommendation.destination.country), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode, forceRefresh }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to search this trip right now.");
       setStates((current) => ({ ...current, [id]: { loading: false, error: "", result: data as LiveTravelSearchResult } }));
-      setCheckedDestinations((current) => current.includes(id) ? current : [...current, id]);
     } catch (error) {
       setStates((current) => ({ ...current, [id]: { loading: false, error: error instanceof Error ? error.message : "Travel search failed.", result: current[id]?.result ?? null } }));
     }
@@ -512,13 +527,14 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               <button className="text-action" type="button" onClick={() => setExpanded(isExpanded ? null : destination.id)} aria-expanded={isExpanded}>{isExpanded ? "Hide trip outline" : "Trip outline"}</button>
             </div>
 
-            {liveSearchConfigured && <div className="live-search-action"><button type="button" className="live-search-button" disabled={state?.loading || (checkedDestinations.includes(destination.id) && Boolean(state?.result))} onClick={() => checkLiveOffers(recommendation)}>{state?.loading ? <><RefreshCw size={14} className="spin"/> Searching selected categories…</> : checkedDestinations.includes(destination.id) ? <><Check size={14}/> Search complete</> : `Search ${requestedLabels.join(" + ")}`}</button>{!singleDestination && <span>Only the destination you open is searched. Other recommendations do not use API requests until selected.</span>}</div>}
+            {liveSearchConfigured && <div className="live-search-action"><button type="button" className="live-search-button" disabled={state?.loading} onClick={() => checkLiveOffers(recommendation, Boolean(state?.result))}>{state?.loading ? <><RefreshCw size={14} className="spin"/> {state?.result ? "Refreshing selected categories…" : "Searching selected categories…"}</> : state?.result ? <><RefreshCw size={14}/> Refresh results</> : `Search ${requestedLabels.join(" + ")}`}</button>{!singleDestination && <span>Only the destination you open is searched. Other recommendations do not use API requests until selected.</span>}<span>Identical searches use the shared Neon cache. Refresh bypasses Tripfinder’s saved results and may use a provider search. The provider may still return its own cached data.</span></div>}
             {state?.error && <div className="provider-error" role="alert">{state.error}</div>}
             {state?.loading && <div className="search-loading-panel"><span className="loading-line"/><span className="loading-line short"/><p>Checking current travel options for {destination.city}…</p></div>}
 
             {state?.result && <div className="live-search-results">
-              <div className="live-result-heading"><div><h4>Travel options for {destination.city}</h4><p>Checked {new Date(state.result.checkedAt).toLocaleString()} · {state.result.servedFromCache ? "cached provider data" : "new provider search"}</p></div><span className={`result-status result-status-${state.result.status}`}>{state.result.status === "live" ? "Search complete" : state.result.status === "partial" ? "Some categories returned no results" : "No provider results"}</span></div>
+              <div className="live-result-heading"><div><h4>Travel options for {destination.city}</h4><p>Checked {new Date(state.result.checkedAt).toLocaleString()} · {resultSourceLabel(state.result)}</p></div><span className={`result-status result-status-${state.result.status}`}>{state.result.status === "live" ? "Search complete" : state.result.status === "partial" ? "Some categories returned no results" : "No provider results"}</span></div>
               {state.result.warnings.map((warning) => <p className="provider-warning" key={warning}>{warning}</p>)}
+              {state.result.cacheSummary?.length > 0 && <div className="cache-freshness-list" aria-label="Search result freshness">{state.result.cacheSummary.map((entry) => <span className={`cache-freshness cache-${entry.status}`} key={entry.key}><strong>{entry.label}</strong>{entry.status === "live" ? "Live" : entry.status === "cached" ? "Cached" : "Saved fallback"} · {cacheAgeLabel(entry.fetchedAt)}</span>)}</div>}
 
               {search.components.includes("flights") && <section className="live-result-group"><h5><Plane size={16}/> Flights <span>{state.result.flights.length} outbound options</span></h5>
                 {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
