@@ -1,14 +1,15 @@
 import Link from "next/link";
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Compass, Heart, MapPinned, Waves } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { TripSearch } from "@/components/trip-search";
+import { InspirationShowcase } from "@/components/inspiration-showcase";
 import { Reveal } from "@/components/motion";
 
 // Inspiration links use rolling departure dates; render them per request, not at build time.
 export const dynamic = "force-dynamic";
 
 const places = [
-  { name: "Amalfi Coast", country: "Italy", note: "Coastal villages and slow afternoons", image: "https://images.unsplash.com/photo-1533587851505-d119e13fa0d7?auto=format&fit=crop&w=900&q=82", airportCode: "NAP", style: "romantic", budget: "3200", tag: "Coast" },
+  { name: "Amalfi Coast", country: "Italy", note: "Coastal villages and slow afternoons", image: "https://images.unsplash.com/photo-1533587851505-d119e13fa0d7?auto=format&fit=crop&w=1100&q=85", airportCode: "NAP", style: "romantic", budget: "3200", tag: "Coast" },
   { name: "Kyoto", country: "Japan", note: "Temples, gardens and old streets", image: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=900&q=82", airportCode: "KIX", style: "culture", budget: "3600", tag: "Culture" },
   { name: "Tulum", country: "Mexico", note: "Caribbean water and Mayan history", image: "https://images.unsplash.com/photo-1510414842594-a61c69b5ae57?auto=format&fit=crop&w=900&q=82", airportCode: "TQO", style: "beach", budget: "2800", tag: "Beach" },
   { name: "Lisbon", country: "Portugal", note: "Food, viewpoints and coastal day trips", image: "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=900&q=82", airportCode: "LIS", style: "food", budget: "2700", tag: "City" },
@@ -32,77 +33,45 @@ function inspirationSearchUrl(place: (typeof places)[number]) {
   return `/results?${params.toString()}`;
 }
 
+const inspirationPlaces = places.map((place) => ({ ...place, href: inspirationSearchUrl(place) }));
+
 export default function Home() {
   return (
     <main>
       <SiteHeader />
-      <section className="hero hero-text-only shell">
-        <div className="hero-copy">
-          <Reveal>
-            <div className="hero-kicker"><span className="kicker-line" /> A MORE THOUGHTFUL WAY TO GET AWAY</div>
-            <h1>Go somewhere<br /><em>that feels like you.</em></h1>
-            <p className="hero-description">The best trips aren’t just booked. They’re put together around the way you want to feel, explore, and spend.</p>
-            <div className="hero-actions">
-              <Link href="#plan" className="button button-dark">Plan your getaway <ArrowUpRight size={17} /></Link>
-              <Link href="#discover" className="text-link">Find a little inspiration <ArrowDownRight size={16} /></Link>
-            </div>
-            <div className="hero-proof"><span className="proof-compass"><Compass size={18} /></span><div><strong>Thoughtful plans. Your pace.</strong><small>Not another one-size-fits-all search.</small></div></div>
-          </Reveal>
-        </div>
+
+      <section className="landing-hero shell" aria-label="Plan a trip with Tripfinder">
+        <Reveal className="landing-copy">
+          <span className="eyebrow">A MORE THOUGHTFUL WAY TO GET AWAY</span>
+          <h1>Go somewhere<br /><em>that feels like you.</em></h1>
+          <p>The best trips are put together around the way you want to feel, explore and spend. Start with a few details; we’ll help bring the pieces together.</p>
+          <div className="landing-actions">
+            <Link href="#plan" className="button button-dark">Plan your getaway <ArrowUpRight size={17} /></Link>
+          </div>
+          <p className="landing-note">Thoughtful plans. Your pace. Not another one-size-fits-all search.</p>
+        </Reveal>
+
+        <Reveal className="landing-inspiration" delay={0.08}>
+          <div className="landing-inspiration-heading" id="discover">
+            <span className="eyebrow">A WORLD OF POSSIBILITIES</span>
+            <h2>Somewhere is calling.<br /><em>Let’s find out where.</em></h2>
+          </div>
+          <InspirationShowcase places={inspirationPlaces} />
+          <p className="inspiration-disclaimer">A little inspiration to get started. These are curated starting points, not live travel offers.</p>
+        </Reveal>
       </section>
 
+      {/* The main trip-search experience is intentionally unchanged. */}
       <section className="planner-section shell">
         <Reveal><TripSearch /></Reveal>
       </section>
 
-      <section className="discover-section section-space" id="discover">
-        <div className="shell">
-          <Reveal className="section-heading-row">
-            <div><span className="eyebrow">A WORLD OF POSSIBILITIES</span><h2>Somewhere is calling.<br /><em>Let’s find out where.</em></h2></div>
-            <p>Not sure where to go? Start with a feeling. We’ll help turn it into a place, a plan, and a trip that makes sense.</p>
-          </Reveal>
-          <div className="destination-grid">
-            {places.map((place, i) => (
-              <Reveal key={place.name} delay={i * 0.07}>
-                <Link href={inspirationSearchUrl(place)} className={`destination-card destination-card-${i + 1}`} aria-label={`Search flights, stays and activities for ${place.name}`}>
-                  <div className="destination-image" style={{ backgroundImage: `url('${place.image}')` }} />
-                  <div className="destination-overlay" />
-                  <span className="destination-tag">{place.tag}</span>
-                  <div className="destination-copy"><span>{place.country}</span><h3>{place.name}</h3><p>{place.note}</p></div>
-                  <span className="destination-cta">Search this trip <ArrowUpRight size={15} /></span>
-                </Link>
-              </Reveal>
-            ))}
-          </div>
-          <p className="section-disclaimer">A little inspiration to get started. Destination suggestions are curated examples, not live travel offers.</p>
+      <footer className="site-footer shell landing-footer">
+        <div className="footer-top">
+          <div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Make room for somewhere new.</p></div>
+          <div className="footer-links"><Link href="#discover">Discover</Link><Link href="#plan">Plan a trip</Link></div>
         </div>
-      </section>
-
-      <section className="how-section section-space" id="how-it-works">
-        <div className="shell how-grid">
-          <Reveal className="how-intro">
-            <span className="eyebrow">LESS TAB-HOPPING. MORE DAYDREAMING.</span>
-            <h2>From “we should go”<br />to <em>“when do we leave?”</em></h2>
-            <p>Tripfinder brings the moving parts together, so you can spend less time comparing ten different sites and more time looking forward to the trip.</p>
-            <Link href="#plan" className="text-link dark-link">Start planning <ArrowUpRight size={16} /></Link>
-          </Reveal>
-          <div className="steps-list">
-            <Reveal className="step-item" delay={0.05}><span className="step-number">01</span><div><h3>Tell us what matters.</h3><p>Your dates, budget, travel crew, must-haves and the kind of holiday you have in mind.</p></div><MapPinned size={22} /></Reveal>
-            <Reveal className="step-item" delay={0.12}><span className="step-number">02</span><div><h3>Explore trips that fit.</h3><p>Compare destination ideas, travel options, places to stay and things worth doing.</p></div><Waves size={22} /></Reveal>
-            <Reveal className="step-item" delay={0.19}><span className="step-number">03</span><div><h3>Make it yours.</h3><p>Shape the itinerary, understand the full estimated cost and follow links to booking providers.</p></div><Heart size={22} /></Reveal>
-          </div>
-        </div>
-      </section>
-
-
-      <section className="closing-section shell">
-        <Reveal className="closing-content"><span className="eyebrow">YOUR NEXT STORY IS OUT THERE</span><h2>Ready when <em>you are.</em></h2><p>Start with a few details. We’ll help you figure out the rest.</p><Link href="#plan" className="button button-dark">Let’s plan a trip <ArrowRight size={17} /></Link></Reveal>
-        <div className="closing-mark"><Compass size={125} strokeWidth={0.65} /></div>
-      </section>
-
-      <footer className="site-footer shell">
-        <div className="footer-top"><div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Make room for somewhere new.</p></div><div className="footer-links"><Link href="#discover">Discover</Link><Link href="#how-it-works">How it works</Link><Link href="#plan">Plan a trip</Link></div></div>
-        <div className="footer-bottom"><span>© {new Date().getFullYear()} Tripfinder. All good journeys begin somewhere.</span><span>Planning inspiration, not a booking agency.</span></div>
+        <div className="footer-bottom"><span>© {new Date().getFullYear()} Tripfinder</span><span>Bookings are completed with travel providers.</span></div>
       </footer>
     </main>
   );
