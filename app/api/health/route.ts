@@ -22,7 +22,7 @@ export async function GET() {
 
   if (databaseConfigured) {
     try {
-      // This creates the four required tables when they do not exist, then verifies them.
+      // This creates the cache, usage, telemetry and admin-auth tables when absent, then verifies them.
       await initializeTravelDatabase();
       databaseConnected = true;
       databaseSchemaReady = true;
@@ -50,6 +50,8 @@ export async function GET() {
       "tripfinder_provider_usage",
       "tripfinder_provider_hourly_usage",
       "tripfinder_client_usage",
+      "tripfinder_api_event_log",
+      "tripfinder_admin_login_attempts",
     ] : [],
     persistentProviderCacheConfigured: databaseSchemaReady,
     monthlyProviderSearchSafetyCap: monthlyCap,
@@ -60,6 +62,7 @@ export async function GET() {
     perClientLimits: { uncachedRequestsPerHour: 15, uncachedRequestsPerDay: 45 },
     affiliateTrackingEnabled: false,
     timestamp: new Date().toISOString(),
-    note: "Opening this endpoint initializes and verifies Tripfinder's Neon cache and usage tables. SerpApi credentials are validated on the first uncached live search; no flight or hotel search is performed by this health check.",
+    adminDashboardConfigured: Boolean(process.env.ADMIN_DASHBOARD_SECRET && process.env.ADMIN_DASHBOARD_SECRET.length >= 32),
+    note: "Opening this endpoint initializes and verifies Tripfinder's Neon cache, usage, telemetry and admin-auth tables. SerpApi credentials are validated on the first uncached live search; no flight or hotel search is performed by this health check.",
   }, { headers: { "Cache-Control": "no-store" } });
 }

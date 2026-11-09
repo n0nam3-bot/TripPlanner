@@ -4,6 +4,16 @@ import { createHash } from "node:crypto";
 type JsonRecord = Record<string, unknown>;
 type CacheRow = { payload: JsonRecord | string; created_at: string };
 
+export type ProviderEventInput = {
+  provider: string;
+  category: string;
+  eventType: "provider_request" | "cache_hit" | "provider_error" | "request_blocked" | "account_check";
+  outcome: "success" | "error" | "blocked";
+  cacheStatus?: "hit" | "miss" | "bypass" | "none";
+  httpStatus?: number | null;
+  durationMs?: number | null;
+};
+
 let schemaReady: Promise<void> | null = null;
 
 function getSql() {
@@ -42,6 +52,25 @@ async function ensureTravelTables() {
         updated_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (client_key, usage_date)
       )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_api_event_log (
+        id bigserial PRIMARY KEY,
+        provider text NOT NULL,
+        category text NOT NULL,
+        event_type text NOT NULL,
+        outcome text NOT NULL,
+        cache_status text NOT NULL DEFAULT 'none',
+        http_status integer,
+        duration_ms integer,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_created_idx ON tripfinder_api_event_log (created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_provider_idx ON tripfinder_api_event_log (provider, category, created_at DESC)`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_admin_login_attempts (
+        client_key text PRIMARY KEY,
+        attempts integer NOT NULL DEFAULT 0,
+        window_started_at timestamptz NOT NULL DEFAULT now(),
+        locked_until timestamptz
+      )`;
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -58,9 +87,11 @@ export async function initializeTravelDatabase(): Promise<void> {
     to_regclass('public.tripfinder_provider_cache') IS NOT NULL AS cache_ready,
     to_regclass('public.tripfinder_provider_usage') IS NOT NULL AS monthly_usage_ready,
     to_regclass('public.tripfinder_provider_hourly_usage') IS NOT NULL AS hourly_usage_ready,
-    to_regclass('public.tripfinder_client_usage') IS NOT NULL AS client_usage_ready`;
+    to_regclass('public.tripfinder_client_usage') IS NOT NULL AS client_usage_ready,
+    to_regclass('public.tripfinder_api_event_log') IS NOT NULL AS event_log_ready,
+    to_regclass('public.tripfinder_admin_login_attempts') IS NOT NULL AS admin_auth_ready`;
   const row = rows[0] as unknown as Record<string, boolean> | undefined;
-  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready) {
+  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready) {
     throw new Error("DATABASE_SCHEMA_UNAVAILABLE");
   }
 }
@@ -165,4 +196,167 @@ export async function getProviderUsage(): Promise<{ month: string; used: number;
 /** Hash a requester's address before persisting it for coarse API abuse control. */
 export function hashClientAddress(address: string): string {
   return createHash("sha256").update("tripfinder-client-v1:").update(address.trim().slice(0, 120)).digest("hex");
+}
+
+
+/** Store sanitized provider telemetry. No search text, tokens, API keys or raw IP addresses are persisted. */
+export async function recordProviderEvent(event: ProviderEventInput): Promise<void> {
+  try {
+    await ensureTravelTables();
+    const sql = getSql();
+    const duration = event.durationMs === undefined || event.durationMs === null
+      ? null
+      : Math.max(0, Math.min(300000, Math.floor(event.durationMs)));
+    const status = event.httpStatus === undefined || event.httpStatus === null
+      ? null
+      : Math.max(100, Math.min(599, Math.floor(event.httpStatus)));
+    const inserted = await sql`INSERT INTO tripfinder_api_event_log
+      (provider, category, event_type, outcome, cache_status, http_status, duration_ms)
+      VALUES (
+        ${event.provider.slice(0, 40)}, ${event.category.slice(0, 60)},
+        ${event.eventType}, ${event.outcome}, ${event.cacheStatus ?? "none"},
+        ${status}, ${duration}
+      ) RETURNING id`;
+    const insertedId = Number((inserted[0] as unknown as { id?: number } | undefined)?.id ?? 0);
+    // Keep the event history bounded without running a cleanup query on every request.
+    if (insertedId > 0 && insertedId % 250 === 0) {
+      await sql`DELETE FROM tripfinder_api_event_log WHERE created_at < now() - interval '90 days'`;
+      await sql`DELETE FROM tripfinder_admin_login_attempts WHERE COALESCE(locked_until, window_started_at) < now() - interval '1 day'`;
+    }
+  } catch (error) {
+    // Telemetry is best-effort and must never take down a real provider response.
+    console.error("Tripfinder could not write provider telemetry.", error instanceof Error ? error.message : "unknown error");
+  }
+}
+
+export async function isAdminLoginLocked(clientKey: string): Promise<boolean> {
+  await ensureTravelTables();
+  const sql = getSql();
+  const rows = await sql`SELECT locked_until > now() AS locked
+    FROM tripfinder_admin_login_attempts WHERE client_key = ${clientKey} LIMIT 1`;
+  return Boolean((rows[0] as unknown as { locked?: boolean } | undefined)?.locked);
+}
+
+export async function recordAdminLoginFailure(clientKey: string): Promise<void> {
+  await ensureTravelTables();
+  const sql = getSql();
+  await sql`INSERT INTO tripfinder_admin_login_attempts (client_key, attempts, window_started_at, locked_until)
+    VALUES (${clientKey}, 1, now(), NULL)
+    ON CONFLICT (client_key) DO UPDATE SET
+      attempts = CASE WHEN tripfinder_admin_login_attempts.window_started_at < now() - interval '15 minutes' THEN 1 ELSE tripfinder_admin_login_attempts.attempts + 1 END,
+      window_started_at = CASE WHEN tripfinder_admin_login_attempts.window_started_at < now() - interval '15 minutes' THEN now() ELSE tripfinder_admin_login_attempts.window_started_at END,
+      locked_until = CASE
+        WHEN tripfinder_admin_login_attempts.window_started_at < now() - interval '15 minutes' THEN NULL
+        WHEN tripfinder_admin_login_attempts.attempts + 1 >= 5 THEN now() + interval '15 minutes'
+        ELSE tripfinder_admin_login_attempts.locked_until END`;
+}
+
+export async function clearAdminLoginFailures(clientKey: string): Promise<void> {
+  await ensureTravelTables();
+  const sql = getSql();
+  await sql`DELETE FROM tripfinder_admin_login_attempts WHERE client_key = ${clientKey}`;
+}
+
+export type AdminDashboardSnapshot = {
+  generatedAt: string;
+  appUsage: { month: string; monthlyUsed: number; monthlyCap: number; monthlyRemaining: number; hourlyUsed: number; hourlyCap: number; todayReservedSearches: number };
+  periodTotals: { events24h: number; apiCalls24h: number; accountChecks24h: number; cacheHits24h: number; failures24h: number; blocked24h: number; averageProviderMs: number | null };
+  providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; failures: number; averageMs: number | null }>;
+  dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
+  recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; createdAt: string }>;
+  cache: { totalEntries: number; validEntries: number; expiredEntries: number; lastUpdatedAt: string | null };
+  clientUsage: { activeClientsToday: number; reservedSearchesToday: number };
+};
+
+/** Read-only operational overview for the authenticated /admin dashboard. */
+export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapshot> {
+  await ensureTravelTables();
+  const sql = getSql();
+  const rawCap = Number(process.env.SERPAPI_MONTHLY_SEARCH_CAP ?? "200");
+  const monthlyCap = Number.isInteger(rawCap) ? Math.max(1, Math.min(230, rawCap)) : 200;
+  const rawHourlyCap = Number(process.env.SERPAPI_HOURLY_SEARCH_CAP ?? "30");
+  const hourlyCap = Number.isInteger(rawHourlyCap) ? Math.max(1, Math.min(45, rawHourlyCap)) : 30;
+  const now = new Date();
+  const month = now.toISOString().slice(0, 7);
+  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows] = await Promise.all([
+    sql`SELECT search_count FROM tripfinder_provider_usage WHERE month_key = ${month} LIMIT 1`,
+    sql`SELECT search_count FROM tripfinder_provider_hourly_usage WHERE hour_bucket = date_trunc('hour', now()) LIMIT 1`,
+    sql`SELECT count(*)::int AS active_clients, COALESCE(sum(day_count), 0)::int AS reserved_today
+      FROM tripfinder_client_usage WHERE usage_date = current_date`,
+    sql`SELECT
+        count(*)::int AS events,
+        count(*) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota')::int AS api_calls,
+        count(*) FILTER (WHERE category = 'Account quota' AND event_type IN ('account_check', 'provider_error'))::int AS account_checks,
+        count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
+        count(*) FILTER (WHERE outcome = 'error')::int AS failures,
+        count(*) FILTER (WHERE outcome = 'blocked')::int AS blocked,
+        round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms
+      FROM tripfinder_api_event_log WHERE created_at >= now() - interval '24 hours'`,
+    sql`SELECT provider, category,
+        count(*) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota')::int AS api_calls,
+        count(*) FILTER (WHERE category = 'Account quota' AND event_type IN ('account_check', 'provider_error'))::int AS account_checks,
+        count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
+        count(*) FILTER (WHERE outcome = 'error')::int AS failures,
+        round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms
+      FROM tripfinder_api_event_log WHERE created_at >= now() - interval '30 days'
+      GROUP BY provider, category ORDER BY api_calls DESC, cache_hits DESC LIMIT 24`,
+    sql`SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS hour,
+        count(*) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota')::int AS api_calls,
+        count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
+        count(*) FILTER (WHERE outcome = 'error')::int AS failures
+      FROM tripfinder_api_event_log WHERE created_at >= now() - interval '24 hours'
+      GROUP BY date_trunc('hour', created_at AT TIME ZONE 'UTC') ORDER BY date_trunc('hour', created_at AT TIME ZONE 'UTC') ASC`,
+    sql`SELECT id, provider, category, event_type, outcome, cache_status, http_status, duration_ms, created_at::text AS created_at
+      FROM tripfinder_api_event_log ORDER BY created_at DESC LIMIT 60`,
+    sql`SELECT count(*)::int AS total_entries,
+        count(*) FILTER (WHERE expires_at > now())::int AS valid_entries,
+        count(*) FILTER (WHERE expires_at <= now())::int AS expired_entries,
+        max(created_at)::text AS last_updated_at
+      FROM tripfinder_provider_cache`,
+  ]);
+  const usage = usageRows[0] as unknown as { search_count?: number } | undefined;
+  const hourly = hourlyRows[0] as unknown as { search_count?: number } | undefined;
+  const clients = clientRows[0] as unknown as { active_clients?: number; reserved_today?: number } | undefined;
+  const totals = totalsRows[0] as unknown as Record<string, number | null> | undefined;
+  const cache = cacheRows[0] as unknown as Record<string, number | string | null> | undefined;
+  const asNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
+  return {
+    generatedAt: new Date().toISOString(),
+    appUsage: {
+      month,
+      monthlyUsed: asNumber(usage?.search_count),
+      monthlyCap,
+      monthlyRemaining: Math.max(0, monthlyCap - asNumber(usage?.search_count)),
+      hourlyUsed: asNumber(hourly?.search_count),
+      hourlyCap,
+      todayReservedSearches: asNumber(clients?.reserved_today),
+    },
+    periodTotals: {
+      events24h: asNumber(totals?.events),
+      apiCalls24h: asNumber(totals?.api_calls),
+      accountChecks24h: asNumber(totals?.account_checks),
+      cacheHits24h: asNumber(totals?.cache_hits),
+      failures24h: asNumber(totals?.failures),
+      blocked24h: asNumber(totals?.blocked),
+      averageProviderMs: totals?.avg_ms === null || totals?.avg_ms === undefined ? null : asNumber(totals.avg_ms),
+    },
+    providerBreakdown: (breakdownRows as unknown as Array<Record<string, unknown>>).map((row) => ({
+      provider: String(row.provider), category: String(row.category), apiCalls: asNumber(row.api_calls),
+      accountChecks: asNumber(row.account_checks), cacheHits: asNumber(row.cache_hits), failures: asNumber(row.failures), averageMs: row.avg_ms === null ? null : asNumber(row.avg_ms),
+    })),
+    dailyTrend: (trendRows as unknown as Array<Record<string, unknown>>).map((row) => ({
+      hour: String(row.hour), apiCalls: asNumber(row.api_calls), cacheHits: asNumber(row.cache_hits), failures: asNumber(row.failures),
+    })),
+    recentEvents: (recentRows as unknown as Array<Record<string, unknown>>).map((row) => ({
+      id: asNumber(row.id), provider: String(row.provider), category: String(row.category),
+      eventType: String(row.event_type), outcome: String(row.outcome), cacheStatus: String(row.cache_status),
+      httpStatus: row.http_status === null ? null : asNumber(row.http_status),
+      durationMs: row.duration_ms === null ? null : asNumber(row.duration_ms), createdAt: String(row.created_at),
+    })),
+    cache: {
+      totalEntries: asNumber(cache?.total_entries), validEntries: asNumber(cache?.valid_entries),
+      expiredEntries: asNumber(cache?.expired_entries), lastUpdatedAt: cache?.last_updated_at ? String(cache.last_updated_at) : null,
+    },
+    clientUsage: { activeClientsToday: asNumber(clients?.active_clients), reservedSearchesToday: asNumber(clients?.reserved_today) },
+  };
 }

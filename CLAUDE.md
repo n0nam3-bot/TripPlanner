@@ -50,7 +50,9 @@ You are continuing development of Tripfinder, a travel discovery, planning, and 
 - Editorial homepage and responsive trip-search UI are implemented.
 - Server-side search validation and a curated destination-matching/itinerary engine are implemented.
 - SerpApi Google Flights and Google Hotels search adapters are implemented behind server API routes. The round-trip flow is staged: outbound search, `departure_token` return-leg lookup, then `booking_token` seller lookup.
-- Neon is used for a persistent one-hour search cache, a 60-second cached SerpApi Account API quota snapshot, and atomic shared hourly/monthly/per-connection counters. The required tables are created automatically on first provider request.
+- Neon is used for a persistent provider cache, a 60-second cached SerpApi Account API quota snapshot, atomic shared hourly/monthly/per-connection counters, sanitized provider telemetry, and persistent admin-login throttling. The required tables are created automatically by `/api/health` or the first provider request.
+- A private `/admin` dashboard is available when `ADMIN_DASHBOARD_SECRET` is set to a random value of at least 32 characters. It uses a signed 12-hour HttpOnly/SameSite=Strict cookie, a 5-failure/15-minute login lockout keyed by a one-way client hash, and a protected `/api/admin/overview` endpoint.
+- The admin dashboard reports the real SerpApi account quota, Tripfinder's internal monthly/hourly request reservations, provider calls/cache hits/errors by category, recent sanitized events, cache health, and hashed-client usage. WeatherAPI daily forecasts use the Neon cache and are included in telemetry. Logs exclude search terms, API keys, booking tokens and raw IP addresses; event history is pruned after 90 days.
 - Live search requires server-side `SERPAPI_API_KEY` and `DATABASE_URL` in Vercel. `SERPAPI_MONTHLY_SEARCH_CAP` defaults to 200 (hard-clamped to 230), `SERPAPI_HOURLY_SEARCH_CAP` defaults to 30 (hard-clamped to 45), and `SERPAPI_PROVIDER_QUOTA_RESERVE` defaults to 75, and `SERPAPI_PROVIDER_HOURLY_RESERVE` defaults to 10.
 - Results are not sample fares. Without credentials the site remains in planning-only mode; with credentials it can query current provider snapshots.
 - The curated destination catalog and itinerary templates are not worldwide live discovery. Attraction hours, transit times, entry rules, flexible-date alternatives, multi-room hotels and exact child-age flight fares are not verified yet.
@@ -74,6 +76,6 @@ You are continuing development of Tripfinder, a travel discovery, planning, and 
 ## Canonical production domain and database initialization
 
 - Keep one public site URL. `middleware.ts` redirects alternate deployment/domain hosts to `VERCEL_PROJECT_PRODUCTION_URL`; `SITE_URL` can override it if the owner later selects a custom primary domain. Do not create version-specific public domains. Vercel may still retain unique deployment URLs internally for diagnostics/rollback.
-- `app/api/health/route.ts` calls `initializeTravelDatabase()`. With a valid `DATABASE_URL`, opening `/api/health` creates and verifies the four cache/usage tables without consuming a SerpApi search credit.
+- `app/api/health/route.ts` calls `initializeTravelDatabase()`. With a valid `DATABASE_URL`, opening `/api/health` creates and verifies cache, usage, telemetry and admin-auth tables without consuming a SerpApi search credit.
 - `db/schema.sql` is the repeatable manual equivalent. Keep its definitions in sync with `lib/db/travel-cache.ts`.
 - Health status confirms Neon connection/schema readiness and that the SerpApi key is present; actual provider credential validation occurs on the first uncached live search via SerpApi's account endpoint.

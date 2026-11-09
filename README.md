@@ -32,7 +32,7 @@ The importer is overlay-only: matching files are replaced and new files are adde
 The site can still run in planning-only mode without credentials. To enable provider search, create these two accounts/values:
 
 1. **SerpApi API key** — register at [SerpApi](https://serpapi.com/) and copy the private API key from the dashboard. The current free plan advertises 250 searches per month. Review current plan details and provider terms before enabling search on a public or commercial site.
-2. **Neon PostgreSQL** — create a database at [Neon](https://neon.tech/) and copy its pooled connection string. Once `DATABASE_URL` is configured and deployed, opening `/api/health` automatically creates and verifies the provider-cache and usage-control tables. No SQL editor step is required. An auditable, repeatable manual schema is also included at `db/schema.sql`.
+2. **Neon PostgreSQL** — create a database at [Neon](https://neon.tech/) and copy its pooled connection string. Once `DATABASE_URL` is configured and deployed, opening `/api/health` automatically creates and verifies the provider-cache, usage-control, admin-auth and telemetry tables. No SQL editor step is required. An auditable, repeatable manual schema is also included at `db/schema.sql`.
 
 In Vercel, open **TripPlanner → Settings → Environment Variables** and add:
 
@@ -45,8 +45,13 @@ In Vercel, open **TripPlanner → Settings → Environment Variables** and add:
 | `SERPAPI_PROVIDER_QUOTA_RESERVE` | `75` | Preview and Production (optional; default is 75) |
 | `SERPAPI_PROVIDER_HOURLY_RESERVE` | `10` | Preview and Production (optional; default is 10) |
 | `WEATHERAPI_API_KEY` | Optional WeatherAPI key | Preview and Production (optional) |
+| `ADMIN_DASHBOARD_SECRET` | Random secret of at least 32 characters; also used as the `/admin` login password | Production (optional; required for admin access) |
 
-Save the variables and redeploy the latest deployment. Do not use `NEXT_PUBLIC_` prefixes, and never put credentials in GitHub, ZIP files, browser code, or screenshots. Keep the key in Vercel's server-side environment settings only.
+Save the variables and redeploy the latest deployment. For `ADMIN_DASHBOARD_SECRET`, generate a long random password (at least 32 characters), save it as a server-side Vercel environment variable, and enter that same value on `/admin`. Do not use `NEXT_PUBLIC_` prefixes, and never put credentials in GitHub, ZIP files, browser code, or screenshots. Keep secrets in Vercel's server-side environment settings only.
+
+### Private operations dashboard
+
+Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRET`. The dashboard requires a signed, 12-hour HttpOnly session and rate-limits failed logins. It reports the live SerpApi account quota, Tripfinder's own monthly/hourly reservations, provider API calls, cache hits, errors, category-level usage, Neon cache health and recent sanitized request events. Data refreshes every 30 seconds. SerpApi search events and WeatherAPI forecasts are instrumented; WeatherAPI daily responses use a one-hour Neon cache. Event logs omit search terms, API keys, booking tokens and raw IP addresses, and are pruned after 90 days. The initial dashboard will show only events recorded after this update is deployed; historical requests cannot be reconstructed retroactively.
 
 ### Request budget and caching
 
@@ -108,7 +113,7 @@ Open http://localhost:3000. Without environment variables the site remains in pl
 2. Import or connect the repository in Vercel using the Next.js framework preset.
 3. Add `SERPAPI_API_KEY` and `DATABASE_URL` under Vercel project environment variables to enable live search.
 4. Redeploy after changing environment variables.
-5. Open `/api/health` on the production website. This performs a real Neon connectivity check, creates the four required tables if missing, and reports whether the schema is ready. It does not consume a SerpApi flight/hotel search credit.
+5. Open `/api/health` on the production website. This performs a real Neon connectivity check, creates the required cache, usage, telemetry and admin-auth tables if missing, and reports whether the schema is ready. It does not consume a SerpApi flight/hotel search credit.
 
 ### One public website address
 

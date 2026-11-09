@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getProviderCache, providerCacheKey, recordProviderEvent, setProviderCache } from "@/lib/db/travel-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,11 +83,23 @@ export async function POST(request: Request) {
     const days: WeatherDay[] = [];
     let planMessage = "";
 
-    // Use the standard forecast for dates up to 14 days away; use Future API beyond 14 days.
-    // Each date request is cached by Next.js for one hour at the fetch layer.
+    // Weather forecasts use an explicit Neon cache so the admin dashboard can
+    // distinguish real WeatherAPI calls from cached responses.
     for (const date of requestedDates) {
       const offset = utcDayOffset(date);
       const endpoint = offset <= 14 ? "forecast.json" : "future.json";
+      const cacheKey = providerCacheKey({ provider: "weatherapi", location: location.toLocaleLowerCase("en-US"), date, endpoint });
+      const cacheStartedAt = Date.now();
+      const cached = await getProviderCache(cacheKey);
+      const cachedDay = cached?.payload.normalizedDay;
+      if (cachedDay && typeof cachedDay === "object" && !Array.isArray(cachedDay)) {
+        const normalized = cachedDay as unknown as WeatherDay;
+        if (normalized.date === date && typeof normalized.condition === "string") {
+          days.push(normalized);
+          await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "cache_hit", outcome: "success", cacheStatus: "hit", durationMs: Date.now() - cacheStartedAt });
+          continue;
+        }
+      }
       const url = new URL(`https://api.weatherapi.com/v1/${endpoint}`);
       url.searchParams.set("key", key);
       url.searchParams.set("q", location);
@@ -94,12 +107,23 @@ export async function POST(request: Request) {
       if (endpoint === "forecast.json") url.searchParams.set("days", "1");
       url.searchParams.set("aqi", "no");
       url.searchParams.set("alerts", "no");
-      const response = await fetch(url.toString(), { headers: { Accept: "application/json" }, next: { revalidate: 3600 } });
+      const providerStartedAt = Date.now();
+      let response: Response;
+      try {
+        response = await fetch(url.toString(), { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15000) });
+      } catch {
+        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", durationMs: Date.now() - providerStartedAt });
+        return NextResponse.json({ status: "error", days, message: "The weather provider could not be reached. Try again later." }, { status: 502 });
+      }
       const text = await response.text();
       let payload: JsonObject;
-      try { payload = asObject(JSON.parse(text)); } catch { return NextResponse.json({ status: "error", days, message: "The weather provider returned an unreadable response. Try again later." }, { status: 502 }); }
+      try { payload = asObject(JSON.parse(text)); } catch {
+        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
+        return NextResponse.json({ status: "error", days, message: "The weather provider returned an unreadable response. Try again later." }, { status: 502 });
+      }
       const providerError = weatherApiError(payload);
       if (!response.ok || providerError) {
+        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
         if (providerError?.code === 2009) {
           planMessage = endpoint === "future.json"
             ? "Your WeatherAPI plan does not include future weather for these dates. The Free plan provides a 3-day forecast; Pro+ is required for dates 14–300 days ahead."
@@ -116,7 +140,11 @@ export async function POST(request: Request) {
       const forecast = asObject(payload.forecast);
       const forecastDays = Array.isArray(forecast.forecastday) ? forecast.forecastday : [];
       const normalized = normalizeDay(forecastDays[0], date);
-      if (normalized) days.push(normalized);
+      await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
+      if (normalized) {
+        days.push(normalized);
+        await setProviderCache(cacheKey, { normalizedDay: normalized as unknown as JsonObject }, 3600);
+      }
     }
 
     if (days.length === requestedDates.length) {
