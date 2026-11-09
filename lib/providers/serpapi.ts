@@ -450,7 +450,8 @@ function makeFlightParams(input: TripSearchInput, originCode: string, destinatio
 
 function normalizeFlights(data: JsonObject, currency: string): LiveFlight[] {
   const source = [...arr(data.best_flights), ...arr(data.other_flights)];
-  return source.map((item, index) => normalizeFlight(item, index, currency)).filter((item): item is LiveFlight => Boolean(item)).slice(0, 8);
+  // Keep enough alternatives for airline preferences such as Delta vs JetBlue.
+  return source.map((item, index) => normalizeFlight(item, index, currency)).filter((item): item is LiveFlight => Boolean(item)).slice(0, 16);
 }
 
 function makeHotelParams(input: TripSearchInput, destinationName: string, airportCode: string, stayType: StayType): Record<string, string> {
@@ -480,18 +481,17 @@ function makeHotelParams(input: TripSearchInput, destinationName: string, airpor
 }
 
 function experienceQueryForStyle(style: TripSearchInput["style"]): string {
-  // Style is a ranking preference, not a hard filter. Keep the live result set
-  // broad so a beach trip can still include landmarks, tours, museums and parks.
+  // Style affects ranking, not eligibility: always request a broad mix of sights.
   const terms: Record<TripSearchInput["style"], string> = {
-    any: "top attractions, guided tours, museums, landmarks, outdoor activities and local experiences",
-    beach: "island attractions, beaches, guided tours, museums, landmarks and outdoor activities",
-    city: "top city attractions, landmarks, museums, markets, parks and guided tours",
-    food: "food markets, cooking tours, cultural attractions, museums and local experiences",
-    nature: "nature attractions, national parks, scenic landmarks, outdoor tours and local experiences",
-    romantic: "scenic attractions, guided tours, gardens, landmarks and local experiences",
-    family: "family attractions, interactive museums, parks, beaches and guided tours",
-    adventure: "outdoor adventure tours, nature attractions, scenic landmarks and water activities",
-    culture: "historic attractions, museums, cultural landmarks, markets and guided tours",
+    any: "top tourist attractions and things to do",
+    beach: "top tourist attractions, popular beaches and island excursions",
+    city: "top tourist attractions, landmarks and museums",
+    food: "food markets and local cultural attractions",
+    nature: "top nature attractions, national parks and scenic landmarks",
+    romantic: "top scenic attractions, gardens and boat tours",
+    family: "top family attractions, museums and wildlife parks",
+    adventure: "top outdoor attractions, adventure tours and water activities",
+    culture: "top historic attractions, museums and cultural landmarks",
   };
   return terms[style];
 }
@@ -530,15 +530,71 @@ function normalizeExperiences(data: JsonObject, destinationName: string, kind: "
       mapsUrl: safeHttpUrl(obj(place.links).directions) ?? mapsUrl,
     } as LiveExperience;
   }).filter((item): item is LiveExperience => Boolean(item));
-  return [...new Map(normalized.map((item) => [item.id, item])).values()].slice(0, 18);
+  return [...new Map(normalized.map((item) => [item.id, item])).values()].slice(0, 50);
 }
 
-async function searchPlacesWithFallback(query: string, destinationName: string, kind: "activity" | "restaurant", clientUsageKey: string): Promise<ProviderResponse> {
-  const mapsParams: Record<string, string> = { engine: "google_maps", type: "search", q: `${query} ${destinationName}`, hl: "en", gl: "us" };
-  let mapsError: unknown;
+function filterDestinationExperiences(
+  items: LiveExperience[],
+  destinationName: string,
+  destinationAirportCode: string,
+  kind: "activity" | "restaurant",
+): LiveExperience[] {
+  const airport = AIRPORT_COORDINATES[destinationAirportCode];
+  const radiusMiles = kind === "restaurant" ? 45 : 150;
+  const destinationTokens = destinationName
+    .split(",")
+    .map((part) => normalizeLocationText(part))
+    .filter((part) => part.length >= 3);
+
+  return items.filter((item) => {
+    if (airport && item.latitude !== null && item.longitude !== null) {
+      return milesBetween(airport.latitude, airport.longitude, item.latitude, item.longitude) <= radiusMiles;
+    }
+    const address = normalizeLocationText(item.address);
+    if (destinationTokens.length && address) return destinationTokens.some((token) => address.includes(token));
+    // Without coordinates, require destination text in the address. An
+    // addressless listing cannot be verified as local and may be a remote tour operator.
+    return false;
+  });
+}
+
+async function searchPlacesWithFallback(
+  query: string,
+  destinationName: string,
+  destinationAirportCode: string,
+  kind: "activity" | "restaurant",
+  clientUsageKey: string,
+): Promise<ProviderResponse> {
+  const airport = AIRPORT_COORDINATES[destinationAirportCode];
+  const mapsParams: Record<string, string> = {
+    engine: "google_maps",
+    type: "search",
+    q: `${query} in ${destinationName}`,
+    hl: "en",
+    gl: "us",
+  };
+  if (airport) mapsParams.ll = `@${airport.latitude},${airport.longitude},12z`;
+
+  let mapsResult: ProviderResponse | null = null;
+  let mapsError: unknown = null;
+  let mapEntries: unknown[] = [];
+  let localCount = 0;
   try {
-    const mapsResult = await querySerpApi(mapsParams, 21600, clientUsageKey);
-    if (normalizeExperiences(mapsResult.data, destinationName, kind).length) return mapsResult;
+    mapsResult = await querySerpApi(mapsParams, 21600, clientUsageKey);
+    mapEntries = [
+      ...arr(mapsResult.data.local_results),
+      ...arr(mapsResult.data.place_results),
+      ...arr(mapsResult.data.discover_more_places),
+    ];
+    localCount = filterDestinationExperiences(
+      normalizeExperiences(mapsResult.data, destinationName, kind),
+      destinationName,
+      destinationAirportCode,
+      kind,
+    ).length;
+    // One or two local hits usually means Maps interpreted the query as a
+    // tour operator/service search. Fall back unless it found a useful list.
+    if (localCount >= 6) return mapsResult;
   } catch (error) {
     mapsError = error;
     const code = error instanceof Error ? error.message : "";
@@ -546,16 +602,30 @@ async function searchPlacesWithFallback(query: string, destinationName: string, 
   }
 
   try {
-    const isCountryWide = !destinationName.includes(",") && /^(aruba|dominican republic|mexico|portugal|puerto rico|jamaica|united states|canada|france|italy|spain|japan)$/i.test(destinationName.trim());
-    const localParams: Record<string, string> = {
+    // Keep the locality in the query and location parameter. This second
+    // provider view can surface actual destination attractions when Maps
+    // returns only a thin set or a tour operator located outside the area.
+    const fallbackResult = await querySerpApi({
       engine: "google_local",
-      q: isCountryWide ? `${query} in ${destinationName}` : query,
+      q: `${query} in ${destinationName}`,
+      location: destinationName,
       hl: "en",
       gl: "us",
-    };
-    if (!isCountryWide) localParams.location = destinationName;
-    return await querySerpApi(localParams, 21600, clientUsageKey);
+    }, 21600, clientUsageKey);
+    const fallbackEntries = [
+      ...arr(fallbackResult.data.local_results),
+      ...arr(fallbackResult.data.place_results),
+      ...arr(fallbackResult.data.discover_more_places),
+    ];
+    if (mapsResult) {
+      return {
+        ...fallbackResult,
+        data: { ...fallbackResult.data, local_results: [...mapEntries, ...fallbackEntries] },
+      };
+    }
+    return fallbackResult;
   } catch (fallbackError) {
+    if (mapsResult && localCount > 0) return mapsResult;
     if (mapsError) throw mapsError;
     throw fallbackError;
   }
@@ -579,8 +649,8 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     }
   }
   if (components.includes("activities")) {
-    tasks.push({ key: "experiences", promise: searchPlacesWithFallback(experienceQueryForStyle(input.style), normalizedDestinationName, "activity", clientUsageKey) });
-    tasks.push({ key: "restaurants", promise: searchPlacesWithFallback("popular restaurants, highly rated local dining, casual restaurants and local food", normalizedDestinationName, "restaurant", clientUsageKey) });
+    tasks.push({ key: "experiences", promise: searchPlacesWithFallback(experienceQueryForStyle(input.style), normalizedDestinationName, destinationCode || destinationAirportCode, "activity", clientUsageKey) });
+    tasks.push({ key: "restaurants", promise: searchPlacesWithFallback("popular restaurants, highly rated local dining, casual restaurants and local food", normalizedDestinationName, destinationCode || destinationAirportCode, "restaurant", clientUsageKey) });
   }
 
   const outcomes = await Promise.allSettled(tasks.map((task) => task.promise));
@@ -627,10 +697,20 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
         warnings.push(key === "vacation_rentals" ? "No vacation-rental properties were returned for those dates, guests and destination." : "No hotel properties were returned for those dates, guests and destination.");
       }
     } else if (key === "experiences") {
-      experiences = normalizeExperiences(outcome.value.data, normalizedDestinationName, "activity");
+      experiences = filterDestinationExperiences(
+        normalizeExperiences(outcome.value.data, normalizedDestinationName, "activity"),
+        normalizedDestinationName,
+        destinationCode || destinationAirportCode,
+        "activity",
+      ).slice(0, 30);
       if (!experiences.length) warnings.push("No local attractions or activities were returned for this destination. Try a nearby town or search directly on a tour provider.");
     } else if (key === "restaurants") {
-      restaurants = normalizeExperiences(outcome.value.data, normalizedDestinationName, "restaurant");
+      restaurants = filterDestinationExperiences(
+        normalizeExperiences(outcome.value.data, normalizedDestinationName, "restaurant"),
+        normalizedDestinationName,
+        destinationCode || destinationAirportCode,
+        "restaurant",
+      ).slice(0, 30);
       if (!restaurants.length) warnings.push("No restaurant results were returned for this destination. Try searching Maps directly for current dining options.");
     }
   });
@@ -741,7 +821,8 @@ export type FlightBookingOption = {
   price: number | null;
   currency: string;
   url?: string;
-  postFields: Array<{ name: string; value: string }>;
+  /** Exact Google booking_request payload. It must be POSTed without re-encoding. */
+  postData?: string;
   type: string;
   baggage: string[];
   fareTerms: string[];
@@ -752,7 +833,7 @@ function safeGoogleBookingUrl(value: unknown): string | undefined {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
-    return url.protocol === "https:" && (host === "google.com" || host.endsWith(".google.com")) ? url.toString() : undefined;
+    return url.protocol === "https:" && (host === "www.google.com" || host === "google.com") && url.pathname === "/travel/clk/f" ? url.toString() : undefined;
   } catch { return undefined; }
 }
 
@@ -792,21 +873,21 @@ export async function getFlightBookingOptions(
   return arr(response.data.booking_options).map((item) => {
     const option = obj(item);
     const together = obj(option.together);
-    const bookingRequest = obj(together.booking_request);
-    const directUrl = safeHttpUrl(option.link);
-    const googleUrl = safeGoogleBookingUrl(bookingRequest.url);
-    const rawPostData = str(bookingRequest.post_data);
-    const postFields = rawPostData
-      ? Array.from(new URLSearchParams(rawPostData).entries()).slice(0, 50).map(([name, value]) => ({ name, value }))
-      : [];
-    const formUrl = googleUrl && postFields.length ? googleUrl : undefined;
+    const bookingRequest = obj(together.booking_request ?? option.booking_request);
+    const rawDirectUrl = safeHttpUrl(option.link);
+    const directUrl = rawDirectUrl && !/https?:\/\/(?:www\.)?google\.com\/travel\/clk\/f(?:[/?#]|$)/i.test(rawDirectUrl)
+      ? rawDirectUrl
+      : undefined;
+    const googleUrl = safeGoogleBookingUrl(bookingRequest.url) ?? safeGoogleBookingUrl(option.link);
+    const rawPostData = str(bookingRequest.post_data) || str(option.post_data) || str(together.post_data);
+    const postData = rawPostData && rawPostData.length <= 30000 ? rawPostData : undefined;
+    const postUrl = googleUrl && postData ? googleUrl : undefined;
     return {
       seller: str(together.book_with, str(option.book_with, "Booking provider")),
       price: num(together.price) ?? num(option.price),
-      // The booking_options price is returned in the requested search currency.
       currency: input.currency,
-      url: directUrl ?? formUrl,
-      postFields: directUrl ? [] : postFields,
+      url: directUrl ?? postUrl,
+      postData: directUrl ? undefined : postData,
       type: str(together.option_title, str(option.type, "Online booking")),
       baggage: arr(together.baggage_prices).filter((entry): entry is string => typeof entry === "string").slice(0, 5),
       fareTerms: arr(together.extensions).filter((entry): entry is string => typeof entry === "string").slice(0, 6),
