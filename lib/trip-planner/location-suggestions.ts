@@ -2,7 +2,7 @@ export type LocationSuggestion = {
   value: string;
   label: string;
   detail: string;
-  kind: "city" | "airport" | "region" | "attraction";
+  kind: "city" | "area" | "airport" | "region" | "attraction";
   airportCode: string;
   country: string;
 };
@@ -50,7 +50,7 @@ export const US_STATES: USState[] = [
   { name: "Ohio", abbreviation: "OH", airports: [{ code: "CLE", city: "Cleveland" }, { code: "CMH", city: "Columbus" }, { code: "CVG", city: "Cincinnati" }] },
   { name: "Oklahoma", abbreviation: "OK", airports: [{ code: "OKC", city: "Oklahoma City" }, { code: "TUL", city: "Tulsa" }] },
   { name: "Oregon", abbreviation: "OR", airports: [{ code: "PDX", city: "Portland" }] },
-  { name: "Pennsylvania", abbreviation: "PA", airports: [{ code: "PHL", city: "Philadelphia" }, { code: "PIT", city: "Pittsburgh" }] },
+  { name: "Pennsylvania", abbreviation: "PA", airports: [{ code: "PHL", city: "Philadelphia" }, { code: "PIT", city: "Pittsburgh" }, { code: "AVP", city: "Wilkes-Barre/Scranton" }, { code: "ABE", city: "Allentown" }] },
   { name: "Rhode Island", abbreviation: "RI", airports: [{ code: "PVD", city: "Providence" }] },
   { name: "South Carolina", abbreviation: "SC", airports: [{ code: "CHS", city: "Charleston" }, { code: "GSP", city: "Greenville–Spartanburg" }] },
   { name: "South Dakota", abbreviation: "SD", airports: [{ code: "FSD", city: "Sioux Falls" }] },
@@ -370,6 +370,132 @@ const DESTINATION_LOCATIONS: LocationSuggestion[] = [
   { value: "Washington, United States", label: "Washington", detail: "United States · DCA / IAD / BWI", kind: "city", airportCode: "WAS", country: "United States" },
 ];
 
+// City and regional choices for narrowing a broad U.S. state search. The
+// selected value always retains the state, so providers can resolve the exact
+// locality and avoid falling back to a state-wide search.
+const US_CITY_AREAS: LocationSuggestion[] = [
+  { value: "Birmingham, Alabama", label: "Birmingham", detail: "Alabama · city", kind: "city", airportCode: "BHM", country: "Alabama" },
+  { value: "Gulf Shores, Alabama", label: "Gulf Shores", detail: "Alabama · beach town", kind: "area", airportCode: "MOB", country: "Alabama" },
+  { value: "Anchorage, Alaska", label: "Anchorage", detail: "Alaska · city", kind: "city", airportCode: "ANC", country: "Alaska" },
+  { value: "Juneau, Alaska", label: "Juneau", detail: "Alaska · city", kind: "city", airportCode: "JNU", country: "Alaska" },
+  { value: "Phoenix, Arizona", label: "Phoenix", detail: "Arizona · city", kind: "city", airportCode: "PHX", country: "Arizona" },
+  { value: "Sedona, Arizona", label: "Sedona", detail: "Arizona · red-rock destination", kind: "area", airportCode: "PHX", country: "Arizona" },
+  { value: "Grand Canyon, Arizona", label: "Grand Canyon", detail: "Arizona · national park region", kind: "area", airportCode: "PHX", country: "Arizona" },
+  { value: "Little Rock, Arkansas", label: "Little Rock", detail: "Arkansas · city", kind: "city", airportCode: "LIT", country: "Arkansas" },
+  { value: "Hot Springs, Arkansas", label: "Hot Springs", detail: "Arkansas · resort town", kind: "area", airportCode: "LIT", country: "Arkansas" },
+  { value: "Los Angeles, California", label: "Los Angeles", detail: "California · city", kind: "city", airportCode: "LAX", country: "California" },
+  { value: "San Diego, California", label: "San Diego", detail: "California · coastal city", kind: "city", airportCode: "SAN", country: "California" },
+  { value: "San Francisco, California", label: "San Francisco", detail: "California · city", kind: "city", airportCode: "SFO", country: "California" },
+  { value: "Sacramento, California", label: "Sacramento", detail: "California · city", kind: "city", airportCode: "SMF", country: "California" },
+  { value: "Palm Springs, California", label: "Palm Springs", detail: "California · desert resort area", kind: "area", airportCode: "PSP", country: "California" },
+  { value: "Denver, Colorado", label: "Denver", detail: "Colorado · city", kind: "city", airportCode: "DEN", country: "Colorado" },
+  { value: "Colorado Springs, Colorado", label: "Colorado Springs", detail: "Colorado · city", kind: "city", airportCode: "COS", country: "Colorado" },
+  { value: "Aspen, Colorado", label: "Aspen", detail: "Colorado · mountain resort town", kind: "area", airportCode: "ASE", country: "Colorado" },
+  { value: "Hartford, Connecticut", label: "Hartford", detail: "Connecticut · city", kind: "city", airportCode: "BDL", country: "Connecticut" },
+  { value: "Mystic, Connecticut", label: "Mystic", detail: "Connecticut · coastal village", kind: "area", airportCode: "BDL", country: "Connecticut" },
+  { value: "Wilmington, Delaware", label: "Wilmington", detail: "Delaware · city", kind: "city", airportCode: "ILG", country: "Delaware" },
+  { value: "Rehoboth Beach, Delaware", label: "Rehoboth Beach", detail: "Delaware · beach town", kind: "area", airportCode: "ILG", country: "Delaware" },
+  { value: "Miami, Florida", label: "Miami", detail: "Florida · city", kind: "city", airportCode: "MIA", country: "Florida" },
+  { value: "Orlando, Florida", label: "Orlando", detail: "Florida · city", kind: "city", airportCode: "MCO", country: "Florida" },
+  { value: "Tampa, Florida", label: "Tampa", detail: "Florida · city", kind: "city", airportCode: "TPA", country: "Florida" },
+  { value: "Key West, Florida", label: "Key West", detail: "Florida · island city", kind: "area", airportCode: "EYW", country: "Florida" },
+  { value: "Atlanta, Georgia", label: "Atlanta", detail: "Georgia · city", kind: "city", airportCode: "ATL", country: "Georgia" },
+  { value: "Savannah, Georgia", label: "Savannah", detail: "Georgia · historic coastal city", kind: "city", airportCode: "SAV", country: "Georgia" },
+  { value: "Honolulu, Hawaii", label: "Honolulu", detail: "Hawaii · Oahu", kind: "city", airportCode: "HNL", country: "Hawaii" },
+  { value: "Kailua-Kona, Hawaii", label: "Kailua-Kona", detail: "Hawaii · Big Island", kind: "area", airportCode: "KOA", country: "Hawaii" },
+  { value: "Boise, Idaho", label: "Boise", detail: "Idaho · city", kind: "city", airportCode: "BOI", country: "Idaho" },
+  { value: "Coeur d'Alene, Idaho", label: "Coeur d'Alene", detail: "Idaho · lake destination", kind: "area", airportCode: "BOI", country: "Idaho" },
+  { value: "Chicago, Illinois", label: "Chicago", detail: "Illinois · city", kind: "city", airportCode: "CHI", country: "Illinois" },
+  { value: "Springfield, Illinois", label: "Springfield", detail: "Illinois · city", kind: "city", airportCode: "SPI", country: "Illinois" },
+  { value: "Indianapolis, Indiana", label: "Indianapolis", detail: "Indiana · city", kind: "city", airportCode: "IND", country: "Indiana" },
+  { value: "Bloomington, Indiana", label: "Bloomington", detail: "Indiana · city", kind: "city", airportCode: "IND", country: "Indiana" },
+  { value: "Des Moines, Iowa", label: "Des Moines", detail: "Iowa · city", kind: "city", airportCode: "DSM", country: "Iowa" },
+  { value: "Iowa City, Iowa", label: "Iowa City", detail: "Iowa · city", kind: "city", airportCode: "DSM", country: "Iowa" },
+  { value: "Wichita, Kansas", label: "Wichita", detail: "Kansas · city", kind: "city", airportCode: "ICT", country: "Kansas" },
+  { value: "Overland Park, Kansas", label: "Overland Park", detail: "Kansas · city", kind: "city", airportCode: "MCI", country: "Kansas" },
+  { value: "Louisville, Kentucky", label: "Louisville", detail: "Kentucky · city", kind: "city", airportCode: "SDF", country: "Kentucky" },
+  { value: "Lexington, Kentucky", label: "Lexington", detail: "Kentucky · city", kind: "city", airportCode: "LEX", country: "Kentucky" },
+  { value: "New Orleans, Louisiana", label: "New Orleans", detail: "Louisiana · city", kind: "city", airportCode: "MSY", country: "Louisiana" },
+  { value: "Baton Rouge, Louisiana", label: "Baton Rouge", detail: "Louisiana · city", kind: "city", airportCode: "BTR", country: "Louisiana" },
+  { value: "Portland, Maine", label: "Portland", detail: "Maine · city", kind: "city", airportCode: "PWM", country: "Maine" },
+  { value: "Bar Harbor, Maine", label: "Bar Harbor", detail: "Maine · Acadia region", kind: "area", airportCode: "BGR", country: "Maine" },
+  { value: "Baltimore, Maryland", label: "Baltimore", detail: "Maryland · city", kind: "city", airportCode: "BWI", country: "Maryland" },
+  { value: "Ocean City, Maryland", label: "Ocean City", detail: "Maryland · beach town", kind: "area", airportCode: "BWI", country: "Maryland" },
+  { value: "Boston, Massachusetts", label: "Boston", detail: "Massachusetts · city", kind: "city", airportCode: "BOS", country: "Massachusetts" },
+  { value: "Cape Cod, Massachusetts", label: "Cape Cod", detail: "Massachusetts · coastal region", kind: "area", airportCode: "BOS", country: "Massachusetts" },
+  { value: "Detroit, Michigan", label: "Detroit", detail: "Michigan · city", kind: "city", airportCode: "DTW", country: "Michigan" },
+  { value: "Traverse City, Michigan", label: "Traverse City", detail: "Michigan · lake destination", kind: "city", airportCode: "TVC", country: "Michigan" },
+  { value: "Minneapolis, Minnesota", label: "Minneapolis", detail: "Minnesota · city", kind: "city", airportCode: "MSP", country: "Minnesota" },
+  { value: "Duluth, Minnesota", label: "Duluth", detail: "Minnesota · Lake Superior city", kind: "city", airportCode: "DLH", country: "Minnesota" },
+  { value: "Biloxi, Mississippi", label: "Biloxi", detail: "Mississippi · Gulf Coast", kind: "area", airportCode: "GPT", country: "Mississippi" },
+  { value: "Jackson, Mississippi", label: "Jackson", detail: "Mississippi · city", kind: "city", airportCode: "JAN", country: "Mississippi" },
+  { value: "St. Louis, Missouri", label: "St. Louis", detail: "Missouri · city", kind: "city", airportCode: "STL", country: "Missouri" },
+  { value: "Branson, Missouri", label: "Branson", detail: "Missouri · resort town", kind: "area", airportCode: "SGF", country: "Missouri" },
+  { value: "Bozeman, Montana", label: "Bozeman", detail: "Montana · city", kind: "city", airportCode: "BZN", country: "Montana" },
+  { value: "Missoula, Montana", label: "Missoula", detail: "Montana · city", kind: "city", airportCode: "MSO", country: "Montana" },
+  { value: "Omaha, Nebraska", label: "Omaha", detail: "Nebraska · city", kind: "city", airportCode: "OMA", country: "Nebraska" },
+  { value: "Lincoln, Nebraska", label: "Lincoln", detail: "Nebraska · city", kind: "city", airportCode: "LNK", country: "Nebraska" },
+  { value: "Las Vegas, Nevada", label: "Las Vegas", detail: "Nevada · city", kind: "city", airportCode: "LAS", country: "Nevada" },
+  { value: "Reno, Nevada", label: "Reno", detail: "Nevada · city", kind: "city", airportCode: "RNO", country: "Nevada" },
+  { value: "Manchester, New Hampshire", label: "Manchester", detail: "New Hampshire · city", kind: "city", airportCode: "MHT", country: "New Hampshire" },
+  { value: "White Mountains, New Hampshire", label: "White Mountains", detail: "New Hampshire · mountain region", kind: "area", airportCode: "MHT", country: "New Hampshire" },
+  { value: "Jersey City, New Jersey", label: "Jersey City", detail: "New Jersey · city", kind: "city", airportCode: "EWR", country: "New Jersey" },
+  { value: "Atlantic City, New Jersey", label: "Atlantic City", detail: "New Jersey · coastal resort city", kind: "city", airportCode: "ACY", country: "New Jersey" },
+  { value: "Cape May, New Jersey", label: "Cape May", detail: "New Jersey · shore town", kind: "area", airportCode: "ACY", country: "New Jersey" },
+  { value: "Albuquerque, New Mexico", label: "Albuquerque", detail: "New Mexico · city", kind: "city", airportCode: "ABQ", country: "New Mexico" },
+  { value: "Santa Fe, New Mexico", label: "Santa Fe", detail: "New Mexico · historic city", kind: "city", airportCode: "ABQ", country: "New Mexico" },
+  { value: "New York City, New York", label: "New York City", detail: "New York · city", kind: "city", airportCode: "NYC", country: "New York" },
+  { value: "Buffalo, New York", label: "Buffalo", detail: "New York · city", kind: "city", airportCode: "BUF", country: "New York" },
+  { value: "Adirondacks, New York", label: "Adirondacks", detail: "New York · mountain region", kind: "area", airportCode: "ALB", country: "New York" },
+  { value: "Charlotte, North Carolina", label: "Charlotte", detail: "North Carolina · city", kind: "city", airportCode: "CLT", country: "North Carolina" },
+  { value: "Asheville, North Carolina", label: "Asheville", detail: "North Carolina · mountain city", kind: "city", airportCode: "AVL", country: "North Carolina" },
+  { value: "Outer Banks, North Carolina", label: "Outer Banks", detail: "North Carolina · coastal region", kind: "area", airportCode: "ORF", country: "North Carolina" },
+  { value: "Fargo, North Dakota", label: "Fargo", detail: "North Dakota · city", kind: "city", airportCode: "FAR", country: "North Dakota" },
+  { value: "Cleveland, Ohio", label: "Cleveland", detail: "Ohio · city", kind: "city", airportCode: "CLE", country: "Ohio" },
+  { value: "Columbus, Ohio", label: "Columbus", detail: "Ohio · city", kind: "city", airportCode: "CMH", country: "Ohio" },
+  { value: "Oklahoma City, Oklahoma", label: "Oklahoma City", detail: "Oklahoma · city", kind: "city", airportCode: "OKC", country: "Oklahoma" },
+  { value: "Tulsa, Oklahoma", label: "Tulsa", detail: "Oklahoma · city", kind: "city", airportCode: "TUL", country: "Oklahoma" },
+  { value: "Portland, Oregon", label: "Portland", detail: "Oregon · city", kind: "city", airportCode: "PDX", country: "Oregon" },
+  { value: "Bend, Oregon", label: "Bend", detail: "Oregon · outdoor destination", kind: "city", airportCode: "RDM", country: "Oregon" },
+  { value: "Pocono Mountains, Pennsylvania", label: "Pocono Mountains", detail: "Pennsylvania · regional destination · nearby towns included", kind: "area", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "Poconos, Pennsylvania", label: "Poconos", detail: "Pennsylvania · regional destination · nearby towns included", kind: "area", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "Mount Pocono, Pennsylvania", label: "Mount Pocono", detail: "Pennsylvania · Pocono Mountains town", kind: "city", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "Stroudsburg, Pennsylvania", label: "Stroudsburg", detail: "Pennsylvania · Pocono Mountains town", kind: "city", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "East Stroudsburg, Pennsylvania", label: "East Stroudsburg", detail: "Pennsylvania · Pocono Mountains town", kind: "city", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "Jim Thorpe, Pennsylvania", label: "Jim Thorpe", detail: "Pennsylvania · Pocono Mountains area", kind: "area", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "Lake Harmony, Pennsylvania", label: "Lake Harmony", detail: "Pennsylvania · Pocono Mountains area", kind: "area", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "Scranton, Pennsylvania", label: "Scranton", detail: "Pennsylvania · city", kind: "city", airportCode: "AVP", country: "Pennsylvania" },
+  { value: "Philadelphia, Pennsylvania", label: "Philadelphia", detail: "Pennsylvania · city", kind: "city", airportCode: "PHL", country: "Pennsylvania" },
+  { value: "Pittsburgh, Pennsylvania", label: "Pittsburgh", detail: "Pennsylvania · city", kind: "city", airportCode: "PIT", country: "Pennsylvania" },
+  { value: "Lancaster, Pennsylvania", label: "Lancaster", detail: "Pennsylvania · city", kind: "city", airportCode: "PHL", country: "Pennsylvania" },
+  { value: "Providence, Rhode Island", label: "Providence", detail: "Rhode Island · city", kind: "city", airportCode: "PVD", country: "Rhode Island" },
+  { value: "Newport, Rhode Island", label: "Newport", detail: "Rhode Island · coastal town", kind: "area", airportCode: "PVD", country: "Rhode Island" },
+  { value: "Charleston, South Carolina", label: "Charleston", detail: "South Carolina · city", kind: "city", airportCode: "CHS", country: "South Carolina" },
+  { value: "Myrtle Beach, South Carolina", label: "Myrtle Beach", detail: "South Carolina · beach city", kind: "area", airportCode: "MYR", country: "South Carolina" },
+  { value: "Sioux Falls, South Dakota", label: "Sioux Falls", detail: "South Dakota · city", kind: "city", airportCode: "FSD", country: "South Dakota" },
+  { value: "Black Hills, South Dakota", label: "Black Hills", detail: "South Dakota · mountain region", kind: "area", airportCode: "RAP", country: "South Dakota" },
+  { value: "Nashville, Tennessee", label: "Nashville", detail: "Tennessee · city", kind: "city", airportCode: "BNA", country: "Tennessee" },
+  { value: "Gatlinburg, Tennessee", label: "Gatlinburg", detail: "Tennessee · Smoky Mountains gateway", kind: "area", airportCode: "TYS", country: "Tennessee" },
+  { value: "Austin, Texas", label: "Austin", detail: "Texas · city", kind: "city", airportCode: "AUS", country: "Texas" },
+  { value: "Dallas, Texas", label: "Dallas", detail: "Texas · city", kind: "city", airportCode: "DFW", country: "Texas" },
+  { value: "Houston, Texas", label: "Houston", detail: "Texas · city", kind: "city", airportCode: "IAH", country: "Texas" },
+  { value: "Salt Lake City, Utah", label: "Salt Lake City", detail: "Utah · city", kind: "city", airportCode: "SLC", country: "Utah" },
+  { value: "Moab, Utah", label: "Moab", detail: "Utah · national park gateway", kind: "area", airportCode: "SLC", country: "Utah" },
+  { value: "Burlington, Vermont", label: "Burlington", detail: "Vermont · city", kind: "city", airportCode: "BTV", country: "Vermont" },
+  { value: "Stowe, Vermont", label: "Stowe", detail: "Vermont · mountain town", kind: "area", airportCode: "BTV", country: "Vermont" },
+  { value: "Virginia Beach, Virginia", label: "Virginia Beach", detail: "Virginia · coastal city", kind: "city", airportCode: "ORF", country: "Virginia" },
+  { value: "Richmond, Virginia", label: "Richmond", detail: "Virginia · city", kind: "city", airportCode: "RIC", country: "Virginia" },
+  { value: "Seattle, Washington", label: "Seattle", detail: "Washington · city", kind: "city", airportCode: "SEA", country: "Washington" },
+  { value: "Spokane, Washington", label: "Spokane", detail: "Washington · city", kind: "city", airportCode: "GEG", country: "Washington" },
+  { value: "Charleston, West Virginia", label: "Charleston", detail: "West Virginia · city", kind: "city", airportCode: "CRW", country: "West Virginia" },
+  { value: "New River Gorge, West Virginia", label: "New River Gorge", detail: "West Virginia · outdoor region", kind: "area", airportCode: "CRW", country: "West Virginia" },
+  { value: "Milwaukee, Wisconsin", label: "Milwaukee", detail: "Wisconsin · city", kind: "city", airportCode: "MKE", country: "Wisconsin" },
+  { value: "Wisconsin Dells, Wisconsin", label: "Wisconsin Dells", detail: "Wisconsin · resort area", kind: "area", airportCode: "MSN", country: "Wisconsin" },
+  { value: "Jackson Hole, Wyoming", label: "Jackson Hole", detail: "Wyoming · mountain resort region", kind: "area", airportCode: "JAC", country: "Wyoming" },
+  { value: "Yellowstone, Wyoming", label: "Yellowstone", detail: "Wyoming · national park region", kind: "area", airportCode: "JAC", country: "Wyoming" },
+  { value: "Washington, District of Columbia", label: "Washington, DC", detail: "District of Columbia · city", kind: "city", airportCode: "WAS", country: "District of Columbia" },
+];
+
 const DESTINATION_REGIONS: LocationSuggestion[] = [
   { value: "Dominican Republic", label: "Dominican Republic", detail: "Country · choose a gateway airport if searching flights", kind: "region", airportCode: "", country: "Dominican Republic" },
   { value: "Mexico", label: "Mexico", detail: "Country · choose a city for flights, or search stays and places country-wide", kind: "region", airportCode: "", country: "Mexico" },
@@ -414,6 +540,34 @@ const DESTINATION_ATTRACTIONS: LocationSuggestion[] = [
   { value: "Belém, Lisbon, Portugal", label: "Belém", detail: "Historic waterfront · Lisbon · LIS", kind: "attraction", airportCode: "LIS", country: "Portugal" },
   { value: "Sagrada Família, Barcelona, Spain", label: "Sagrada Família", detail: "Landmark · Barcelona · BCN", kind: "attraction", airportCode: "BCN", country: "Spain" },
 ];
+
+export type DestinationAreaGeo = {
+  latitude: number;
+  longitude: number;
+  activityRadiusMiles: number;
+  restaurantRadiusMiles: number;
+  hotelRadiusMiles: number;
+  addressAliases: string[];
+};
+
+const DESTINATION_AREA_GEOS: Array<{ aliases: string[]; geo: DestinationAreaGeo }> = [
+  {
+    aliases: ["pocono mountains", "poconos", "pocono region", "pocono", "stroudsburg", "east stroudsburg", "mount pocono", "tannersville", "jim thorpe", "lake harmony", "hawley", "milford", "tobyhanna", "long pond", "blakeslee", "swiftwater", "bushkill", "scranton"],
+    geo: {
+      latitude: 41.05,
+      longitude: -75.25,
+      activityRadiusMiles: 55,
+      restaurantRadiusMiles: 40,
+      hotelRadiusMiles: 50,
+      addressAliases: ["stroudsburg", "east stroudsburg", "mount pocono", "tannersville", "jim thorpe", "lake harmony", "hawley", "milford", "tobyhanna", "long pond", "blakeslee", "swiftwater", "bushkill", "scranton"],
+    },
+  },
+];
+
+export function getDestinationAreaGeo(value: string): DestinationAreaGeo | undefined {
+  const normalized = norm(value);
+  return DESTINATION_AREA_GEOS.find(({ aliases }) => aliases.some((alias) => normalized.includes(norm(alias))))?.geo;
+}
 
 export type DestinationGateway = { code: string; label: string; city: string };
 
@@ -485,8 +639,12 @@ export function getUSStateRegion(value: string): USState | undefined {
   return US_STATES.find((state) => norm(state.name) === normalized || norm(state.abbreviation) === normalized);
 }
 
+export function getDestinationStateRegion(value: string): USState | undefined {
+  return value.split(",").map((part) => getUSStateRegion(part.trim())).find((state): state is USState => Boolean(state));
+}
+
 export function getUSStateAddressAliases(value: string): string[] {
-  const state = getUSStateRegion(value);
+  const state = getDestinationStateRegion(value);
   return state ? [norm(state.name), norm(state.abbreviation)] : [];
 }
 
@@ -507,6 +665,7 @@ export function getLocationSuggestions(
   field: "origin" | "destination",
   includeAttractions = false,
   includeAirports = false,
+  regionScope = "",
 ): LocationSuggestion[] {
   const q = norm(query);
   if (field === "origin") {
@@ -540,14 +699,21 @@ export function getLocationSuggestions(
     })))
     : [];
 
-  const source = [...DESTINATION_REGIONS, ...airportSuggestions, ...DESTINATION_LOCATIONS, ...(includeAttractions ? DESTINATION_ATTRACTIONS : [])];
-  if (q.length < 2) return source.slice(0, 8);
+  const allSource = [...DESTINATION_REGIONS, ...airportSuggestions, ...DESTINATION_LOCATIONS, ...US_CITY_AREAS, ...(includeAttractions ? DESTINATION_ATTRACTIONS : [])];
+  const scope = norm(regionScope);
+  const source = scope
+    ? allSource.filter((item) => item.kind !== "region" && item.kind !== "airport" && (
+      norm(item.value).includes(scope) || norm(item.country) === scope || norm(item.detail).includes(scope)
+    ))
+    : allSource;
+  if (q.length < 2) return source.slice(0, 20);
   const matching = source.filter((item) =>
     (stateQuery && item.kind === "region" && norm(item.label) === norm(stateQuery.name)) ||
+    (stateQuery && item.kind !== "region" && norm(item.value).includes(norm(stateQuery.name))) ||
     [item.value, item.label, item.detail, item.airportCode].some((value) => norm(value).includes(q))
   );
   return matching.sort((a, b) => {
-    const rank = (item: LocationSuggestion) => item.kind === "region" ? 0 : item.kind === "airport" ? 1 : item.kind === "city" ? 2 : 3;
+    const rank = (item: LocationSuggestion) => item.kind === "region" ? 0 : item.kind === "airport" ? 1 : item.kind === "city" ? 2 : item.kind === "area" ? 3 : 4;
     const aCountry = norm(a.value) === q || norm(a.label) === q ? 0 : 1;
     const bCountry = norm(b.value) === q || norm(b.label) === q ? 0 : 1;
     // Preserve the curated gateway and attraction order inside each group so
@@ -560,7 +726,7 @@ export function destinationMetadata(value: string): { city: string; country: str
   const q = norm(value);
   const state = getUSStateRegion(value);
   if (state) return { city: state.name, country: "United States", airportCode: "" };
-  const item = [...DESTINATION_LOCATIONS, ...DESTINATION_ATTRACTIONS].find((entry) => norm(entry.value) === q || norm(entry.label) === q || norm(entry.airportCode) === q);
+  const item = [...DESTINATION_LOCATIONS, ...US_CITY_AREAS, ...DESTINATION_ATTRACTIONS].find((entry) => norm(entry.value) === q || norm(entry.label) === q || norm(entry.airportCode) === q);
   if (item) return { city: item.label, country: item.country, airportCode: item.airportCode };
   const region = DESTINATION_REGIONS.find((entry) => norm(entry.value) === q || norm(entry.label) === q);
   if (region) return { city: region.label, country: region.country || "", airportCode: "" };
@@ -593,6 +759,8 @@ export const AIRPORT_COORDINATES: Record<string, { latitude: number; longitude: 
   AUA: { latitude: 12.5014, longitude: -70.0152, name: "Queen Beatrix International Airport" },
   YVR: { latitude: 49.1967, longitude: -123.1815, name: "Vancouver International Airport" },
   YUL: { latitude: 45.4706, longitude: -73.7408, name: "Montréal–Trudeau International Airport" },
+  AVP: { latitude: 41.3385, longitude: -75.7234, name: "Wilkes-Barre/Scranton International Airport" },
+  ABE: { latitude: 40.6524, longitude: -75.4408, name: "Lehigh Valley International Airport" },
 };
 export function getDestinationGateways(value: string): DestinationGateway[] {
   const state = getUSStateRegion(value);

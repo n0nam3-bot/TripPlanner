@@ -1,6 +1,6 @@
 import { getProviderCache, providerCacheKey, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
-import { AIRPORT_COORDINATES, destinationMetadata, getUSStateAddressAliases } from "@/lib/trip-planner/location-suggestions";
+import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
 
 const ENDPOINT = "https://serpapi.com/search.json";
@@ -310,6 +310,19 @@ function isCountryWideSearch(destinationName: string): boolean {
   return Boolean(metadata.country) && normalizeLocationText(metadata.city) === normalizeLocationText(metadata.country);
 }
 
+function destinationLocalityTokens(destinationName: string): string[] {
+  const state = getDestinationStateRegion(destinationName);
+  return destinationName.split(",").map(normalizeLocationText).filter((part) =>
+    part.length >= 3 && part !== "united states" && (!state || part !== normalizeLocationText(state.name))
+  );
+}
+
+function addressMatchesState(address: string, aliases: string[]): boolean {
+  return aliases.some((alias) => alias.length > 2
+    ? address.includes(alias)
+    : new RegExp(`(^| )${alias}( |$)`).test(address));
+}
+
 function milesBetween(latitude: number, longitude: number, otherLatitude: number, otherLongitude: number): number {
   const radians = (degrees: number) => degrees * Math.PI / 180;
   const dLat = radians(otherLatitude - latitude);
@@ -334,32 +347,47 @@ function hotelSearchLocation(destinationName: string, airportCode: string): stri
     MCO: "Orlando, Florida, United States",
     MSY: "New Orleans, Louisiana, United States",
   };
+  // A state or explicitly selected city/area remains the accommodation target.
+  // Do not let a flight gateway silently turn a state search into an airport-city search.
+  if (getUSStateRegion(destinationName) || destinationName.includes(",")) return cleanDestinationSearchName(destinationName);
   return gatewayLocations[airportCode] ?? cleanDestinationSearchName(destinationName);
 }
 
 function hotelMatchesDestination(hotel: LiveHotel, airportCode: string, destinationName: string): boolean {
   const airport = AIRPORT_COORDINATES[airportCode];
+  const area = getDestinationAreaGeo(destinationName);
   const stateAliases = getUSStateAddressAliases(destinationName);
+  const broadState = Boolean(getUSStateRegion(destinationName));
+  const localityTokens = destinationLocalityTokens(destinationName);
+  const address = normalizeLocationText(`${hotel.address} ${hotel.name}`);
+
   if (!airport && isCountryWideSearch(destinationName)) return Boolean(hotel.address);
-  if (stateAliases.length) {
-    const address = normalizeLocationText(hotel.address);
-    if (!hotel.address) return false;
-    return stateAliases.some((alias) => alias.length > 2 ? address.includes(alias) : new RegExp(`(^| )${alias}( |$)`).test(address));
+  if (broadState) return Boolean(hotel.address) && addressMatchesState(normalizeLocationText(hotel.address), stateAliases);
+
+  if (area) {
+    if (hotel.latitude !== null && hotel.longitude !== null) {
+      return milesBetween(area.latitude, area.longitude, hotel.latitude, hotel.longitude) <= area.hotelRadiusMiles;
+    }
+    return Boolean(hotel.address) && area.addressAliases.some((alias) => address.includes(normalizeLocationText(alias)));
   }
+
+  // For a specific city plus state, match the city and verify the state when
+  // the provider includes it. This also works when a city is not an airport.
+  if (localityTokens.length && hotel.address) {
+    const localityMatch = localityTokens.some((token) => address.includes(token));
+    const stateMatch = !stateAliases.length || addressMatchesState(normalizeLocationText(hotel.address), stateAliases);
+    if (localityMatch && stateMatch) return true;
+  }
+
   if (airport && hotel.latitude !== null && hotel.longitude !== null) {
-    // A result far outside the selected arrival area is never shown, even if
-    // the provider accidentally mixes in properties from another country.
     const distance = milesBetween(hotel.latitude, hotel.longitude, airport.latitude, airport.longitude);
     const radiusMiles = airportCode === "AUA" ? 45 : ["PUJ", "SDQ", "POP", "STI", "LRM"].includes(airportCode) ? 90 : 75;
     return distance <= radiusMiles;
   }
 
-  const address = normalizeLocationText(`${hotel.address} ${hotel.name}`);
-  const destinationParts = destinationName.split(",").map(normalizeLocationText).filter((part) => part.length >= 3 && part !== "united states");
-  // If we know the arrival airport, missing property coordinates must not
-  // turn a weak name/address match into a result from another country.
-  if (airport && !hotel.address) return false;
-  return destinationParts.length > 0 && destinationParts.every((part) => address.includes(part));
+  // Never accept an addressless or clearly remote property merely because the
+  // provider returned it for a locality query.
+  return false;
 }
 
 function normalizeHotel(item: unknown, index: number, currency: string, destinationName: string, checkIn: string, checkOut: string): LiveHotel | null {
@@ -552,26 +580,37 @@ function filterDestinationExperiences(
   kind: "activity" | "restaurant",
 ): LiveExperience[] {
   const airport = AIRPORT_COORDINATES[destinationAirportCode];
-  const radiusMiles = kind === "restaurant" ? 45 : 150;
+  const area = getDestinationAreaGeo(destinationName);
   const stateAliases = getUSStateAddressAliases(destinationName);
+  const broadState = Boolean(getUSStateRegion(destinationName));
   const broadCountrySearch = !airport && isCountryWideSearch(destinationName);
-  const destinationTokens = destinationName
-    .split(",")
-    .map((part) => normalizeLocationText(part))
-    .filter((part) => part.length >= 3 && part !== "united states");
+  const localityTokens = destinationLocalityTokens(destinationName);
+  const radiusMiles = kind === "restaurant" ? 45 : 150;
 
   return items.filter((item) => {
     const address = normalizeLocationText(item.address);
     if (broadCountrySearch) return Boolean(address);
-    // For a state-level trip, preserve the whole state even when the user
-    // chooses one airport as the flight gateway.
-    if (stateAliases.length && address) return stateAliases.some((alias) => alias.length > 2 ? address.includes(alias) : new RegExp(`(^| )${alias}( |$)`).test(address));
+    if (broadState) return Boolean(address) && addressMatchesState(address, stateAliases);
+
+    if (area) {
+      if (item.latitude !== null && item.longitude !== null) {
+        const limit = kind === "restaurant" ? area.restaurantRadiusMiles : area.activityRadiusMiles;
+        return milesBetween(area.latitude, area.longitude, item.latitude, item.longitude) <= limit;
+      }
+      return Boolean(address) && area.addressAliases.some((alias) => address.includes(normalizeLocationText(alias)));
+    }
+
+    if (localityTokens.length && address) {
+      const localityMatch = localityTokens.some((token) => address.includes(token));
+      const stateMatch = !stateAliases.length || addressMatchesState(address, stateAliases);
+      if (localityMatch && stateMatch) return true;
+    }
+
     if (airport && item.latitude !== null && item.longitude !== null) {
       return milesBetween(airport.latitude, airport.longitude, item.latitude, item.longitude) <= radiusMiles;
     }
-    if (destinationTokens.length && address) return destinationTokens.some((token) => address.includes(token));
-    // Without coordinates, require destination text in the address. An
-    // addressless listing cannot be verified as local and may be a remote tour operator.
+
+    // With no reliable point or address match, suppress remote listings.
     return false;
   });
 }
@@ -584,6 +623,7 @@ async function searchPlacesWithFallback(
   clientUsageKey: string,
 ): Promise<ProviderResponse> {
   const airport = AIRPORT_COORDINATES[destinationAirportCode];
+  const area = getDestinationAreaGeo(destinationName);
   const mapsParams: Record<string, string> = {
     engine: "google_maps",
     type: "search",
@@ -591,7 +631,8 @@ async function searchPlacesWithFallback(
     hl: "en",
     gl: "us",
   };
-  if (airport) mapsParams.ll = `@${airport.latitude},${airport.longitude},12z`;
+  if (area) mapsParams.ll = `@${area.latitude},${area.longitude},10z`;
+  else if (airport) mapsParams.ll = `@${airport.latitude},${airport.longitude},12z`;
 
   let mapsResult: ProviderResponse | null = null;
   let mapsError: unknown = null;

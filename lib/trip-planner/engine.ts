@@ -135,7 +135,7 @@ function makeCustomDestination(query: string, selectedAirportCode = ""): Destina
   // The airport code is only used for the flight route.
   const city = isUSState ? metadata.city : gateway?.city || metadata.city || query;
   const country = metadata.country || (gateway ? query : "");
-  const airportCode = gateway?.code || metadata.airportCode || resolveAirportCode(query) || "";
+  const airportCode = selectedAirportCode || gateway?.code || metadata.airportCode || resolveAirportCode(query) || "";
   const destinationLabel = formatDestinationLabel(city, country);
   return {
     id: `custom-${query.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, city, country, airportCode, airportLabel: airportCode || "Choose an arrival airport for flights",
@@ -236,7 +236,7 @@ export function buildTripRecommendations(input: TripSearchInput): TripRecommenda
         ranking,
         typicalDaytimeHighF,
         itinerary: buildItinerary(destination, input),
-        liveSearchSupported: !input.components.includes("flights") || Boolean(destination.airportCode),
+        liveSearchSupported: !input.components.includes("flights") || Boolean(input.destinationAirportCode || destination.airportCode),
         ...buildProviderLinks(input.origin, destination, input),
       };
     })
