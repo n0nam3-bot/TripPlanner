@@ -393,10 +393,14 @@ function makeHotelParams(input: TripSearchInput, destinationName: string, stayTy
   };
   if (stayType === "vacation_rentals") params.vacation_rentals = "true";
   if (input.childrenAges.length) params.children_ages = input.childrenAges.join(",");
-  if (input.minimumHotelRating === 3) params.hotel_class = "3,4,5";
-  else if (input.minimumHotelRating === 4) params.hotel_class = "4,5";
-  else if (input.minimumHotelRating === 5) params.hotel_class = "5";
-  if (input.freeCancellation && stayType === "hotels") params.free_cancellation = "true";
+  // Google Hotels does not support hotel_class for vacation rentals.
+  // Apply hotel class only to hotels; rental results remain unfiltered by class.
+  if (stayType === "hotels") {
+    if (input.minimumHotelRating === 3) params.hotel_class = "3,4,5";
+    else if (input.minimumHotelRating === 4) params.hotel_class = "4,5";
+    else if (input.minimumHotelRating === 5) params.hotel_class = "5";
+    if (input.freeCancellation) params.free_cancellation = "true";
+  }
   return params;
 }
 
