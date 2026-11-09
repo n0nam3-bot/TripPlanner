@@ -1,6 +1,6 @@
 import { getProviderCache, providerCacheKey, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
-import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
+import { AIRPORT_COORDINATES, destinationMetadata, getUSStateAddressAliases } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
 
 const ENDPOINT = "https://serpapi.com/search.json";
@@ -305,6 +305,11 @@ function cleanDestinationSearchName(value: string): string {
   }).join(", ");
 }
 
+function isCountryWideSearch(destinationName: string): boolean {
+  const metadata = destinationMetadata(destinationName);
+  return Boolean(metadata.country) && normalizeLocationText(metadata.city) === normalizeLocationText(metadata.country);
+}
+
 function milesBetween(latitude: number, longitude: number, otherLatitude: number, otherLongitude: number): number {
   const radians = (degrees: number) => degrees * Math.PI / 180;
   const dLat = radians(otherLatitude - latitude);
@@ -334,6 +339,13 @@ function hotelSearchLocation(destinationName: string, airportCode: string): stri
 
 function hotelMatchesDestination(hotel: LiveHotel, airportCode: string, destinationName: string): boolean {
   const airport = AIRPORT_COORDINATES[airportCode];
+  const stateAliases = getUSStateAddressAliases(destinationName);
+  if (!airport && isCountryWideSearch(destinationName)) return Boolean(hotel.address);
+  if (stateAliases.length) {
+    const address = normalizeLocationText(hotel.address);
+    if (!hotel.address) return false;
+    return stateAliases.some((alias) => alias.length > 2 ? address.includes(alias) : new RegExp(`(^| )${alias}( |$)`).test(address));
+  }
   if (airport && hotel.latitude !== null && hotel.longitude !== null) {
     // A result far outside the selected arrival area is never shown, even if
     // the provider accidentally mixes in properties from another country.
@@ -343,7 +355,7 @@ function hotelMatchesDestination(hotel: LiveHotel, airportCode: string, destinat
   }
 
   const address = normalizeLocationText(`${hotel.address} ${hotel.name}`);
-  const destinationParts = destinationName.split(",").map(normalizeLocationText).filter((part) => part.length >= 3);
+  const destinationParts = destinationName.split(",").map(normalizeLocationText).filter((part) => part.length >= 3 && part !== "united states");
   // If we know the arrival airport, missing property coordinates must not
   // turn a weak name/address match into a result from another country.
   if (airport && !hotel.address) return false;
@@ -541,16 +553,22 @@ function filterDestinationExperiences(
 ): LiveExperience[] {
   const airport = AIRPORT_COORDINATES[destinationAirportCode];
   const radiusMiles = kind === "restaurant" ? 45 : 150;
+  const stateAliases = getUSStateAddressAliases(destinationName);
+  const broadCountrySearch = !airport && isCountryWideSearch(destinationName);
   const destinationTokens = destinationName
     .split(",")
     .map((part) => normalizeLocationText(part))
-    .filter((part) => part.length >= 3);
+    .filter((part) => part.length >= 3 && part !== "united states");
 
   return items.filter((item) => {
+    const address = normalizeLocationText(item.address);
+    if (broadCountrySearch) return Boolean(address);
+    // For a state-level trip, preserve the whole state even when the user
+    // chooses one airport as the flight gateway.
+    if (stateAliases.length && address) return stateAliases.some((alias) => alias.length > 2 ? address.includes(alias) : new RegExp(`(^| )${alias}( |$)`).test(address));
     if (airport && item.latitude !== null && item.longitude !== null) {
       return milesBetween(airport.latitude, airport.longitude, item.latitude, item.longitude) <= radiusMiles;
     }
-    const address = normalizeLocationText(item.address);
     if (destinationTokens.length && address) return destinationTokens.some((token) => address.includes(token));
     // Without coordinates, require destination text in the address. An
     // addressless listing cannot be verified as local and may be a remote tour operator.

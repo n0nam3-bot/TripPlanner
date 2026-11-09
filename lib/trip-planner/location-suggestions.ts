@@ -7,6 +7,337 @@ export type LocationSuggestion = {
   country: string;
 };
 
+
+export type USState = { name: string; abbreviation: string; airports: Array<{ code: string; city: string }> };
+
+// State-level destination support. Gateway airports are choices for flight searches;
+// hotel and activity searches continue to use the full state as the destination.
+export const US_STATES: USState[] = [
+  { name: "Alabama", abbreviation: "AL", airports: [{ code: "BHM", city: "Birmingham" }, { code: "MOB", city: "Mobile" }] },
+  { name: "Alaska", abbreviation: "AK", airports: [{ code: "ANC", city: "Anchorage" }, { code: "FAI", city: "Fairbanks" }] },
+  { name: "Arizona", abbreviation: "AZ", airports: [{ code: "PHX", city: "Phoenix" }, { code: "TUS", city: "Tucson" }] },
+  { name: "Arkansas", abbreviation: "AR", airports: [{ code: "LIT", city: "Little Rock" }] },
+  { name: "California", abbreviation: "CA", airports: [{ code: "LAX", city: "Los Angeles" }, { code: "SFO", city: "San Francisco" }, { code: "SAN", city: "San Diego" }, { code: "SMF", city: "Sacramento" }] },
+  { name: "Colorado", abbreviation: "CO", airports: [{ code: "DEN", city: "Denver" }, { code: "COS", city: "Colorado Springs" }] },
+  { name: "Connecticut", abbreviation: "CT", airports: [{ code: "BDL", city: "Hartford" }] },
+  { name: "Delaware", abbreviation: "DE", airports: [{ code: "ILG", city: "Wilmington" }] },
+  { name: "Florida", abbreviation: "FL", airports: [{ code: "MIA", city: "Miami" }, { code: "MCO", city: "Orlando" }, { code: "TPA", city: "Tampa" }, { code: "FLL", city: "Fort Lauderdale" }] },
+  { name: "Georgia", abbreviation: "GA", airports: [{ code: "ATL", city: "Atlanta" }, { code: "SAV", city: "Savannah" }] },
+  { name: "Hawaii", abbreviation: "HI", airports: [{ code: "HNL", city: "Honolulu" }, { code: "OGG", city: "Kahului" }] },
+  { name: "Idaho", abbreviation: "ID", airports: [{ code: "BOI", city: "Boise" }] },
+  { name: "Illinois", abbreviation: "IL", airports: [{ code: "ORD", city: "Chicago O’Hare" }, { code: "MDW", city: "Chicago Midway" }] },
+  { name: "Indiana", abbreviation: "IN", airports: [{ code: "IND", city: "Indianapolis" }] },
+  { name: "Iowa", abbreviation: "IA", airports: [{ code: "DSM", city: "Des Moines" }] },
+  { name: "Kansas", abbreviation: "KS", airports: [{ code: "ICT", city: "Wichita" }] },
+  { name: "Kentucky", abbreviation: "KY", airports: [{ code: "SDF", city: "Louisville" }, { code: "LEX", city: "Lexington" }] },
+  { name: "Louisiana", abbreviation: "LA", airports: [{ code: "MSY", city: "New Orleans" }, { code: "BTR", city: "Baton Rouge" }] },
+  { name: "Maine", abbreviation: "ME", airports: [{ code: "PWM", city: "Portland" }] },
+  { name: "Maryland", abbreviation: "MD", airports: [{ code: "BWI", city: "Baltimore" }] },
+  { name: "Massachusetts", abbreviation: "MA", airports: [{ code: "BOS", city: "Boston" }] },
+  { name: "Michigan", abbreviation: "MI", airports: [{ code: "DTW", city: "Detroit" }, { code: "GRR", city: "Grand Rapids" }] },
+  { name: "Minnesota", abbreviation: "MN", airports: [{ code: "MSP", city: "Minneapolis–Saint Paul" }] },
+  { name: "Mississippi", abbreviation: "MS", airports: [{ code: "JAN", city: "Jackson" }] },
+  { name: "Missouri", abbreviation: "MO", airports: [{ code: "STL", city: "St. Louis" }, { code: "MCI", city: "Kansas City" }] },
+  { name: "Montana", abbreviation: "MT", airports: [{ code: "BZN", city: "Bozeman" }, { code: "BIL", city: "Billings" }] },
+  { name: "Nebraska", abbreviation: "NE", airports: [{ code: "OMA", city: "Omaha" }, { code: "LNK", city: "Lincoln" }] },
+  { name: "Nevada", abbreviation: "NV", airports: [{ code: "LAS", city: "Las Vegas" }, { code: "RNO", city: "Reno" }] },
+  { name: "New Hampshire", abbreviation: "NH", airports: [{ code: "MHT", city: "Manchester" }] },
+  { name: "New Jersey", abbreviation: "NJ", airports: [{ code: "EWR", city: "Newark" }, { code: "ACY", city: "Atlantic City" }] },
+  { name: "New Mexico", abbreviation: "NM", airports: [{ code: "ABQ", city: "Albuquerque" }] },
+  { name: "New York", abbreviation: "NY", airports: [{ code: "JFK", city: "New York JFK" }, { code: "LGA", city: "New York LaGuardia" }, { code: "BUF", city: "Buffalo" }, { code: "ROC", city: "Rochester" }] },
+  { name: "North Carolina", abbreviation: "NC", airports: [{ code: "CLT", city: "Charlotte" }, { code: "RDU", city: "Raleigh–Durham" }] },
+  { name: "North Dakota", abbreviation: "ND", airports: [{ code: "FAR", city: "Fargo" }] },
+  { name: "Ohio", abbreviation: "OH", airports: [{ code: "CLE", city: "Cleveland" }, { code: "CMH", city: "Columbus" }, { code: "CVG", city: "Cincinnati" }] },
+  { name: "Oklahoma", abbreviation: "OK", airports: [{ code: "OKC", city: "Oklahoma City" }, { code: "TUL", city: "Tulsa" }] },
+  { name: "Oregon", abbreviation: "OR", airports: [{ code: "PDX", city: "Portland" }] },
+  { name: "Pennsylvania", abbreviation: "PA", airports: [{ code: "PHL", city: "Philadelphia" }, { code: "PIT", city: "Pittsburgh" }] },
+  { name: "Rhode Island", abbreviation: "RI", airports: [{ code: "PVD", city: "Providence" }] },
+  { name: "South Carolina", abbreviation: "SC", airports: [{ code: "CHS", city: "Charleston" }, { code: "GSP", city: "Greenville–Spartanburg" }] },
+  { name: "South Dakota", abbreviation: "SD", airports: [{ code: "FSD", city: "Sioux Falls" }] },
+  { name: "Tennessee", abbreviation: "TN", airports: [{ code: "BNA", city: "Nashville" }, { code: "MEM", city: "Memphis" }] },
+  { name: "Texas", abbreviation: "TX", airports: [{ code: "DFW", city: "Dallas–Fort Worth" }, { code: "IAH", city: "Houston" }, { code: "AUS", city: "Austin" }, { code: "SAT", city: "San Antonio" }] },
+  { name: "Utah", abbreviation: "UT", airports: [{ code: "SLC", city: "Salt Lake City" }] },
+  { name: "Vermont", abbreviation: "VT", airports: [{ code: "BTV", city: "Burlington" }] },
+  { name: "Virginia", abbreviation: "VA", airports: [{ code: "IAD", city: "Washington Dulles" }, { code: "RIC", city: "Richmond" }, { code: "ORF", city: "Norfolk" }] },
+  { name: "Washington", abbreviation: "WA", airports: [{ code: "SEA", city: "Seattle" }, { code: "GEG", city: "Spokane" }] },
+  { name: "West Virginia", abbreviation: "WV", airports: [{ code: "CRW", city: "Charleston" }] },
+  { name: "Wisconsin", abbreviation: "WI", airports: [{ code: "MKE", city: "Milwaukee" }, { code: "MSN", city: "Madison" }] },
+  { name: "Wyoming", abbreviation: "WY", airports: [{ code: "JAC", city: "Jackson" }, { code: "CPR", city: "Casper" }] },
+  { name: "District of Columbia", abbreviation: "DC", airports: [{ code: "DCA", city: "Washington National" }, { code: "IAD", city: "Washington Dulles" }] },
+];
+
+const COUNTRY_NAMES = [
+  "Aruba",
+  "Afghanistan",
+  "Angola",
+  "Anguilla",
+  "Åland Islands",
+  "Albania",
+  "Andorra",
+  "United Arab Emirates",
+  "Argentina",
+  "Armenia",
+  "American Samoa",
+  "French Southern Territories",
+  "Antigua and Barbuda",
+  "Australia",
+  "Austria",
+  "Azerbaijan",
+  "Burundi",
+  "Belgium",
+  "Benin",
+  "Bonaire, Sint Eustatius and Saba",
+  "Burkina Faso",
+  "Bangladesh",
+  "Bulgaria",
+  "Bahrain",
+  "Bahamas",
+  "Bosnia and Herzegovina",
+  "Saint Barthélemy",
+  "Belarus",
+  "Belize",
+  "Bermuda",
+  "Bolivia",
+  "Bolivia, Plurinational State of",
+  "Brazil",
+  "Barbados",
+  "Brunei Darussalam",
+  "Bhutan",
+  "Bouvet Island",
+  "Botswana",
+  "Central African Republic",
+  "Canada",
+  "Cocos (Keeling) Islands",
+  "Switzerland",
+  "Chile",
+  "China",
+  "Côte d'Ivoire",
+  "Cameroon",
+  "Congo, The Democratic Republic of the",
+  "Congo",
+  "Cook Islands",
+  "Colombia",
+  "Comoros",
+  "Cabo Verde",
+  "Costa Rica",
+  "Cuba",
+  "Curaçao",
+  "Christmas Island",
+  "Cayman Islands",
+  "Cyprus",
+  "Czechia",
+  "Germany",
+  "Djibouti",
+  "Dominica",
+  "Denmark",
+  "Dominican Republic",
+  "Algeria",
+  "Ecuador",
+  "Egypt",
+  "Eritrea",
+  "Western Sahara",
+  "Spain",
+  "Estonia",
+  "Ethiopia",
+  "Finland",
+  "Fiji",
+  "Falkland Islands (Malvinas)",
+  "France",
+  "Faroe Islands",
+  "Micronesia, Federated States of",
+  "Gabon",
+  "United Kingdom",
+  "Georgia",
+  "Guernsey",
+  "Ghana",
+  "Gibraltar",
+  "Guinea",
+  "Guadeloupe",
+  "Gambia",
+  "Guinea-Bissau",
+  "Equatorial Guinea",
+  "Greece",
+  "Grenada",
+  "Greenland",
+  "Guatemala",
+  "French Guiana",
+  "Guam",
+  "Guyana",
+  "Hong Kong",
+  "Heard Island and McDonald Islands",
+  "Honduras",
+  "Croatia",
+  "Haiti",
+  "Hungary",
+  "Indonesia",
+  "Isle of Man",
+  "India",
+  "British Indian Ocean Territory",
+  "Ireland",
+  "Iran",
+  "Iran, Islamic Republic of",
+  "Iraq",
+  "Iceland",
+  "Israel",
+  "Italy",
+  "Jamaica",
+  "Jersey",
+  "Jordan",
+  "Japan",
+  "Kazakhstan",
+  "Kenya",
+  "Kyrgyzstan",
+  "Cambodia",
+  "Kiribati",
+  "Saint Kitts and Nevis",
+  "South Korea",
+  "Korea, Republic of",
+  "Kuwait",
+  "Laos",
+  "Lao People's Democratic Republic",
+  "Lebanon",
+  "Liberia",
+  "Libya",
+  "Saint Lucia",
+  "Liechtenstein",
+  "Sri Lanka",
+  "Lesotho",
+  "Lithuania",
+  "Luxembourg",
+  "Latvia",
+  "Macao",
+  "Saint Martin (French part)",
+  "Morocco",
+  "Monaco",
+  "Moldova",
+  "Moldova, Republic of",
+  "Madagascar",
+  "Maldives",
+  "Mexico",
+  "Marshall Islands",
+  "North Macedonia",
+  "Mali",
+  "Malta",
+  "Myanmar",
+  "Montenegro",
+  "Mongolia",
+  "Northern Mariana Islands",
+  "Mozambique",
+  "Mauritania",
+  "Montserrat",
+  "Martinique",
+  "Mauritius",
+  "Malawi",
+  "Malaysia",
+  "Mayotte",
+  "Namibia",
+  "New Caledonia",
+  "Niger",
+  "Norfolk Island",
+  "Nigeria",
+  "Nicaragua",
+  "Niue",
+  "Netherlands",
+  "Norway",
+  "Nepal",
+  "Nauru",
+  "New Zealand",
+  "Oman",
+  "Pakistan",
+  "Panama",
+  "Pitcairn",
+  "Peru",
+  "Philippines",
+  "Palau",
+  "Papua New Guinea",
+  "Poland",
+  "Puerto Rico",
+  "North Korea",
+  "Korea, Democratic People's Republic of",
+  "Portugal",
+  "Paraguay",
+  "Palestine, State of",
+  "French Polynesia",
+  "Qatar",
+  "Réunion",
+  "Romania",
+  "Russian Federation",
+  "Rwanda",
+  "Saudi Arabia",
+  "Sudan",
+  "Senegal",
+  "Singapore",
+  "South Georgia and the South Sandwich Islands",
+  "Saint Helena, Ascension and Tristan da Cunha",
+  "Svalbard and Jan Mayen",
+  "Solomon Islands",
+  "Sierra Leone",
+  "El Salvador",
+  "San Marino",
+  "Somalia",
+  "Saint Pierre and Miquelon",
+  "Serbia",
+  "South Sudan",
+  "Sao Tome and Principe",
+  "Suriname",
+  "Slovakia",
+  "Slovenia",
+  "Sweden",
+  "Eswatini",
+  "Sint Maarten (Dutch part)",
+  "Seychelles",
+  "Syria",
+  "Syrian Arab Republic",
+  "Turks and Caicos Islands",
+  "Chad",
+  "Togo",
+  "Thailand",
+  "Tajikistan",
+  "Tokelau",
+  "Turkmenistan",
+  "Timor-Leste",
+  "Tonga",
+  "Trinidad and Tobago",
+  "Tunisia",
+  "Türkiye",
+  "Tuvalu",
+  "Taiwan",
+  "Taiwan, Province of China",
+  "Tanzania",
+  "Tanzania, United Republic of",
+  "Uganda",
+  "Ukraine",
+  "United States Minor Outlying Islands",
+  "Uruguay",
+  "United States",
+  "Uzbekistan",
+  "Holy See (Vatican City State)",
+  "Saint Vincent and the Grenadines",
+  "Venezuela",
+  "Venezuela, Bolivarian Republic of",
+  "Virgin Islands, British",
+  "Virgin Islands, U.S.",
+  "Vietnam",
+  "Viet Nam",
+  "Vanuatu",
+  "Wallis and Futuna",
+  "Samoa",
+  "Yemen",
+  "South Africa",
+  "Zambia",
+  "Zimbabwe",
+  "Turkey",
+  "Czech Republic",
+  "Republic of Korea",
+  "Republic of the Congo",
+  "Democratic Republic of the Congo",
+  "The Gambia",
+  "East Timor",
+  "Ivory Coast",
+  "Swaziland",
+  "Macedonia"
+];
+
 const DESTINATION_LOCATIONS: LocationSuggestion[] = [
   { value: "Lisbon, Portugal", label: "Lisbon", detail: "Portugal · Humberto Delgado Airport", kind: "city", airportCode: "LIS", country: "Portugal" },
   { value: "Cancún, Mexico", label: "Cancún", detail: "Mexico · Cancún International Airport", kind: "city", airportCode: "CUN", country: "Mexico" },
@@ -53,6 +384,17 @@ const DESTINATION_REGIONS: LocationSuggestion[] = [
   { value: "Japan", label: "Japan", detail: "Country · choose a city or airport for flights", kind: "region", airportCode: "", country: "Japan" },
 ];
 
+DESTINATION_REGIONS.push(
+  ...US_STATES.map((state) => ({
+    value: state.name, label: state.name,
+    detail: `US state · ${state.abbreviation} · ${state.airports.map((airport) => airport.code).join(", ")}`,
+    kind: "region" as const, airportCode: "", country: "United States",
+  })),
+  ...COUNTRY_NAMES.filter((name) => !DESTINATION_REGIONS.some((item) => norm(item.value) === norm(name))).map((name) => ({
+    value: name, label: name, detail: "Country · choose a city or enter an airport code for flights",
+    kind: "region" as const, airportCode: "", country: name,
+  })),
+);
 
 const DESTINATION_ATTRACTIONS: LocationSuggestion[] = [
   { value: "Bávaro Beach, Punta Cana, Dominican Republic", label: "Bávaro Beach", detail: "Beach · Punta Cana · Punta Cana Airport (PUJ)", kind: "attraction", airportCode: "PUJ", country: "Dominican Republic" },
@@ -104,6 +446,18 @@ const REGION_GATEWAYS: Record<string, DestinationGateway[]> = {
   ],
 };
 
+// A country-wide U.S. flight search should expose gateways across all states,
+// not only the two airports that happened to be in the original curated list.
+REGION_GATEWAYS["united states"] = US_STATES.flatMap((state) => state.airports.map((airport) => ({
+  code: airport.code, city: airport.city, label: `${state.name} · ${airport.city} · ${airport.code}`,
+})));
+for (const state of US_STATES) {
+  REGION_GATEWAYS[norm(state.name)] = state.airports.map((airport) => ({
+    code: airport.code, city: airport.city, label: `${airport.city} · ${airport.code}`,
+  }));
+  REGION_GATEWAYS[norm(state.abbreviation)] = REGION_GATEWAYS[norm(state.name)];
+}
+
 const ORIGIN_AIRPORTS: LocationSuggestion[] = [
   { value: "New York (NYC)", label: "New York · All airports", detail: "New York metro · JFK, LaGuardia and Newark", kind: "city", airportCode: "NYC", country: "United States" },
   { value: "John F. Kennedy International Airport (JFK)", label: "John F. Kennedy International", detail: "Queens, New York · JFK", kind: "airport", airportCode: "JFK", country: "United States" },
@@ -126,6 +480,16 @@ function norm(value: string): string {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+export function getUSStateRegion(value: string): USState | undefined {
+  const normalized = norm(value).replace(/ united states$/, "").trim();
+  return US_STATES.find((state) => norm(state.name) === normalized || norm(state.abbreviation) === normalized);
+}
+
+export function getUSStateAddressAliases(value: string): string[] {
+  const state = getUSStateRegion(value);
+  return state ? [norm(state.name), norm(state.abbreviation)] : [];
+}
+
 const AIRPORT_NAMES: Record<string, string> = {
   PUJ: "Punta Cana International Airport", SDQ: "Las Américas International Airport",
   POP: "Gregorio Luperón International Airport", STI: "Cibao International Airport",
@@ -146,13 +510,23 @@ export function getLocationSuggestions(
 ): LocationSuggestion[] {
   const q = norm(query);
   if (field === "origin") {
+    const stateAirports = US_STATES.flatMap((state) => state.airports.map((airport) => ({
+      value: `${airport.city}, ${state.name} (${airport.code})`, label: `${airport.city} · ${airport.code}`,
+      detail: `${state.name} (${state.abbreviation}), United States · departure airport`, kind: "airport" as const,
+      airportCode: airport.code, country: "United States",
+    })));
+    const allOriginAirports = [...ORIGIN_AIRPORTS, ...stateAirports];
     const matches = q.length < 2
       ? ORIGIN_AIRPORTS.slice(0, 7)
-      : ORIGIN_AIRPORTS.filter((item) => [item.value, item.label, item.detail, item.country, item.airportCode].some((value) => norm(value).includes(q)));
-    return matches.slice(0, 10);
+      : allOriginAirports.filter((item) => [item.value, item.label, item.detail, item.airportCode].some((value) => norm(value).includes(q)));
+    return matches.slice(0, 16);
   }
 
-  const matchingRegions = DESTINATION_REGIONS.filter((item) => q.length >= 2 && [item.value, item.label, item.country].some((value) => norm(value).includes(q)));
+  const stateQuery = getUSStateRegion(query);
+  const matchingRegions = DESTINATION_REGIONS.filter((item) =>
+    (stateQuery && norm(item.label) === norm(stateQuery.name)) ||
+    (q.length >= 2 && [item.value, item.label, item.detail].some((value) => norm(value).includes(q)))
+  );
   const airportSuggestions: LocationSuggestion[] = includeAirports
     ? matchingRegions.flatMap((region) => getDestinationGateways(region.value).map((gateway) => ({
       // Keep the country-wide search area while storing the selected gateway
@@ -168,11 +542,14 @@ export function getLocationSuggestions(
 
   const source = [...DESTINATION_REGIONS, ...airportSuggestions, ...DESTINATION_LOCATIONS, ...(includeAttractions ? DESTINATION_ATTRACTIONS : [])];
   if (q.length < 2) return source.slice(0, 8);
-  const matching = source.filter((item) => [item.value, item.label, item.detail, item.country, item.airportCode].some((value) => norm(value).includes(q)));
+  const matching = source.filter((item) =>
+    (stateQuery && item.kind === "region" && norm(item.label) === norm(stateQuery.name)) ||
+    [item.value, item.label, item.detail, item.airportCode].some((value) => norm(value).includes(q))
+  );
   return matching.sort((a, b) => {
     const rank = (item: LocationSuggestion) => item.kind === "region" ? 0 : item.kind === "airport" ? 1 : item.kind === "city" ? 2 : 3;
-    const aCountry = norm(a.country) === q || norm(a.value) === q ? 0 : 1;
-    const bCountry = norm(b.country) === q || norm(b.value) === q ? 0 : 1;
+    const aCountry = norm(a.value) === q || norm(a.label) === q ? 0 : 1;
+    const bCountry = norm(b.value) === q || norm(b.label) === q ? 0 : 1;
     // Preserve the curated gateway and attraction order inside each group so
     // the most relevant local choices stay first instead of alphabetically.
     return aCountry - bCountry || rank(a) - rank(b);
@@ -181,10 +558,12 @@ export function getLocationSuggestions(
 
 export function destinationMetadata(value: string): { city: string; country: string; airportCode: string } {
   const q = norm(value);
+  const state = getUSStateRegion(value);
+  if (state) return { city: state.name, country: "United States", airportCode: "" };
   const item = [...DESTINATION_LOCATIONS, ...DESTINATION_ATTRACTIONS].find((entry) => norm(entry.value) === q || norm(entry.label) === q || norm(entry.airportCode) === q);
   if (item) return { city: item.label, country: item.country, airportCode: item.airportCode };
   const region = DESTINATION_REGIONS.find((entry) => norm(entry.value) === q || norm(entry.label) === q);
-  if (region) return { city: region.label, country: "", airportCode: "" };
+  if (region) return { city: region.label, country: region.country || "", airportCode: "" };
   return { city: value.trim(), country: "", airportCode: "" };
 }
 
@@ -216,6 +595,7 @@ export const AIRPORT_COORDINATES: Record<string, { latitude: number; longitude: 
   YUL: { latitude: 45.4706, longitude: -73.7408, name: "Montréal–Trudeau International Airport" },
 };
 export function getDestinationGateways(value: string): DestinationGateway[] {
-  return REGION_GATEWAYS[norm(value)] ?? [];
+  const state = getUSStateRegion(value);
+  return (state ? REGION_GATEWAYS[norm(state.name)] : REGION_GATEWAYS[norm(value)]) ?? [];
 }
 

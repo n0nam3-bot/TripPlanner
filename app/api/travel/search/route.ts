@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { hashClientAddress } from "@/lib/db/travel-cache";
 import { findDestination } from "@/lib/trip-planner/destinations";
+import { getDestinationGateways } from "@/lib/trip-planner/location-suggestions";
 import { searchLiveTravel } from "@/lib/providers/serpapi";
 import { validateTripSearchInput } from "@/lib/trip-planner/validation";
 
@@ -17,9 +18,16 @@ export async function POST(request: Request) {
     const destinationName = typeof record.destinationName === "string" ? record.destinationName.slice(0, 120) : validated.input.destination;
     const destination = findDestination(destinationName);
     const suppliedAirportCode = typeof record.destinationAirportCode === "string" ? record.destinationAirportCode.toUpperCase() : "";
-    const airportCode = suppliedAirportCode || destination?.airportCode;
-    if (!airportCode || !/^[A-Z]{3}$/.test(airportCode)) {
-      return NextResponse.json({ error: "Live search is not configured for this custom destination yet. You can still use the direct flight and hotel search links.", code: "DESTINATION_AIRPORT_UNRESOLVED" }, { status: 422 });
+    const isRegionSearch = getDestinationGateways(validated.input.destination).length > 0;
+    // Do not resolve a country/state name to the first curated city inside it
+    // (for example, "United States" must not silently become Orlando).
+    const inferredCityAirport = isRegionSearch ? "" : destination?.airportCode || "";
+    const airportCode = suppliedAirportCode || inferredCityAirport;
+    // An IATA airport is mandatory only for a flight request. Hotels, rentals,
+    // attractions and restaurants can be searched against a state, country or
+    // other text destination without inventing an airport.
+    if (validated.input.components.includes("flights") && (!/^[A-Z]{3}$/.test(airportCode))) {
+      return NextResponse.json({ error: "Choose a valid arrival airport for the flight portion of this search. Stays and activities can be searched without an airport.", code: "DESTINATION_AIRPORT_UNRESOLVED" }, { status: 422 });
     }
 
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";

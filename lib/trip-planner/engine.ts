@@ -1,6 +1,6 @@
 import { DESTINATIONS, findDestination, formatDestinationLabel, normalizeDestinationQuery, styleLabel } from "./destinations";
 import { resolveAirportCode } from "./airports";
-import { destinationMetadata, getDestinationGateways } from "./location-suggestions";
+import { destinationMetadata, getDestinationGateways, getUSStateRegion } from "./location-suggestions";
 import type { Destination, ItineraryDay, TripRecommendation, TripSearchInput, TripStyle } from "./types";
 import { getTypicalDaytimeHighF, toFahrenheit } from "./climate-normals";
 
@@ -130,8 +130,11 @@ const CUSTOM_DESTINATION_IMAGES: Record<string, string> = {
 function makeCustomDestination(query: string, selectedAirportCode = ""): Destination {
   const metadata = destinationMetadata(query);
   const gateway = getDestinationGateways(query).find((item) => item.code === selectedAirportCode);
-  const city = gateway?.city || metadata.city || query;
-  const country = gateway ? query : metadata.country;
+  const isUSState = Boolean(getUSStateRegion(query));
+  // Keep a state as the searched area even when a gateway airport is selected.
+  // The airport code is only used for the flight route.
+  const city = isUSState ? metadata.city : gateway?.city || metadata.city || query;
+  const country = metadata.country || (gateway ? query : "");
   const airportCode = gateway?.code || metadata.airportCode || resolveAirportCode(query) || "";
   const destinationLabel = formatDestinationLabel(city, country);
   return {
@@ -233,7 +236,7 @@ export function buildTripRecommendations(input: TripSearchInput): TripRecommenda
         ranking,
         typicalDaytimeHighF,
         itinerary: buildItinerary(destination, input),
-        liveSearchSupported: Boolean(destination.airportCode),
+        liveSearchSupported: !input.components.includes("flights") || Boolean(destination.airportCode),
         ...buildProviderLinks(input.origin, destination, input),
       };
     })
