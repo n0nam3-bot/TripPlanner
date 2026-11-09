@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
 import type { TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
+import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 
 type Props = {
@@ -115,8 +116,8 @@ function RouteLookup({ origin, destination, label }: { origin: string; destinati
   </span>;
 }
 
-function HotelResult({ hotel, currency, airportCode, experiences, bookingState, onLoadBookingOptions }: {
-  hotel: LiveHotel; currency: string; airportCode: string; experiences: LiveExperience[];
+function HotelResult({ hotel, currency, airportCode, experiences, nights, bookingState, onLoadBookingOptions }: {
+  hotel: LiveHotel; currency: string; airportCode: string; experiences: LiveExperience[]; nights: number;
   bookingState?: HotelBookingState; onLoadBookingOptions: (hotel: LiveHotel) => void;
 }) {
   const airport = hotel.latitude !== null && hotel.longitude !== null
@@ -145,15 +146,15 @@ function HotelResult({ hotel, currency, airportCode, experiences, bookingState, 
       {bookingState?.options && <div className="hotel-booking-options">{bookingState.options.length ? bookingState.options.map((option, index) => <div key={`${option.seller}-${index}`}><span><strong>{option.seller}</strong>{option.terms.length > 0 && <small>{option.terms.join(" · ")}</small>}</span><span>{option.price !== null ? money(option.price, option.currency || currency) : "See provider"}</span>{option.url && <a href={option.url} target="_blank" rel="noreferrer">Open <ArrowUpRight size={11}/></a>}</div>) : <p>No separate seller offers were returned. The property link remains available above.</p>}</div>}
     </div>
     <div className="live-hotel-price">
-      {hotel.totalPrice !== null ? <strong>{money(hotel.totalPrice, hotel.currency || currency)}</strong> : hotel.nightlyPrice !== null ? <strong>{money(hotel.nightlyPrice, hotel.currency || currency)}<small>/night</small></strong> : <strong>Price unavailable</strong>}
-      <small>{hotel.totalPrice !== null ? "Provider-displayed stay total" : "Provider-displayed nightly rate"}</small>
+      {hotel.totalPrice !== null ? <strong>{money(hotel.totalPrice, hotel.currency || currency)}</strong> : hotel.nightlyPrice !== null ? <><strong>{money(hotel.nightlyPrice * nights, hotel.currency || currency)}</strong><small>Estimated {nights}-night total before taxes and fees</small><small>{money(hotel.nightlyPrice, hotel.currency || currency)} per night</small></> : <strong>Price unavailable</strong>}
+      {hotel.totalPrice !== null && <small>Provider-displayed total for {nights} nights</small>}
       {hotel.propertyToken && <button type="button" className="text-action" onClick={() => onLoadBookingOptions(hotel)} disabled={bookingState?.loading}>{bookingState?.loading ? "Loading rates…" : bookingState?.options ? "Refresh rates" : "Compare rates"} <ArrowUpRight size={12}/></button>}
       <a className="hotel-primary-link" href={propertyUrl} target="_blank" rel="noreferrer">{hotel.bookingUrlLabel} <ExternalLink size={12}/></a>
     </div>
   </article>;
 }
 
-function ExperienceResult({ experience, hotels, airportCode }: { experience: LiveExperience; hotels: LiveHotel[]; airportCode: string }) {
+function ExperienceResult({ experience, hotels, airportCode, search }: { experience: LiveExperience; hotels: LiveHotel[]; airportCode: string; search: TripSearchInput }) {
   const nearbyStays = experience.latitude !== null && experience.longitude !== null
     ? hotels.filter((hotel) => hotel.latitude !== null && hotel.longitude !== null).map((hotel) => ({ hotel, miles: haversineMiles(experience.latitude!, experience.longitude!, hotel.latitude!, hotel.longitude!) })).sort((a, b) => a.miles - b.miles).slice(0, 2)
     : [];
@@ -161,7 +162,9 @@ function ExperienceResult({ experience, hotels, airportCode }: { experience: Liv
     ? nearestKnownAirport(experience.latitude, experience.longitude, airportCode) : null;
   const airportMiles = airport?.miles ?? null;
   const activityLocation = experience.address || (experience.latitude !== null && experience.longitude !== null ? `${experience.latitude},${experience.longitude}` : experience.name);
-  const ticketQuery = encodeURIComponent(`${experience.name} ${experience.address}`);
+  const travelers = `${search.adults} adults${search.childrenAges.length ? `, ${search.childrenAges.length} children ages ${search.childrenAges.join(", ")}` : ""}`;
+  const visitWindow = `${dateLabel(search.departureDate)} to ${dateLabel(search.returnDate)}`;
+  const ticketQuery = encodeURIComponent(`${experience.name} ${experience.address}. Visit ${visitWindow}. ${travelers}.`);
   const viatorUrl = `https://www.viator.com/searchResults/all?text=${ticketQuery}`;
   const getYourGuideUrl = `https://www.getyourguide.com/s/?q=${ticketQuery}`;
   return <article className="experience-card">
@@ -221,7 +224,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setExpanded(id);
     setStates((current) => ({ ...current, [id]: { loading: true, error: "", result: current[id]?.result ?? null } }));
     try {
-      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: [recommendation.destination.city, recommendation.destination.country].filter(Boolean).join(", "), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode }) });
+      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: formatDestinationLabel(recommendation.destination.city, recommendation.destination.country), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to search this trip right now.");
       setStates((current) => ({ ...current, [id]: { loading: false, error: "", result: data as LiveTravelSearchResult } }));
@@ -297,18 +300,26 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         const state = states[destination.id];
         const isExpanded = expanded === destination.id;
         const airportCode = search.destinationAirportCode || destination.airportCode;
-        const destinationLabel = [destination.city, destination.country].filter(Boolean).join(", ");
+        const destinationLabel = formatDestinationLabel(destination.city, destination.country);
         const directFlightUrl = new URL("https://www.google.com/travel/flights");
-        directFlightUrl.searchParams.set("q", `Flights from ${search.origin} to ${destinationLabel} on ${search.departureDate} returning ${search.returnDate} for ${people} travelers`);
+        const originCode = search.originAirportCode || search.origin;
+        const arrivalCode = search.destinationAirportCode || destination.airportCode || destinationLabel;
+        const childrenText = search.childrenAges.length ? `, ${search.childrenAges.length} children ages ${search.childrenAges.join(", ")}` : "";
+        const stopsText = search.stops === "any" ? "any stops" : search.stops === "nonstop" ? "nonstop only" : search.stops === "one_stop" ? "up to 1 stop" : "up to 2 stops";
+        directFlightUrl.searchParams.set("q", `Flights from ${originCode} to ${arrivalCode} on ${search.departureDate} through ${search.returnDate}, ${search.adults} adults${childrenText}, ${search.cabinClass.replaceAll("_", " ")} class, ${stopsText}`);
+        directFlightUrl.searchParams.set("curr", search.currency);
+        directFlightUrl.searchParams.set("hl", "en");
+        directFlightUrl.searchParams.set("gl", "us");
         return <motion.article className={`planner-destination-card ${isExpanded ? "is-expanded" : ""}`} key={destination.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: index * 0.035 }}>
           <div className="planner-destination-visual" style={{ backgroundImage: `url('${destination.image}')` }} aria-label={`${destination.city}, ${destination.country}`} />
           <div className="planner-destination-body">
-            <div className="planner-destination-heading"><div><span className="planner-country">{destination.country}</span><h3>{destination.city}</h3><p>{destination.summary}</p>{recommendation.typicalDaytimeHighF !== null ? <p className="planner-climate-note">Typical daytime high for these dates: <strong>{Math.round(search.temperatureUnit === "C" ? (recommendation.typicalDaytimeHighF - 32) * 5 / 9 : recommendation.typicalDaytimeHighF)}°{search.temperatureUnit}</strong> <span>· monthly climate average, not a forecast</span></p> : (search.temperatureMin !== null || search.temperatureMax !== null) ? <p className="planner-climate-note">No monthly temperature baseline is available for this location, so your temperature range could not be checked.</p> : null}</div>{airportCode && <span className="planner-airport">{airportCode}</span>}</div>
+            <div className="planner-destination-heading"><div>{destination.country && normalizeDestinationQuery(destination.country) !== normalizeDestinationQuery(destination.city) && <span className="planner-country">{destination.country}</span>}<h3>{destination.city}</h3><p>{destination.summary}</p>{recommendation.typicalDaytimeHighF !== null ? <p className="planner-climate-note">Typical daytime high for these dates: <strong>{Math.round(search.temperatureUnit === "C" ? (recommendation.typicalDaytimeHighF - 32) * 5 / 9 : recommendation.typicalDaytimeHighF)}°{search.temperatureUnit}</strong> <span>· monthly climate average, not a forecast</span></p> : (search.temperatureMin !== null || search.temperatureMax !== null) ? <p className="planner-climate-note">No monthly temperature baseline is available for this location, so your temperature range could not be checked.</p> : null}</div>{airportCode && <span className="planner-airport">{airportCode}</span>}</div>
             <div className="planner-highlights">{destination.highlights.slice(0, 3).map((highlight) => <span key={highlight}>{highlight}</span>)}</div>
             <div className="planner-actions">
-              {search.components.includes("flights") && <a className="planner-outbound-link" href={recommendation.flightSearchUrl} target="_blank" rel="noreferrer"><Plane size={14}/> Flights <ArrowUpRight size={12}/></a>}
-              {search.components.includes("stays") && <a className="planner-outbound-link" href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer"><Hotel size={14}/> Stays <ArrowUpRight size={12}/></a>}
-              {search.components.includes("activities") && <a className="planner-outbound-link" href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer"><Activity size={14}/> Things to do <ArrowUpRight size={12}/></a>}
+              {search.components.includes("flights") && <a className="planner-outbound-link" href={state?.result?.providerSearchLinks?.flights || recommendation.flightSearchUrl} target="_blank" rel="noreferrer"><Plane size={14}/> Flights <ArrowUpRight size={12}/></a>}
+              {search.components.includes("stays") && search.stayTypes.includes("hotels") && <a className="planner-outbound-link" href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer"><Hotel size={14}/> Hotels · {nights} nights <ArrowUpRight size={12}/></a>}
+              {search.components.includes("stays") && search.stayTypes.includes("vacation_rentals") && <a className="planner-outbound-link" href={recommendation.vacationRentalSearchUrl} target="_blank" rel="noreferrer"><Hotel size={14}/> Rentals · {nights} nights <ArrowUpRight size={12}/></a>}
+              {search.components.includes("activities") && <a className="planner-outbound-link" href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer"><Activity size={14}/> Things to do · {nights} days <ArrowUpRight size={12}/></a>}
               <button className="text-action" type="button" onClick={() => setExpanded(isExpanded ? null : destination.id)} aria-expanded={isExpanded}>{isExpanded ? "Hide trip outline" : "Trip outline"}</button>
             </div>
 
@@ -321,15 +332,15 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               {state.result.warnings.map((warning) => <p className="provider-warning" key={warning}>{warning}</p>)}
 
               {search.components.includes("flights") && <section className="live-result-group"><h5><Plane size={16}/> Flights <span>{state.result.flights.length} outbound options</span></h5>
-                {state.result.flights.length ? state.result.flights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} onLoadReturnFlights={(selected) => loadReturnFlights(selected, airportCode)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)}/>) : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>Try an individual airport such as JFK, LGA or EWR, or adjust your dates.</small></div>}
+                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{state.result.flights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} onLoadReturnFlights={(selected) => loadReturnFlights(selected, airportCode)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
               </section>}
 
               {search.components.includes("stays") && <section className="live-result-group"><h5><Hotel size={16}/> Places to stay <span>{state.result.hotels.length} properties</span></h5>
-                {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} bookingState={hotelBookingStates[hotel.id]} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
+                {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} nights={nights} bookingState={hotelBookingStates[hotel.id]} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
               </section>}
 
               {search.components.includes("activities") && <section className="live-result-group"><h5><Activity size={16}/> Things to do <span>{state.result.experiences.length} places</span></h5>
-                {state.result.experiences.length ? state.result.experiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode}/>) : <div className="empty-category"><p>No local places matched this search. Try a more specific city or activity style.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
+                {state.result.experiences.length ? state.result.experiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search}/>) : <div className="empty-category"><p>No local places matched this search. Try a more specific city or activity style.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
               </section>}
               <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>

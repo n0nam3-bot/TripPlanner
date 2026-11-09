@@ -79,6 +79,7 @@ export type TripRecommendation = {
   liveSearchSupported: boolean;
   flightSearchUrl: string;
   hotelSearchUrl: string;
+  vacationRentalSearchUrl: string;
   activitySearchUrl: string;
   /** Historical monthly climate normal; not a weather forecast. */
   typicalDaytimeHighF: number | null;

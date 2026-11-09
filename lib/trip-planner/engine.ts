@@ -1,4 +1,4 @@
-import { DESTINATIONS, findDestination, normalizeDestinationQuery, styleLabel } from "./destinations";
+import { DESTINATIONS, findDestination, formatDestinationLabel, normalizeDestinationQuery, styleLabel } from "./destinations";
 import { resolveAirportCode } from "./airports";
 import { destinationMetadata, getDestinationGateways } from "./location-suggestions";
 import type { Destination, ItineraryDay, TripRecommendation, TripSearchInput, TripStyle } from "./types";
@@ -121,7 +121,7 @@ function makeCustomDestination(query: string, selectedAirportCode = ""): Destina
   const city = gateway?.city || metadata.city || query;
   const country = gateway ? query : metadata.country;
   const airportCode = gateway?.code || metadata.airportCode || resolveAirportCode(query) || "";
-  const destinationLabel = country ? `${city}, ${country}` : city;
+  const destinationLabel = formatDestinationLabel(city, country);
   return {
     id: `custom-${query.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, city, country, airportCode, airportLabel: airportCode || "Choose an arrival airport for flights",
     // Prefer a verified image for the resolved city, then the search region.
@@ -140,18 +140,50 @@ function makeCustomDestination(query: string, selectedAirportCode = ""): Destina
 }
 
 function buildProviderLinks(origin: string, destination: Destination, input: TripSearchInput) {
-  const originQuery = origin.trim();
-  const destinationQuery = destination.country ? `${destination.city}, ${destination.country}` : destination.city;
-  const flightQuery = `Flights from ${originQuery} to ${destinationQuery} on ${input.departureDate} returning ${input.returnDate} for ${input.adults + input.childrenAges.length} travelers`;
-  const hotelQuery = `Hotels in ${destinationQuery} from ${input.departureDate} to ${input.returnDate} for ${input.adults + input.childrenAges.length} guests`;
-  const activityQuery = `Things to do in ${destinationQuery}`;
-  const googleFlights = new URL("https://www.google.com/travel/flights");
+  const destinationQuery = formatDestinationLabel(destination.city, destination.country);
+  const destinationAirportCode = input.destinationAirportCode || destination.airportCode;
+  const originQuery = input.originAirportCode || resolveAirportCode(origin) || origin.trim();
+  const childText = input.childrenAges.length ? `, ${input.childrenAges.length} children ages ${input.childrenAges.join(", ")}` : "";
+  const travelers = `${input.adults} adult${input.adults === 1 ? "" : "s"}${childText}`;
+  const cabin = input.cabinClass.replaceAll("_", " ");
+  const stopText = input.stops === "any" ? "any number of stops" : input.stops === "nonstop" ? "nonstop only" : input.stops === "one_stop" ? "up to one stop" : "up to two stops";
+
+  const flightQuery = `Flights from ${originQuery} to ${destinationAirportCode || destinationQuery} on ${input.departureDate} through ${input.returnDate}, ${travelers}, ${cabin} class, ${stopText}`;
+  const googleFlights = new URL("https://www.google.com/travel/flights/search");
   googleFlights.searchParams.set("q", flightQuery);
-  const googleHotels = new URL("https://www.google.com/travel/hotels");
-  googleHotels.searchParams.set("q", hotelQuery);
+  googleFlights.searchParams.set("curr", input.currency);
+  googleFlights.searchParams.set("hl", "en");
+  googleFlights.searchParams.set("gl", "us");
+
+  // Booking.com accepts structured dates, occupancy and room-count parameters.
+  const booking = new URL("https://www.booking.com/searchresults.html");
+  booking.searchParams.set("ss", destinationQuery);
+  booking.searchParams.set("checkin", input.departureDate);
+  booking.searchParams.set("checkout", input.returnDate);
+  booking.searchParams.set("group_adults", String(input.adults));
+  booking.searchParams.set("group_children", String(input.childrenAges.length));
+  booking.searchParams.set("no_rooms", String(input.rooms));
+  booking.searchParams.set("selected_currency", input.currency);
+  booking.searchParams.set("lang", "en-us");
+  for (const age of input.childrenAges) booking.searchParams.append("age", String(age));
+
+  // Airbnb supports dates and guest counts in its public search URL.
+  const airbnb = new URL(`https://www.airbnb.com/s/${encodeURIComponent(destinationQuery)}/homes`);
+  airbnb.searchParams.set("checkin", input.departureDate);
+  airbnb.searchParams.set("checkout", input.returnDate);
+  airbnb.searchParams.set("adults", String(input.adults));
+  airbnb.searchParams.set("query", destinationQuery);
+  if (input.childrenAges.length) airbnb.searchParams.set("children", String(input.childrenAges.length));
+
+  const activityQuery = `Things to do and tours in ${destinationQuery}, visit dates ${input.departureDate} to ${input.returnDate}, ${travelers}`;
   const viator = new URL("https://www.viator.com/searchResults/all");
   viator.searchParams.set("text", activityQuery);
-  return { flightSearchUrl: googleFlights.toString(), hotelSearchUrl: googleHotels.toString(), activitySearchUrl: viator.toString() };
+  return {
+    flightSearchUrl: googleFlights.toString(),
+    hotelSearchUrl: booking.toString(),
+    vacationRentalSearchUrl: airbnb.toString(),
+    activitySearchUrl: viator.toString(),
+  };
 }
 
 export function buildTripRecommendations(input: TripSearchInput): TripRecommendation[] {

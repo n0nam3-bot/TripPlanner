@@ -1,5 +1,6 @@
 import { getProviderCache, providerCacheKey, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
+import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
 
 const ENDPOINT = "https://serpapi.com/search.json";
@@ -74,6 +75,7 @@ export type LiveTravelSearchResult = {
   flights: LiveFlight[];
   hotels: LiveHotel[];
   experiences: LiveExperience[];
+  providerSearchLinks?: { flights?: string };
   warnings: string[];
 };
 
@@ -288,6 +290,65 @@ function normalizeFlight(item: unknown, index: number, currency: string): LiveFl
   };
 }
 
+function normalizeLocationText(value: string): string {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function cleanDestinationSearchName(value: string): string {
+  const seen = new Set<string>();
+  return value.split(",").map((part) => part.trim()).filter((part) => {
+    const key = normalizeLocationText(part);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).join(", ");
+}
+
+function milesBetween(latitude: number, longitude: number, otherLatitude: number, otherLongitude: number): number {
+  const radians = (degrees: number) => degrees * Math.PI / 180;
+  const dLat = radians(otherLatitude - latitude);
+  const dLon = radians(otherLongitude - longitude);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(latitude)) * Math.cos(radians(otherLatitude)) * Math.sin(dLon / 2) ** 2;
+  return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function hotelSearchLocation(destinationName: string, airportCode: string): string {
+  const gatewayLocations: Record<string, string> = {
+    AUA: "Oranjestad, Aruba",
+    PUJ: "Punta Cana, Dominican Republic",
+    SDQ: "Santo Domingo, Dominican Republic",
+    POP: "Puerto Plata, Dominican Republic",
+    STI: "Santiago, Dominican Republic",
+    LRM: "La Romana, Dominican Republic",
+    CUN: "Cancun, Mexico",
+    MEX: "Mexico City, Mexico",
+    SJU: "San Juan, Puerto Rico",
+    MBJ: "Montego Bay, Jamaica",
+    LIS: "Lisbon, Portugal",
+    MCO: "Orlando, Florida, United States",
+    MSY: "New Orleans, Louisiana, United States",
+  };
+  return gatewayLocations[airportCode] ?? cleanDestinationSearchName(destinationName);
+}
+
+function hotelMatchesDestination(hotel: LiveHotel, airportCode: string, destinationName: string): boolean {
+  const airport = AIRPORT_COORDINATES[airportCode];
+  if (airport && hotel.latitude !== null && hotel.longitude !== null) {
+    // A result far outside the selected arrival area is never shown, even if
+    // the provider accidentally mixes in properties from another country.
+    const distance = milesBetween(hotel.latitude, hotel.longitude, airport.latitude, airport.longitude);
+    const radiusMiles = airportCode === "AUA" ? 45 : ["PUJ", "SDQ", "POP", "STI", "LRM"].includes(airportCode) ? 90 : 75;
+    return distance <= radiusMiles;
+  }
+
+  const address = normalizeLocationText(`${hotel.address} ${hotel.name}`);
+  const destinationParts = destinationName.split(",").map(normalizeLocationText).filter((part) => part.length >= 3);
+  // If we know the arrival airport, missing property coordinates must not
+  // turn a weak name/address match into a result from another country.
+  if (airport && !hotel.address) return false;
+  return destinationParts.length > 0 && destinationParts.every((part) => address.includes(part));
+}
+
 function normalizeHotel(item: unknown, index: number, currency: string, destinationName: string, checkIn: string, checkOut: string): LiveHotel | null {
   const hotel = obj(item);
   const name = str(hotel.name);
@@ -313,7 +374,7 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
     const offer = obj(entry);
     const offerNightly = obj(offer.rate_per_night);
     const offerTotal = obj(offer.total_rate);
-    const stayPrice = num(offerTotal.extracted_after_taxes_fees) ?? num(offerTotal.extracted_lowest);
+    const stayPrice = num(offerTotal.extracted_after_taxes_fees) ?? num(offerTotal.extracted_display_price) ?? num(offerTotal.extracted_lowest);
     const nightPrice = num(offerNightly.extracted_after_taxes_fees) ?? num(offerNightly.extracted_lowest) ?? num(offer.extracted_price);
     return {
       seller: str(offer.source, str(offer.name, "Booking provider")),
@@ -338,8 +399,8 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
     nearbyPlaces,
     rating: num(hotel.overall_rating),
     reviews: num(hotel.reviews),
-    nightlyPrice: num(nightly.extracted_after_taxes_fees) ?? num(nightly.extracted_lowest),
-    totalPrice: num(total.extracted_after_taxes_fees) ?? num(total.extracted_lowest),
+    nightlyPrice: num(nightly.extracted_before_taxes_fees) ?? num(nightly.extracted_display_price) ?? num(nightly.extracted_lowest),
+    totalPrice: num(total.extracted_after_taxes_fees) ?? num(total.extracted_display_price) ?? num(total.extracted_lowest),
     currency,
     address: str(hotel.address),
     amenities: arr(hotel.amenities).filter((item): item is string => typeof item === "string").slice(0, 8),
@@ -351,13 +412,26 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
   };
 }
 
+function expandOriginAirports(originCode: string): string {
+  const metroAirports: Record<string, string> = {
+    NYC: "JFK,EWR,LGA",
+    CHI: "ORD,MDW",
+    WAS: "DCA,IAD,BWI",
+    LON: "LHR,LGW,STN,LTN",
+    PAR: "CDG,ORY",
+    ROM: "FCO,CIA",
+    TYO: "HND,NRT",
+  };
+  return metroAirports[originCode] ?? originCode;
+}
+
 function makeFlightParams(input: TripSearchInput, originCode: string, destinationAirportCode: string): Record<string, string> {
   const classMap = { economy: "1", premium_economy: "2", business: "3", first: "4" } as const;
   // Google Flights exposes maximum-stop filters, not an exact one-stop/two-stop filter.
   const stopMap = { any: "0", nonstop: "1", one_stop: "2", two_stops: "3" } as const;
   return {
     engine: "google_flights",
-    departure_id: originCode,
+    departure_id: expandOriginAirports(originCode),
     arrival_id: destinationAirportCode,
     type: "1",
     outbound_date: input.departureDate,
@@ -378,10 +452,10 @@ function normalizeFlights(data: JsonObject, currency: string): LiveFlight[] {
   return source.map((item, index) => normalizeFlight(item, index, currency)).filter((item): item is LiveFlight => Boolean(item)).slice(0, 8);
 }
 
-function makeHotelParams(input: TripSearchInput, destinationName: string, stayType: StayType): Record<string, string> {
+function makeHotelParams(input: TripSearchInput, destinationName: string, airportCode: string, stayType: StayType): Record<string, string> {
   const params: Record<string, string> = {
     engine: "google_hotels",
-    q: `${stayType === "vacation_rentals" ? "Vacation rentals" : "Hotels"} in ${destinationName}`,
+    q: `${stayType === "vacation_rentals" ? "Vacation rentals" : "Hotels"} in ${hotelSearchLocation(destinationName, airportCode)}`,
     check_in_date: input.departureDate,
     check_out_date: input.returnDate,
     adults: String(input.adults),
@@ -491,6 +565,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   if (!process.env.SERPAPI_API_KEY) throw new Error("SERPAPI_NOT_CONFIGURED");
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   const components = input.components;
+  const normalizedDestinationName = cleanDestinationSearchName(destinationName);
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
   const destinationCode = input.destinationAirportCode || destinationAirportCode;
   if (components.includes("flights") && !originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
@@ -500,11 +575,11 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   if (components.includes("flights")) tasks.push({ key: "flights", promise: querySerpApi(makeFlightParams(input, originCode!, destinationCode!), 3600, clientUsageKey) });
   if (components.includes("stays")) {
     for (const stayType of input.stayTypes) {
-      tasks.push({ key: stayType === "hotels" ? "hotels" : "vacation_rentals", promise: querySerpApi(makeHotelParams(input, destinationName, stayType), 3600, clientUsageKey) });
+      tasks.push({ key: stayType === "hotels" ? "hotels" : "vacation_rentals", promise: querySerpApi(makeHotelParams(input, normalizedDestinationName, destinationCode || destinationAirportCode, stayType), 3600, clientUsageKey) });
     }
   }
   if (components.includes("activities")) {
-    tasks.push({ key: "experiences", promise: searchExperiencesWithFallback(input, destinationName, clientUsageKey) });
+    tasks.push({ key: "experiences", promise: searchExperiencesWithFallback(input, normalizedDestinationName, clientUsageKey) });
   }
 
   const outcomes = await Promise.allSettled(tasks.map((task) => task.promise));
@@ -522,6 +597,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   let experiences: LiveExperience[] = [];
   const fetchedAt: string[] = [];
   const cacheFlags: boolean[] = [];
+  let providerSearchLinks: { flights?: string } = {};
 
   outcomes.forEach((outcome, index) => {
     const key = tasks[index].key;
@@ -532,15 +608,24 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     fetchedAt.push(outcome.value.fetchedAt);
     cacheFlags.push(outcome.value.fromCache);
     if (key === "flights") {
+      const metadata = obj(outcome.value.data.search_metadata);
+      providerSearchLinks.flights = safeHttpUrl(metadata.google_flights_url);
       flights = normalizeFlights(outcome.value.data, input.currency);
       if (!flights.length) warnings.push("Google Flights returned no outbound options for this route and date combination. Try a different departure airport or open the route directly in Google Flights.");
     } else if (key === "hotels" || key === "vacation_rentals") {
       const properties = arr(outcome.value.data.properties);
-      const normalized = properties.map((item, itemIndex) => normalizeHotel(item, itemIndex, input.currency, destinationName, input.departureDate, input.returnDate)).filter((item): item is LiveHotel => Boolean(item));
-      hotels = [...hotels, ...normalized];
-      if (!normalized.length) warnings.push(key === "vacation_rentals" ? "No vacation-rental properties were returned for those dates and guests." : "No hotel properties were returned for those dates and guests.");
+      const normalized = properties.map((item, itemIndex) => normalizeHotel(item, itemIndex, input.currency, normalizedDestinationName, input.departureDate, input.returnDate)).filter((item): item is LiveHotel => Boolean(item));
+      const inDestination = normalized.filter((hotel) => hotelMatchesDestination(hotel, destinationCode || destinationAirportCode, normalizedDestinationName));
+      hotels = [...hotels, ...inDestination];
+      const rejectedLocationCount = normalized.length - inDestination.length;
+      if (rejectedLocationCount > 0) {
+        warnings.push(`Google Hotels returned ${rejectedLocationCount} properties outside ${hotelSearchLocation(normalizedDestinationName, destinationCode || destinationAirportCode)}; those mismatched properties were removed.`);
+      }
+      if (!inDestination.length && !normalized.length) {
+        warnings.push(key === "vacation_rentals" ? "No vacation-rental properties were returned for those dates, guests and destination." : "No hotel properties were returned for those dates, guests and destination.");
+      }
     } else if (key === "experiences") {
-      experiences = normalizeExperiences(outcome.value.data, destinationName);
+      experiences = normalizeExperiences(outcome.value.data, normalizedDestinationName);
       if (!experiences.length) warnings.push("No local attractions or experiences were returned for this destination. Try a specific category or nearby town.");
     }
   });
@@ -563,6 +648,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     flights,
     hotels: uniqueHotels,
     experiences,
+    providerSearchLinks,
     warnings,
   };
 }
