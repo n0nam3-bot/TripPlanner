@@ -57,7 +57,7 @@ function BookingOptions({ state, currency }: { state?: BookingState; currency: s
   if (!state.options) return null;
   return <div className="booking-options-list">
     {state.options.length ? state.options.map((option, index) => <div className="booking-option-row" key={`${option.seller}-${index}`}>
-      <span><strong>{option.seller}</strong>{option.terms.length > 0 && <small>{option.terms.join(" · ")}</small>}</span>
+      <span><strong>{option.seller}</strong>{(option.fareTerms.length > 0 || option.baggage.length > 0) && <small>{[...option.fareTerms, ...option.baggage].join(" · ")}</small>}</span>
       <span>{option.price !== null ? money(option.price, option.currency || currency) : "See seller"}</span>
       {option.url && <a href={option.url} target="_blank" rel="noreferrer">Continue <ArrowUpRight size={12}/></a>}
     </div>) : <small>No seller links were returned for this selection. Use the direct Google Flights search link below.</small>}
