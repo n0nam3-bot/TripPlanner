@@ -36,6 +36,9 @@ export type TripSearchInput = {
   stops: StopPreference;
   minimumHotelRating: 0 | 3 | 4 | 5;
   freeCancellation: boolean;
+  temperatureMin: number | null;
+  temperatureMax: number | null;
+  temperatureUnit: "F" | "C";
 };
 
 export type ItineraryActivity = {
@@ -77,4 +80,6 @@ export type TripRecommendation = {
   flightSearchUrl: string;
   hotelSearchUrl: string;
   activitySearchUrl: string;
+  /** Historical monthly climate normal; not a weather forecast. */
+  typicalDaytimeHighF: number | null;
 };
