@@ -16,9 +16,9 @@ The importer is overlay-only: matching files are replaced and new files are adde
 - Destination autocomplete groups countries/regions, gateway airports, cities and attractions. Selecting a country-wide destination preserves the region for stays/activities and stores a chosen gateway separately when flights are requested.
 - Destination matching against a curated planning catalog. Internal ranking orders candidate ideas, but the UI does not display invented precision scores.
 - Date-specific itinerary outline generation without repeating the same template day. It is planning guidance, not verified attraction inventory or opening hours.
-- Live Google Flights, Google Hotels/vacation-rental and local place/attraction search through server-side SerpApi adapters, once provider and database credentials are configured.
+- Live Google Flights, Google Hotels/vacation-rental and local place/attraction search through server-side SerpApi adapters, plus optional Booking.com Demand API accommodation search for approved Managed Affiliate Partners.
 - Round-trip flight selection is staged correctly: outbound options first, then return options for the chosen outbound, then seller/booking options when supplied by the provider.
-- Hotel offers are withheld for multi-room requests because the current provider integration cannot verify the requested room count.
+- Booking.com Demand API searches include the selected room count and child ages when partner access is configured. Google Hotels does not accept the requested room count through its current SerpApi search endpoint, so those Google rates must be reconfirmed with the seller.
 - Google Hotels receives children's ages. Google Flights currently receives the child count but not individual child ages, so age-specific fares need seller confirmation.
 - Provider responses are cached in Neon. Before each uncached search, Tripfinder checks the SerpApi Account API (which does not consume search credits) and enforces shared monthly, hourly and per-connection request limits.
 - Hotel cards always include a property/details or Google Hotels fallback link; seller-rate links are shown only when the provider returns them. Flight cards show outbound offers first, followed by return-leg and seller lookups.
@@ -46,8 +46,18 @@ In Vercel, open **TripPlanner → Settings → Environment Variables** and add:
 | `SERPAPI_PROVIDER_HOURLY_RESERVE` | `10` | Preview and Production (optional; default is 10) |
 | `WEATHERAPI_API_KEY` | Optional WeatherAPI key | Preview and Production (optional) |
 | `ADMIN_DASHBOARD_SECRET` | Random secret of at least 32 characters; also used as the `/admin` login password | Production (optional; required for admin access) |
+| `BOOKING_COM_API_BASE` | `https://demandapi.booking.com/3.3` (or the official sandbox URL when using sandbox credentials) | Preview and Production (optional; defaults to production) |
+| `BOOKING_COM_API_TOKEN` | Booking.com Demand API token from Partner Centre | Preview and Production (optional; requires approved Managed Affiliate Partner access) |
+| `BOOKING_COM_AFFILIATE_ID` | Booking.com `X-Affiliate-Id` from Partner Centre | Preview and Production (optional; required with the API token) |
+| `BOOKING_COM_BOOKER_COUNTRY` | ISO-2 booker country, e.g. `us` | Preview and Production (optional; defaults to `us`) |
 
 Save the variables and redeploy the latest deployment. For `ADMIN_DASHBOARD_SECRET`, generate a long random password (at least 32 characters), save it as a server-side Vercel environment variable, and enter that same value on `/admin`. Do not use `NEXT_PUBLIC_` prefixes, and never put credentials in GitHub, ZIP files, browser code, or screenshots. Keep secrets in Vercel's server-side environment settings only.
+
+### Optional Booking.com accommodation supplier
+
+Tripfinder includes an optional Booking.com Demand API v3.3 accommodation adapter. It activates only when both `BOOKING_COM_API_TOKEN` and `BOOKING_COM_AFFILIATE_ID` are configured. Booking.com requires Managed Affiliate Partner registration, Partner Centre access and credentials issued under an approved agreement; the API key and affiliate ID must remain server-side. The adapter resolves city/region destinations, searches date- and guest-specific availability, retrieves property details/photos, and stores provider responses in the shared Neon cache. Its API calls appear separately in `/admin` under Booking.com. Google Hotels remains active as a parallel source and fallback. Booking.com inventory and website inventory may differ, and displayed rates must be rechecked with the seller.
+
+The Booking.com adapter supports the search-and-redirect flow only; it does not create bookings or process payments. `/api/health` reports whether partner credentials are present and whether the production or sandbox endpoint is selected. Its availability depends on the user's partner permissions. `BOOKING_COM_API_BASE` accepts only the official v3.3 production or sandbox endpoint, and the endpoint is part of the cache key so sandbox data cannot be reused in production. Airbnb remains a direct search link; this integration does not access Airbnb's private inventory.
 
 ### Private operations dashboard
 
@@ -71,7 +81,7 @@ Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRE
 - SerpApi's Google Flights integration is a search-data source, not an airline reservation system. Round trips require choosing an outbound flight and then requesting return options with the provider token. Seller options may be available after that selection. A booking link is not a reservation.
 - Flight search currently resolves airports from the built-in city/airport map or a three-letter IATA code. It does not yet have a live airport-autocomplete service.
 - Google Flights receives child count but not each child's age; sellers must confirm age-specific fares.
-- The current Google Hotels query supports a single-room search only. Multi-room hotel results are withheld rather than presented as verified for a group.
+- Google Hotels does not accept the requested room count through the current SerpApi search endpoint. The optional Booking.com Demand API adapter does send room count and child ages; when Booking.com access is unavailable, Google Hotels rates still need room allocation reconfirmed with the seller.
 - The provider's hotel-class filter is a hotel category filter, not a guest-review score filter.
 - Flexible date selections are stored and disclosed, but live flight/hotel checks currently use the exact dates entered.
 - Destination autocomplete and destination matching are based on a maintained internal catalog, not a global live places/autocomplete feed. Unlisted destinations can be typed and searched, but country-to-airport resolution requires a known gateway or a valid three-letter airport code.
@@ -89,6 +99,7 @@ Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRE
 | Next.js, React, TypeScript | Application and server routes | Active |
 | Framer Motion, Lucide React | Motion and icon library | Active |
 | SerpApi | Google Flights, Google Hotels/vacation rentals, Google Maps/Local places and directions | Requires `SERPAPI_API_KEY` |
+| Booking.com Demand API v3.3 | Partner accommodation search, property details and redirect links | Optional; requires approved `BOOKING_COM_API_TOKEN` and `BOOKING_COM_AFFILIATE_ID` |
 | Neon PostgreSQL | Persistent provider cache and shared request counter | Requires `DATABASE_URL` |
 | Affiliate networks | Commission attribution and affiliate links | Not connected |
 | AI provider | Optional natural-language intent extraction | Not connected; not required for deterministic search validation |

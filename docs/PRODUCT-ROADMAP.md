@@ -47,9 +47,13 @@
 - Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
 
 ## Release 5 — supplier depth and monetization
-- Obtain approved live supplier access for broader airline, hotel and official package inventory.
+- Initial Booking.com Demand API v3.3 accommodation adapter implemented as an optional, server-side supplier. Activation requires approved Managed Affiliate Partner access and Partner Centre credentials.
+- Booking.com adapter supports destination resolution, date/guest/room-specific accommodation search, property details/photos, redirect links, Neon caching, stale fallback and `/admin` request telemetry. Google Hotels remains a parallel fallback; Airbnb remains an external search link until authorized inventory access is available.
+- Next: configure approved sandbox credentials and `BOOKING_COM_API_BASE=https://demandapi-sandbox.booking.com/3.3`, validate accommodation types, price/redirect data and cache telemetry, then switch to production credentials and the production base URL. Confirm public display, caching and commercial data rights for each source.
+- Obtain approved live supplier access for broader airline and official package inventory.
 - Confirm public display, caching and commercial data rights for each source.
 - Add supplier price/availability revalidation.
+- Add a direct airline/NDC source (evaluate Duffel) alongside Google Flights, without removing broad Google Flights discovery.
 - Add affiliate network integrations after approval.
 - Add compliant disclosures and click/conversion reporting.
 - Add provider fallback and outbound-link health monitoring.

@@ -1,5 +1,6 @@
 import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordProviderEvent, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
+import { isBookingComConfigured, searchBookingComAccommodations } from "@/lib/providers/booking-com";
 import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationRegionScope, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
 
@@ -70,7 +71,7 @@ export type SearchCacheSummary = { key: string; label: string; status: "live" | 
 
 export type LiveTravelSearchResult = {
   status: "live" | "partial" | "empty";
-  provider: "SerpApi / Google Travel and Maps";
+  provider: string;
   checkedAt: string;
   dataAsOf: string;
   servedFromCache: boolean;
@@ -488,6 +489,53 @@ function milesBetween(latitude: number, longitude: number, otherLatitude: number
   return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function sameProperty(left: LiveHotel, right: LiveHotel): boolean {
+  if (normalizeLocationText(left.name) !== normalizeLocationText(right.name)) return false;
+  if (left.latitude !== null && left.longitude !== null && right.latitude !== null && right.longitude !== null) {
+    return milesBetween(left.latitude, left.longitude, right.latitude, right.longitude) <= 0.15;
+  }
+  const leftAddress = normalizeLocationText(left.address);
+  const rightAddress = normalizeLocationText(right.address);
+  return Boolean(leftAddress && rightAddress && leftAddress === rightAddress);
+}
+
+function mergeHotelSources(hotels: LiveHotel[]): LiveHotel[] {
+  const merged: LiveHotel[] = [];
+  for (const candidate of hotels) {
+    const existingIndex = merged.findIndex((existing) => sameProperty(existing, candidate));
+    if (existingIndex < 0) {
+      merged.push(candidate);
+      continue;
+    }
+    const existing = merged[existingIndex];
+    const offers = [...existing.providerOffers, ...candidate.providerOffers];
+    const uniqueOffers = [...new Map(offers.map((offer) => [
+      `${normalizeLocationText(offer.seller)}|${offer.url || ""}|${offer.price ?? ""}|${offer.currency}`,
+      offer,
+    ])).values()];
+    const sources = [...new Set(`${existing.source} + ${candidate.source}`.split("+").map((value) => value.trim()).filter(Boolean))];
+    merged[existingIndex] = {
+      ...existing,
+      source: sources.join(" + "),
+      propertyType: existing.propertyType || candidate.propertyType,
+      latitude: existing.latitude ?? candidate.latitude,
+      longitude: existing.longitude ?? candidate.longitude,
+      nearbyPlaces: [...new Map([...existing.nearbyPlaces, ...candidate.nearbyPlaces].map((place) => [`${place.name}|${place.category}`, place])).values()].slice(0, 8),
+      rating: existing.rating ?? candidate.rating,
+      reviews: existing.reviews ?? candidate.reviews,
+      nightlyPrice: existing.nightlyPrice ?? candidate.nightlyPrice,
+      totalPrice: existing.totalPrice ?? candidate.totalPrice,
+      address: existing.address || candidate.address,
+      amenities: [...new Set([...existing.amenities, ...candidate.amenities])].slice(0, 8),
+      image: existing.image || candidate.image,
+      bookingUrl: existing.bookingUrl || candidate.bookingUrl,
+      bookingUrlLabel: existing.bookingUrl ? existing.bookingUrlLabel : candidate.bookingUrlLabel,
+      providerOffers: uniqueOffers,
+    };
+  }
+  return merged;
+}
+
 function hotelSearchLocation(destinationName: string, airportCode: string): string {
   const gatewayLocations: Record<string, string> = {
     AUA: "Oranjestad, Aruba",
@@ -883,10 +931,16 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     tasks.push({ key: "restaurants", promise: searchPlacesWithFallback("popular restaurants, highly rated local dining, casual restaurants and local food", normalizedDestinationName, destinationCode || destinationAirportCode, "restaurant", clientUsageKey, forceRefresh) });
   }
 
-  const outcomes = await Promise.allSettled(tasks.map((task) => task.promise));
+  const bookingPromise = components.includes("stays") && isBookingComConfigured()
+    ? searchBookingComAccommodations(input, normalizedDestinationName, destinationCode || destinationAirportCode, forceRefresh)
+    : Promise.resolve(null);
+  const [outcomes, bookingResult] = await Promise.all([
+    Promise.allSettled(tasks.map((task) => task.promise)),
+    bookingPromise,
+  ]);
   const errors = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected").map((outcome) => outcome.reason instanceof Error ? outcome.reason.message : "");
   const successfulCount = outcomes.filter((outcome) => outcome.status === "fulfilled").length;
-  if (successfulCount === 0 && errors.length) {
+  if (successfulCount === 0 && errors.length && !(bookingResult?.hotels.length)) {
     const priority = ["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_QUOTA_CHECK_FAILED", "SERPAPI_CLIENT_RATE_LIMITED", "DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED", "SERPAPI_NOT_CONFIGURED"];
     const selected = priority.find((code) => errors.includes(code));
     if (selected) throw new Error(selected);
@@ -901,6 +955,22 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   const cacheFlags: boolean[] = [];
   const cacheSummary: SearchCacheSummary[] = [];
   let providerSearchLinks: { flights?: string } = {};
+
+  if (bookingResult) {
+    if (bookingResult.warning) warnings.push(bookingResult.warning);
+    hotels = [...hotels, ...bookingResult.hotels];
+    fetchedAt.push(bookingResult.fetchedAt);
+    cacheFlags.push(bookingResult.fromCache);
+    cacheSummary.push({
+      key: "booking-com-accommodations",
+      label: "Booking.com accommodations",
+      status: bookingResult.isStale ? "stale" : bookingResult.fromCache ? "cached" : "live",
+      fetchedAt: bookingResult.fetchedAt,
+    });
+    if (bookingResult.isStale) {
+      warnings.push(`Booking.com accommodation results are showing saved data from ${new Date(bookingResult.fetchedAt).toLocaleString()}; prices and availability may have changed.`);
+    }
+  }
 
   outcomes.forEach((outcome, index) => {
     const key = tasks[index].key;
@@ -951,17 +1021,17 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     }
   });
 
-  const uniqueHotels = [...new Map(hotels.map((item) => [item.id, item])).values()].slice(0, 18);
+  const uniqueHotels = mergeHotelSources([...new Map(hotels.map((item) => [item.id, item])).values()]).slice(0, 18);
   const hasFlights = !components.includes("flights") || flights.length > 0;
   const hasStays = !components.includes("stays") || uniqueHotels.length > 0;
   const hasActivities = !components.includes("activities") || experiences.length > 0 || restaurants.length > 0;
   const fulfilledRequestedCategories = [hasFlights, hasStays, hasActivities].filter(Boolean).length;
   const status = fulfilledRequestedCategories === 0 ? "empty" : fulfilledRequestedCategories === components.length ? "live" : "partial";
-  if (input.rooms > 1 && components.includes("stays")) warnings.push(`Google Hotels does not expose a room-count parameter for this search endpoint. These are property-level rates and may not represent ${input.rooms} rooms; reconfirm the room allocation, guest distribution, taxes and total directly with the seller.`);
+  if (input.rooms > 1 && components.includes("stays") && uniqueHotels.some((hotel) => hotel.source.includes("Google Hotels"))) warnings.push(`Google Hotels does not expose a room-count parameter for this search endpoint. Its property-level rates may not represent ${input.rooms} rooms; reconfirm the room allocation, guest distribution, taxes and total directly with the seller. Booking.com results, when present, include the requested room count.`);
   if (input.childrenAges.length && components.includes("flights")) warnings.push("The flight provider applies child count but does not confirm age-specific fare rules here. Verify passenger ages and fares with the airline or seller.");
   return {
     status,
-    provider: "SerpApi / Google Travel and Maps",
+    provider: bookingResult?.hotels.length ? "SerpApi / Google Travel and Maps + Booking.com" : "SerpApi / Google Travel and Maps",
     checkedAt: new Date().toISOString(),
     dataAsOf: fetchedAt.sort()[0] ?? new Date().toISOString(),
     servedFromCache: cacheFlags.length > 0 && cacheFlags.every(Boolean),
