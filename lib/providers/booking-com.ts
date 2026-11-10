@@ -308,7 +308,7 @@ function mapHotels(
       source: "Booking.com",
       propertyType,
       inventoryTypes: [inventoryType],
-      spaceType: inferStaySpaceType({ propertyType, essentialInfo, description }),
+      spaceType: inferStaySpaceType({ propertyType, essentialInfo, description, amenities }),
       description,
       essentialInfo,
       excludedAmenities: [],
