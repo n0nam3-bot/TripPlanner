@@ -656,7 +656,7 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
     source: str(hotel.source, "Google Hotels"),
     propertyType,
     inventoryTypes: [stayType],
-    spaceType: inferStaySpaceType({ propertyType, essentialInfo, description }),
+    spaceType: inferStaySpaceType({ propertyType, essentialInfo, description, amenities }),
     description,
     essentialInfo,
     excludedAmenities,
