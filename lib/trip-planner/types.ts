@@ -13,6 +13,28 @@ export type CabinClass = "economy" | "premium_economy" | "business" | "first";
 export type StopPreference = "any" | "nonstop" | "one_stop" | "two_stops";
 export type TripComponent = "flights" | "stays" | "activities";
 export type StayType = "hotels" | "vacation_rentals";
+export type StaySpaceType = "any" | "entire_place" | "private_room" | "shared_room";
+export type StayAmenity =
+  | "private_pool"
+  | "shared_pool"
+  | "pool"
+  | "indoor_pool"
+  | "heated_pool"
+  | "outdoor_pool"
+  | "hot_tub"
+  | "sauna"
+  | "outdoor_grill"
+  | "kitchen"
+  | "kitchenette"
+  | "fireplace"
+  | "washer_dryer"
+  | "balcony_terrace"
+  | "free_parking"
+  | "pet_friendly"
+  | "beach_access"
+  | "gym"
+  | "wifi"
+  | "air_conditioning";
 
 export type TripSearchInput = {
   origin: string;
@@ -21,6 +43,9 @@ export type TripSearchInput = {
   destinationAirportCode: string;
   components: TripComponent[];
   stayTypes: StayType[];
+  staySpaceType: StaySpaceType;
+  stayMustHaveAmenities: StayAmenity[];
+  stayPreferredAmenities: StayAmenity[];
   departureDate: string;
   returnDate: string;
   adults: number;

@@ -3,7 +3,7 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, Users, Wallet } from "lucide-react";
-import type { TripComponent, StayType } from "@/lib/trip-planner/types";
+import type { TripComponent, StayAmenity, StaySpaceType, StayType } from "@/lib/trip-planner/types";
 import { getDestinationGateways, getDestinationRegionScope, getLocationSuggestions, type LocationSuggestion } from "@/lib/trip-planner/location-suggestions";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
 
@@ -72,6 +72,29 @@ const COMPONENTS: Array<{ value: TripComponent; label: string; description: stri
   { value: "activities", label: "Things to do", description: "Attractions and experiences", icon: Activity },
 ];
 
+const STAY_AMENITIES: Array<{ value: StayAmenity; label: string }> = [
+  { value: "private_pool", label: "Private pool (exclusive to this property)" },
+  { value: "shared_pool", label: "Shared / community pool" },
+  { value: "pool", label: "Any pool" },
+  { value: "indoor_pool", label: "Indoor pool" },
+  { value: "heated_pool", label: "Heated pool" },
+  { value: "outdoor_pool", label: "Outdoor pool" },
+  { value: "hot_tub", label: "Hot tub / Jacuzzi" },
+  { value: "sauna", label: "Sauna" },
+  { value: "outdoor_grill", label: "Outdoor grill / BBQ" },
+  { value: "kitchen", label: "Full kitchen" },
+  { value: "kitchenette", label: "Kitchenette" },
+  { value: "fireplace", label: "Fireplace" },
+  { value: "washer_dryer", label: "Washer and dryer" },
+  { value: "balcony_terrace", label: "Balcony / terrace" },
+  { value: "free_parking", label: "Free parking" },
+  { value: "pet_friendly", label: "Pet-friendly" },
+  { value: "beach_access", label: "Beach access" },
+  { value: "gym", label: "Gym / fitness center" },
+  { value: "wifi", label: "Wi-Fi" },
+  { value: "air_conditioning", label: "Air conditioning" },
+];
+
 const SEARCH_PRESETS: Array<{ label: string; components: TripComponent[] }> = [
   { label: "Complete trip", components: ["flights", "stays", "activities"] },
   { label: "Flights + stays", components: ["flights", "stays"] },
@@ -110,6 +133,9 @@ export function TripSearch() {
   const [temperatureUnit, setTemperatureUnit] = useState<"F" | "C">("F");
   const [components, setComponents] = useState<TripComponent[]>(["flights", "stays", "activities"]);
   const [stayTypes, setStayTypes] = useState<StayType[]>(["hotels"]);
+  const [staySpaceType, setStaySpaceType] = useState<StaySpaceType>("any");
+  const [stayMustHaveAmenities, setStayMustHaveAmenities] = useState<StayAmenity[]>([]);
+  const [stayPreferredAmenities, setStayPreferredAmenities] = useState<StayAmenity[]>([]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -118,6 +144,21 @@ export function TripSearch() {
   }
   function toggleStayType(value: StayType) {
     setStayTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
+    if (staySpaceType !== "any") setStaySpaceType("any");
+  }
+  function changeStaySpaceType(value: StaySpaceType) {
+    setStaySpaceType(value);
+    if (value !== "any") setStayTypes(["vacation_rentals"]);
+    else setStayTypes((current) => current.length ? current : ["hotels"]);
+  }
+  function toggleStayAmenity(value: StayAmenity, mode: "must" | "prefer", checked: boolean) {
+    if (mode === "must") {
+      setStayMustHaveAmenities((current) => checked ? [...new Set([...current, value])] : current.filter((item) => item !== value));
+      if (checked) setStayPreferredAmenities((current) => current.filter((item) => item !== value));
+    } else {
+      setStayPreferredAmenities((current) => checked ? [...new Set([...current, value])] : current.filter((item) => item !== value));
+      if (checked) setStayMustHaveAmenities((current) => current.filter((item) => item !== value));
+    }
   }
 
   function applyPreset(values: TripComponent[]) {
@@ -165,6 +206,7 @@ export function TripSearch() {
     if (ages.some((age) => !/^\d+$/.test(age) || Number(age) < 1 || Number(age) > 17)) return setError("Enter each child's age from 1 to 17, separated by commas.");
     if (Number(rooms) < 1 || Number(rooms) > 8) return setError("Choose between 1 and 8 rooms.");
     if (components.includes("stays") && stayTypes.length === 0) return setError("Choose hotels, vacation rentals or both.");
+    if (stayMustHaveAmenities.length > 12 || stayPreferredAmenities.length > 12) return setError("Choose no more than 12 must-have and 12 preferred accommodation features.");
     const minTemp = temperatureMin.trim() === "" ? null : Number(temperatureMin);
     const maxTemp = temperatureMax.trim() === "" ? null : Number(temperatureMax);
     const tempFloor = temperatureUnit === "F" ? -40 : -40;
@@ -179,7 +221,8 @@ export function TripSearch() {
       destination: selectedDestination, destinationAirportCode: destinationAirportCode || resolveAirportCode(selectedDestination) || "",
       depart, return: returnDate, adults, childrenAges: ages.join(","), rooms, budget, budgetMode, currency, style,
       flexibleDays: "0", cabin, stops, hotelRating, freeCancellation: String(freeCancellation),
-      components: components.join(","), stayTypes: stayTypes.join(","),
+      components: components.join(","), stayTypes: stayTypes.join(","), staySpaceType,
+      stayMust: stayMustHaveAmenities.join(","), stayPrefer: stayPreferredAmenities.join(","),
       temperatureMin: temperatureMin.trim(), temperatureMax: temperatureMax.trim(), temperatureUnit,
     });
     router.push(`/results?${params.toString()}`);
@@ -212,6 +255,29 @@ export function TripSearch() {
         <label><input type="checkbox" checked={stayTypes.includes("hotels")} onChange={() => toggleStayType("hotels")}/> Hotels</label>
         <label><input type="checkbox" checked={stayTypes.includes("vacation_rentals")} onChange={() => toggleStayType("vacation_rentals")}/> Vacation rentals</label>
       </div>}
+      {components.includes("stays") && <details className="stay-preferences-panel">
+        <summary>Accommodation preferences <span>{stayMustHaveAmenities.length} must-have · {stayPreferredAmenities.length} preferred</span></summary>
+        <div className="stay-preferences-content">
+          <label className="stay-space-select">Accommodation space type
+            <select value={staySpaceType} onChange={(event) => changeStaySpaceType(event.target.value as StaySpaceType)}>
+              <option value="any">Any space type (use selected accommodation types)</option>
+              <option value="entire_place">Entire place / entire property</option>
+              <option value="private_room">Private room</option>
+              <option value="shared_room">Shared room</option>
+            </select>
+            <small>Choosing an entire place or room type automatically searches vacation rentals only. Hotel room inventory is separate.</small>
+          </label>
+          <p className="stay-verification-note">Must-haves require explicit listing evidence. A community pool never qualifies as a private pool; an unspecified pool or room type is not assumed to be private or exclusive.</p>
+          <div className="stay-amenity-grid">
+            <div className="stay-amenity-heading"><span>Property feature</span><span>Must have</span><span>Prefer</span></div>
+            {STAY_AMENITIES.map(({ value, label }) => <div className="stay-amenity-row" key={value}>
+              <span>{label}</span>
+              <label><input type="checkbox" checked={stayMustHaveAmenities.includes(value)} onChange={(event) => toggleStayAmenity(value, "must", event.target.checked)}/><span className="sr-only">Require {label}</span></label>
+              <label><input type="checkbox" checked={stayPreferredAmenities.includes(value)} onChange={(event) => toggleStayAmenity(value, "prefer", event.target.checked)}/><span className="sr-only">Prefer {label}</span></label>
+            </div>)}
+          </div>
+        </div>
+      </details>}
 
       <div className={`search-fields ${components.includes("flights") ? "has-origin" : "no-origin"}`}>
         {components.includes("flights") && <LocationField field="origin" label="Leaving from" value={origin} airportCode={originAirportCode} placeholder="City or airport" onChange={(value) => { setOrigin(value); setOriginAirportCode(resolveAirportCode(value) || ""); }} onSelect={(item) => { setOrigin(item.value); setOriginAirportCode(item.airportCode); }}/ >}

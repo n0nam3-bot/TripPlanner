@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/travel-cache";
 import type { LiveHotel } from "@/lib/providers/serpapi";
 import type { TripSearchInput, StayType } from "@/lib/trip-planner/types";
+import { inferStaySpaceType } from "@/lib/providers/stay-features";
 import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
 
 const DEFAULT_API_BASE = "https://demandapi.booking.com/3.3";
@@ -286,6 +287,13 @@ function mapHotels(
     const reviews = num(ratingData.number_of_reviews) ?? num(ratingData.review_count) ?? num(detail.number_of_reviews);
     const typeId = num(detail.accommodation_type);
     const propertyType = typeId !== null ? (typeLabels.get(typeId) ?? "Accommodation") : "Accommodation";
+    const inventoryType: StayType = /\b(hotel|resort|inn|motel|hostel)\b/i.test(propertyType) ? "hotels" : "vacation_rentals";
+    const description = localizedName(detail.description) || undefined;
+    const amenities = arr(detail.facilities).map((entry) => {
+      const facility = obj(entry);
+      return localizedName(facility.name) || str(facility.description);
+    }).filter(Boolean);
+    const essentialInfo: string[] = [];
     const products = arr(search.products).map(obj);
     const cancellation = obj(obj(products[0]).policies).cancellation;
     const cancellationData = obj(cancellation);
@@ -299,6 +307,11 @@ function mapHotels(
       name,
       source: "Booking.com",
       propertyType,
+      inventoryTypes: [inventoryType],
+      spaceType: inferStaySpaceType({ propertyType, essentialInfo, description }),
+      description,
+      essentialInfo,
+      excludedAmenities: [],
       latitude: num(coordinates.latitude),
       longitude: num(coordinates.longitude),
       nearbyPlaces: [],
@@ -308,10 +321,7 @@ function mapHotels(
       totalPrice,
       currency,
       address,
-      amenities: arr(detail.facilities).map((entry) => {
-        const facility = obj(entry);
-        return localizedName(facility.name) || str(facility.description);
-      }).filter(Boolean).slice(0, 8),
+      amenities: amenities.slice(0, 40),
       freeCancellation,
       image,
       bookingUrl,

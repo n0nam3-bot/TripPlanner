@@ -1,8 +1,9 @@
 import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordProviderEvent, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
 import { isBookingComConfigured, searchBookingComAccommodations } from "@/lib/providers/booking-com";
+import { filterAndRankStays, googleAmenityFilterIds, inferStaySpaceType } from "@/lib/providers/stay-features";
 import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationRegionScope, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
-import type { TripSearchInput, TripComponent, StayType } from "@/lib/trip-planner/types";
+import type { TripSearchInput, TripComponent, StaySpaceType, StayType } from "@/lib/trip-planner/types";
 
 const ENDPOINT = "https://serpapi.com/search.json";
 type JsonObject = Record<string, unknown>;
@@ -30,6 +31,11 @@ export type LiveHotel = {
   name: string;
   source: string;
   propertyType: string;
+  inventoryTypes: StayType[];
+  spaceType: Exclude<StaySpaceType, "any"> | "unknown";
+  description?: string;
+  essentialInfo: string[];
+  excludedAmenities: string[];
   propertyToken?: string;
   latitude: number | null;
   longitude: number | null;
@@ -518,6 +524,7 @@ function mergeHotelSources(hotels: LiveHotel[]): LiveHotel[] {
       ...existing,
       source: sources.join(" + "),
       propertyType: existing.propertyType || candidate.propertyType,
+      inventoryTypes: [...new Set([...(existing.inventoryTypes ?? []), ...(candidate.inventoryTypes ?? [])])],
       latitude: existing.latitude ?? candidate.latitude,
       longitude: existing.longitude ?? candidate.longitude,
       nearbyPlaces: [...new Map([...existing.nearbyPlaces, ...candidate.nearbyPlaces].map((place) => [`${place.name}|${place.category}`, place])).values()].slice(0, 8),
@@ -526,7 +533,11 @@ function mergeHotelSources(hotels: LiveHotel[]): LiveHotel[] {
       nightlyPrice: existing.nightlyPrice ?? candidate.nightlyPrice,
       totalPrice: existing.totalPrice ?? candidate.totalPrice,
       address: existing.address || candidate.address,
-      amenities: [...new Set([...existing.amenities, ...candidate.amenities])].slice(0, 8),
+      amenities: [...new Set([...existing.amenities, ...candidate.amenities])].slice(0, 40),
+      excludedAmenities: [...new Set([...existing.excludedAmenities, ...candidate.excludedAmenities])].slice(0, 40),
+      essentialInfo: [...new Set([...existing.essentialInfo, ...candidate.essentialInfo])].slice(0, 20),
+      description: existing.description || candidate.description,
+      spaceType: existing.spaceType !== "unknown" ? existing.spaceType : candidate.spaceType,
       image: existing.image || candidate.image,
       bookingUrl: existing.bookingUrl || candidate.bookingUrl,
       bookingUrlLabel: existing.bookingUrl ? existing.bookingUrlLabel : candidate.bookingUrlLabel,
@@ -595,7 +606,7 @@ function hotelMatchesDestination(hotel: LiveHotel, airportCode: string, destinat
   return false;
 }
 
-function normalizeHotel(item: unknown, index: number, currency: string, destinationName: string, checkIn: string, checkOut: string): LiveHotel | null {
+function normalizeHotel(item: unknown, index: number, currency: string, destinationName: string, checkIn: string, checkOut: string, stayType: StayType): LiveHotel | null {
   const hotel = obj(item);
   const name = str(hotel.name);
   if (!name) return null;
@@ -604,6 +615,11 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
   const imageList = arr(hotel.images);
   const firstImage = obj(imageList[0]);
   const coordinates = obj(hotel.gps_coordinates);
+  const amenities = arr(hotel.amenities).filter((item): item is string => typeof item === "string");
+  const excludedAmenities = arr(hotel.excluded_amenities).filter((item): item is string => typeof item === "string");
+  const essentialInfo = arr(hotel.essential_info).filter((item): item is string => typeof item === "string");
+  const description = str(hotel.description) || undefined;
+  const propertyType = str(hotel.type, "hotel");
   const nearbyPlaces = arr(hotel.nearby_places).map((entry) => {
     const place = obj(entry);
     return {
@@ -638,7 +654,12 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
     id: str(hotel.property_token, `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${index}`),
     name,
     source: str(hotel.source, "Google Hotels"),
-    propertyType: str(hotel.type, "hotel"),
+    propertyType,
+    inventoryTypes: [stayType],
+    spaceType: inferStaySpaceType({ propertyType, essentialInfo, description }),
+    description,
+    essentialInfo,
+    excludedAmenities,
     propertyToken: str(hotel.property_token) || undefined,
     latitude: num(coordinates.latitude),
     longitude: num(coordinates.longitude),
@@ -649,7 +670,7 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
     totalPrice: num(total.extracted_after_taxes_fees) ?? num(total.extracted_display_price) ?? num(total.extracted_lowest),
     currency,
     address: str(hotel.address),
-    amenities: arr(hotel.amenities).filter((item): item is string => typeof item === "string").slice(0, 8),
+    amenities: amenities.slice(0, 40),
     freeCancellation: hotel.free_cancellation === true,
     image: safeHttpUrl(firstImage.thumbnail) ?? safeHttpUrl(hotel.thumbnail),
     bookingUrl: propertyUrl,
@@ -700,9 +721,13 @@ function normalizeFlights(data: JsonObject, currency: string): LiveFlight[] {
 }
 
 function makeHotelParams(input: TripSearchInput, destinationName: string, airportCode: string, stayType: StayType): Record<string, string> {
+  const spaceLabel = input.staySpaceType === "entire_place" ? "entire place" : input.staySpaceType === "private_room" ? "private room" : input.staySpaceType === "shared_room" ? "shared room" : "";
+  const stayQuery = stayType === "vacation_rentals"
+    ? `${spaceLabel ? `${spaceLabel} ` : ""}vacation rentals`
+    : "Hotels";
   const params: Record<string, string> = {
     engine: "google_hotels",
-    q: `${stayType === "vacation_rentals" ? "Vacation rentals" : "Hotels"} in ${hotelSearchLocation(destinationName, airportCode)}`,
+    q: `${stayQuery} in ${hotelSearchLocation(destinationName, airportCode)}`,
     check_in_date: input.departureDate,
     check_out_date: input.returnDate,
     adults: String(input.adults),
@@ -713,6 +738,8 @@ function makeHotelParams(input: TripSearchInput, destinationName: string, airpor
     sort_by: "3",
   };
   if (stayType === "vacation_rentals") params.vacation_rentals = "true";
+  const amenityIds = googleAmenityFilterIds(stayType, input.stayMustHaveAmenities);
+  if (amenityIds.length) params.amenities = amenityIds.join(",");
   if (input.childrenAges.length) params.children_ages = input.childrenAges.join(",");
   // Google Hotels does not support hotel_class for vacation rentals.
   // Apply hotel class only to hotels; rental results remain unfiltered by class.
@@ -992,7 +1019,8 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
       if (!flights.length) warnings.push("Google Flights returned no outbound options for this route and date combination. Try a different departure airport or open the route directly in Google Flights.");
     } else if (key === "hotels" || key === "vacation_rentals") {
       const properties = arr(outcome.value.data.properties);
-      const normalized = properties.map((item, itemIndex) => normalizeHotel(item, itemIndex, input.currency, normalizedDestinationName, input.departureDate, input.returnDate)).filter((item): item is LiveHotel => Boolean(item));
+      const stayType: StayType = key === "vacation_rentals" ? "vacation_rentals" : "hotels";
+      const normalized = properties.map((item, itemIndex) => normalizeHotel(item, itemIndex, input.currency, normalizedDestinationName, input.departureDate, input.returnDate, stayType)).filter((item): item is LiveHotel => Boolean(item));
       const inDestination = normalized.filter((hotel) => hotelMatchesDestination(hotel, destinationCode || destinationAirportCode, normalizedDestinationName));
       hotels = [...hotels, ...inDestination];
       const rejectedLocationCount = normalized.length - inDestination.length;
@@ -1021,7 +1049,12 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     }
   });
 
-  const uniqueHotels = mergeHotelSources([...new Map(hotels.map((item) => [item.id, item])).values()]).slice(0, 18);
+  const mergedHotels = mergeHotelSources([...new Map(hotels.map((item) => [item.id, item])).values()]);
+  const stayFilterResult = filterAndRankStays(mergedHotels, input);
+  const uniqueHotels = stayFilterResult.hotels.slice(0, 18);
+  if (components.includes("stays") && stayFilterResult.excludedCount > 0 && (input.stayMustHaveAmenities.length || input.staySpaceType !== "any")) {
+    warnings.push(`${stayFilterResult.excludedCount} accommodation listings were removed because the selected space type or must-have features were not explicitly confirmed in the provider listing. A generic pool does not count as a private pool, and an unspecified room type is not assumed to be an entire property.`);
+  }
   const hasFlights = !components.includes("flights") || flights.length > 0;
   const hasStays = !components.includes("stays") || uniqueHotels.length > 0;
   const hasActivities = !components.includes("activities") || experiences.length > 0 || restaurants.length > 0;

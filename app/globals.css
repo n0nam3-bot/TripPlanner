@@ -520,6 +520,10 @@ h1, h2, h3, p { margin-top: 0; }
   .advanced-search > summary { align-items: flex-start; flex-wrap: wrap; line-height: 1.5; }
   .advanced-search > summary span { flex-basis: calc(100% - 24px); margin-left: 23px; }
   .advanced-search-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stay-space-select { grid-template-columns: 1fr; }
+  .stay-space-select small { grid-column: 1; }
+  .stay-amenity-grid { grid-template-columns: minmax(0, 1fr) 70px 70px; }
+  .stay-amenity-heading > span, .stay-amenity-row > span { padding-left: 7px; padding-right: 7px; }
   .results-truth-note { padding: 13px; }
   .planning-context > div { padding: 13px 10px; gap: 7px; }
   .planning-context strong { font-size: 20px; }
@@ -634,6 +638,25 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .stay-type-row > span { font-weight: 650; color: var(--ink); }
 .stay-type-row label { display: inline-flex; align-items: center; gap: 7px; }
 .stay-type-row input, .advanced-checkbox input { accent-color: var(--accent); }
+
+.stay-preferences-panel { margin: 0 0 18px; border: 1px solid #e2e8e2; border-radius: 9px; background: #fbfcfa; padding: 0 14px; }
+.stay-preferences-panel > summary { display: flex; align-items: center; gap: 9px; min-height: 43px; color: #40594b; font-size: 13px; font-weight: 650; cursor: pointer; list-style: none; }
+.stay-preferences-panel > summary::-webkit-details-marker { display: none; }
+.stay-preferences-panel > summary::after { content: '+'; margin-left: auto; color: #789080; font-size: 19px; font-weight: 400; }
+.stay-preferences-panel[open] > summary::after { content: '−'; }
+.stay-preferences-panel > summary span { color: #7c8b80; font-size: 11px; font-weight: 450; }
+.stay-preferences-content { padding: 0 0 14px; }
+.stay-space-select { display: grid; grid-template-columns: minmax(160px, 230px) minmax(190px, 300px); align-items: center; gap: 8px 12px; color: #40594b; font-size: 12px; font-weight: 650; }
+.stay-space-select select { min-width: 0; height: 38px; border: 1px solid #dce4dc; border-radius: 6px; background: #fff; padding: 0 10px; color: #1e3027; font: inherit; font-weight: 550; }
+.stay-space-select small { grid-column: 2; color: #7c8b80; font-size: 10px; font-weight: 400; line-height: 1.45; }
+.stay-verification-note { margin: 12px 0; color: #76847a; font-size: 11px; line-height: 1.5; }
+.stay-amenity-grid { display: grid; grid-template-columns: minmax(0, 1fr) 82px 82px; border: 1px solid #e5eae4; border-radius: 7px; overflow: hidden; background: #fff; }
+.stay-amenity-heading, .stay-amenity-row { display: contents; }
+.stay-amenity-heading > span { padding: 9px 10px; background: #f1f5f0; color: #637368; font-size: 10px; font-weight: 700; }
+.stay-amenity-row > span, .stay-amenity-row > label { min-height: 34px; display: flex; align-items: center; border-top: 1px solid #edf0eb; }
+.stay-amenity-row > span { padding: 6px 10px; color: #405348; font-size: 11px; }
+.stay-amenity-row > label { justify-content: center; border-left: 1px solid #edf0eb; }
+.stay-amenity-row input { width: 15px; height: 15px; accent-color: #386a53; }
 .search-fields { overflow: visible; border: 1px solid #dfe5df; border-radius: var(--radius-inner); background: #fff; }
 .search-field { min-height: 78px; border-color: #e6ebe6; padding: 14px 16px; }
 .field-icon { color: #71877b; }
@@ -1251,3 +1274,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .cache-freshness.cache-stale { border-color: #e7d6b8; background: #fbf5e9; color: #8a6840; }
 .cache-freshness.cache-stale strong { color: #6f4e2e; }
 .cache-freshness.cache-live { border-color: #d5e4ed; background: #f0f6fa; color: #45677d; }
+
+/* Distinguish verified search requirements from softer preference matches. */
+.live-hotel-tags .stay-verified-feature { border-color: #b6d6c1; background: #edf7ef; color: #245b39; font-weight: 650; }
+.live-hotel-tags .stay-preferred-feature { border-color: #d5dfd8; background: #f4f7f4; color: #52665a; }
+@media (max-width: 620px) {
+  .stay-space-select { grid-template-columns: 1fr; }
+  .stay-space-select small { grid-column: 1; }
+  .stay-amenity-grid { grid-template-columns: minmax(0, 1fr) 68px 68px; }
+  .stay-amenity-heading > span { padding: 8px 6px; font-size: 9px; }
+  .stay-amenity-row > span { padding: 6px; font-size: 10px; }
+}

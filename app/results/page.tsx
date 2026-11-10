@@ -66,7 +66,14 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
           <div><Users size={16}/><span><small>TRAVELERS</small><strong>{travelerLabel}</strong></span></div>
           <div><Wallet size={16}/><span><small>BUDGET</small><strong>{budgetLabel}</strong></span></div>
         </div>
-        <div className="results-filter-line"><span>{requested.join(" + ")}</span>{search.components.includes("stays") && <span>{search.rooms} room{search.rooms === 1 ? "" : "s"}</span>}{search.components.includes("flights") && <span>{search.cabinClass.replaceAll("_", " ")}</span>}</div>
+        <div className="results-filter-line">
+          <span>{requested.join(" + ")}</span>
+          {search.components.includes("stays") && <span>{search.rooms} room{search.rooms === 1 ? "" : "s"}</span>}
+          {search.components.includes("stays") && search.staySpaceType !== "any" && <span>{search.staySpaceType === "entire_place" ? "Entire place" : search.staySpaceType === "private_room" ? "Private room" : "Shared room"}</span>}
+          {search.components.includes("stays") && search.stayMustHaveAmenities.length > 0 && <span>Must have: {search.stayMustHaveAmenities.map((item) => item.replaceAll("_", " ")).join(", ")}</span>}
+          {search.components.includes("stays") && search.stayPreferredAmenities.length > 0 && <span>Prefer: {search.stayPreferredAmenities.map((item) => item.replaceAll("_", " ")).join(", ")}</span>}
+          {search.components.includes("flights") && <span>{search.cabinClass.replaceAll("_", " ")}</span>}
+        </div>
       </section>
       <section className="results-content shell">
         <div className="results-section-heading">

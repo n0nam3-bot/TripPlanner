@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
-import type { ItineraryDay, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
+import type { ItineraryDay, StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
 import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
+import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityConfirmed } from "@/lib/providers/stay-features";
 
 type Props = {
   search: TripSearchInput;
@@ -194,8 +195,8 @@ function RouteLookup({ origin, destination, label }: { origin: string; destinati
   </span>;
 }
 
-function HotelResult({ hotel, currency, airportCode, experiences, nights, bookingState, selected, onSelect, onLoadBookingOptions }: {
-  hotel: LiveHotel; currency: string; airportCode: string; experiences: LiveExperience[]; nights: number;
+function HotelResult({ hotel, currency, airportCode, experiences, nights, search, bookingState, selected, onSelect, onLoadBookingOptions }: {
+  hotel: LiveHotel; currency: string; airportCode: string; experiences: LiveExperience[]; nights: number; search: TripSearchInput;
   bookingState?: HotelBookingState; selected: boolean; onSelect: (hotel: LiveHotel) => void; onLoadBookingOptions: (hotel: LiveHotel) => void;
 }) {
   const airport = hotel.latitude !== null && hotel.longitude !== null
@@ -206,12 +207,26 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, bookin
     : [];
   const hotelOrigin = hotel.address || (hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : hotel.name);
   const propertyUrl = hotel.bookingUrl || `https://www.google.com/travel/hotels?q=${encodeURIComponent(`${hotel.name} ${hotel.address}`)}`;
+  const knownSpaceType = hotel.spaceType || inferStaySpaceType(hotel);
+  const isPoolAccessAmenity = (amenity: StayAmenity) => ["pool", "private_pool", "shared_pool"].includes(amenity);
+  const detectedAmenities = (Object.keys(STAY_AMENITY_LABELS) as StayAmenity[])
+    .filter((amenity) => stayAmenityConfirmed(hotel, amenity) && !isPoolAccessAmenity(amenity))
+    .slice(0, 16);
   return <article className={`live-hotel-card ${selected ? "is-selected" : ""}`}>
     {hotel.image && <img src={hotel.image} alt={`${hotel.name} property`} loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="live-hotel-copy">
       <div className="live-hotel-title"><h4><a href={propertyUrl} target="_blank" rel="noreferrer">{hotel.name} <ExternalLink size={12}/></a></h4>{hotel.rating !== null && <span><Star size={12} fill="currentColor"/> {hotel.rating.toFixed(1)}{hotel.reviews ? ` · ${hotel.reviews.toLocaleString()}` : ""}</span>}</div>
       <p>{hotel.address || hotel.source} · {hotel.propertyType}</p>
-      <div className="live-hotel-tags">{hotel.freeCancellation && <span><Check size={11}/> Free cancellation shown</span>}{hotel.amenities.slice(0, 4).map((amenity) => <span key={amenity}>{amenity}</span>)}</div>
+      <div className="live-hotel-tags">
+        {hotel.freeCancellation && <span><Check size={11}/> Free cancellation shown</span>}
+        {knownSpaceType !== "unknown" && <span>{knownSpaceType === "entire_place" ? "Entire place listed" : knownSpaceType === "private_room" ? "Private room listed" : "Shared room listed"}</span>}
+        {knownSpaceType === "unknown" && hotel.inventoryTypes?.includes("vacation_rentals") && <span>Rental space type not verified</span>}
+        {poolAccessLabel(hotel) && <span>{poolAccessLabel(hotel)}</span>}
+        {search.stayMustHaveAmenities.filter((amenity) => !isPoolAccessAmenity(amenity) && stayAmenityConfirmed(hotel, amenity)).map((amenity) => <span className="stay-verified-feature" key={`must-${amenity}`}>✓ {STAY_AMENITY_LABELS[amenity]} · confirmed</span>)}
+        {search.stayPreferredAmenities.filter((amenity) => !isPoolAccessAmenity(amenity) && stayAmenityConfirmed(hotel, amenity)).map((amenity) => <span className="stay-preferred-feature" key={`prefer-${amenity}`}>{STAY_AMENITY_LABELS[amenity]} · preference matched</span>)}
+        {detectedAmenities.filter((amenity) => !search.stayMustHaveAmenities.includes(amenity) && !search.stayPreferredAmenities.includes(amenity)).map((amenity) => <span key={`detected-${amenity}`}>{STAY_AMENITY_LABELS[amenity]} · listed</span>)}
+        {hotel.amenities.filter((amenity) => !/\bpool\b/i.test(amenity) && !(Object.values(STAY_AMENITY_LABELS) as string[]).includes(amenity)).slice(0, 10).map((amenity) => <span key={amenity}>{amenity}</span>)}
+      </div>
       {hotel.providerOffers.some((offer) => offer.url) && <div className="hotel-provider-links"><strong>Available booking sites</strong>{hotel.providerOffers.filter((offer) => offer.url).slice(0, 4).map((offer, index) => <div className="hotel-provider-offer" key={`${offer.seller}-${index}`}><span><b>{offer.seller}</b><small>{offer.price !== null ? `${money(offer.price, offer.currency || currency)}${offer.priceBasis === "stay" ? " total stay" : offer.priceBasis === "night" ? " per night" : ""}` : "Price not supplied"}</small></span><a href={offer.url} target="_blank" rel="noreferrer">Open seller <ExternalLink size={11}/></a></div>)}</div>}
       {(airportDistance !== null || nearestActivities.length > 0 || hotel.nearbyPlaces.length > 0) && <div className="hotel-proximity">
         {airportDistance !== null && airport && <span>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportDistance)} straight-line</span>}
@@ -541,7 +556,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               </section>}
 
               {search.components.includes("stays") && <section className="live-result-group"><h5><Hotel size={16}/> Places to stay <span>{state.result.hotels.length} properties</span></h5>
-                {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} nights={nights} bookingState={hotelBookingStates[hotel.id]} selected={selection.hotel?.id === hotel.id} onSelect={(selected) => selectHotel(destination.id, selected)} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
+                {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} nights={nights} search={search} bookingState={hotelBookingStates[hotel.id]} selected={selection.hotel?.id === hotel.id} onSelect={(selected) => selectHotel(destination.id, selected)} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
               </section>}
 
               {search.components.includes("activities") && <>

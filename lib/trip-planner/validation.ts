@@ -1,4 +1,4 @@
-import type { CabinClass, StopPreference, StayType, TripComponent, TripSearchInput, TripStyle } from "./types";
+import type { CabinClass, StopPreference, StayAmenity, StaySpaceType, StayType, TripComponent, TripSearchInput, TripStyle } from "./types";
 
 const styles = new Set<TripStyle>(["any", "beach", "city", "food", "nature", "romantic", "family", "adventure", "culture"]);
 const cabins = new Set<CabinClass>(["economy", "premium_economy", "business", "first"]);
@@ -6,6 +6,12 @@ const stops = new Set<StopPreference>(["any", "nonstop", "one_stop", "two_stops"
 const currencies = new Set(["USD", "CAD", "EUR", "GBP"]);
 const tripComponents = new Set<TripComponent>(["flights", "stays", "activities"]);
 const stayTypes = new Set<StayType>(["hotels", "vacation_rentals"]);
+const staySpaceTypes = new Set<StaySpaceType>(["any", "entire_place", "private_room", "shared_room"]);
+const stayAmenities = new Set<StayAmenity>([
+  "private_pool", "shared_pool", "pool", "indoor_pool", "heated_pool", "outdoor_pool", "hot_tub", "sauna", "outdoor_grill",
+  "kitchen", "kitchenette", "fireplace", "washer_dryer", "balcony_terrace", "free_parking", "pet_friendly",
+  "beach_access", "gym", "wifi", "air_conditioning",
+]);
 
 function read(params: URLSearchParams, key: string, fallback: string): string {
   return params.get(key)?.trim() || fallback;
@@ -27,6 +33,10 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   const components = [...new Set(rawComponents.filter((item) => tripComponents.has(item)))];
   const rawStayTypes = read(params, "stayTypes", "hotels,vacation_rentals").split(",").filter(Boolean) as StayType[];
   const selectedStayTypes = [...new Set(rawStayTypes.filter((item) => stayTypes.has(item)))];
+  const staySpaceTypeValue = read(params, "staySpaceType", "any") as StaySpaceType;
+  const stayMustHaveAmenities = [...new Set(read(params, "stayMust", "").split(",").filter((item): item is StayAmenity => stayAmenities.has(item as StayAmenity)))];
+  const stayPreferredAmenities = [...new Set(read(params, "stayPrefer", "").split(",").filter((item): item is StayAmenity => stayAmenities.has(item as StayAmenity)))];
+  const effectiveStayTypes: StayType[] = staySpaceTypeValue === "any" ? selectedStayTypes : ["vacation_rentals"];
   const departureDate = read(params, "depart", "");
   const returnDate = read(params, "return", "");
   const adults = Number(read(params, "adults", "2"));
@@ -53,7 +63,9 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   if (!destination || destination.length > 120) errors.push("Enter a destination or choose Anywhere.");
   if (components.includes("flights") && originAirportCode && !/^[A-Z]{3}$/.test(originAirportCode)) errors.push("Choose a valid departure airport.");
   if (destinationAirportCode && !/^[A-Z]{3}$/.test(destinationAirportCode)) errors.push("Choose a valid destination airport.");
-  if (components.includes("stays") && selectedStayTypes.length === 0) errors.push("Choose hotels, vacation rentals, or both.");
+  if (components.includes("stays") && effectiveStayTypes.length === 0) errors.push("Choose hotels, vacation rentals, or both.");
+  if (!staySpaceTypes.has(staySpaceTypeValue)) errors.push("Choose a valid rental space type.");
+  if (stayMustHaveAmenities.length > 12 || stayPreferredAmenities.length > 12) errors.push("Choose no more than 12 must-have and 12 preferred accommodation features.");
   if (!validDate(departureDate) || !validDate(returnDate)) errors.push("Enter valid departure and return dates.");
   if (validDate(departureDate) && validDate(returnDate) && returnDate <= departureDate) errors.push("Return date must be after departure date.");
   if (validDate(departureDate) && new Date(`${departureDate}T00:00:00Z`).getTime() < Date.now() - 86400000) errors.push("Departure date must be today or later.");
@@ -78,7 +90,7 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   return {
     errors,
     input: {
-      origin, originAirportCode, destination, destinationAirportCode, components, stayTypes: selectedStayTypes, departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
+      origin, originAirportCode, destination, destinationAirportCode, components, stayTypes: effectiveStayTypes, staySpaceType: staySpaceTypeValue, stayMustHaveAmenities: stayMustHaveAmenities.filter((item) => !stayPreferredAmenities.includes(item)), stayPreferredAmenities: stayPreferredAmenities.filter((item) => !stayMustHaveAmenities.includes(item)), departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
       currency, style: styleValue, flexible: flexibleDays > 0, flexibleDays, cabinClass, stops: stopsValue,
       minimumHotelRating: ratingValue as 0 | 3 | 4 | 5, freeCancellation: read(params, "freeCancellation", "false") === "true",
       temperatureMin, temperatureMax, temperatureUnit,
@@ -91,7 +103,7 @@ export function validateTripSearchInput(value: unknown): { input?: TripSearchInp
   const record = value as Record<string, unknown>;
   const params = new URLSearchParams();
   const mapping: Record<string, string> = {
-    origin: "origin", originAirportCode: "originAirportCode", destination: "destination", destinationAirportCode: "destinationAirportCode", components: "components", stayTypes: "stayTypes", departureDate: "depart", returnDate: "return", adults: "adults",
+    origin: "origin", originAirportCode: "originAirportCode", destination: "destination", destinationAirportCode: "destinationAirportCode", components: "components", stayTypes: "stayTypes", staySpaceType: "staySpaceType", stayMustHaveAmenities: "stayMust", stayPreferredAmenities: "stayPrefer", departureDate: "depart", returnDate: "return", adults: "adults",
     rooms: "rooms", budget: "budget", budgetMode: "budgetMode", currency: "currency", style: "style", flexibleDays: "flexibleDays",
     cabinClass: "cabin", stops: "stops", minimumHotelRating: "hotelRating", freeCancellation: "freeCancellation",
     temperatureMin: "temperatureMin", temperatureMax: "temperatureMax", temperatureUnit: "temperatureUnit",
