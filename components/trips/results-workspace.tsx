@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
-import type { ItineraryDay, StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
+import type { StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
 import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityConfirmed } from "@/lib/providers/stay-features";
@@ -334,23 +334,86 @@ function SelectedTripSummary({ selection, experiences, currency, nights, flightS
   </section>;
 }
 
-function activitiesForDay(day: ItineraryDay, selection: DestinationSelection, experiences: LiveExperience[]) {
-  return day.activities.flatMap((activity) => {
-    const selected = experiences.filter((experience) => {
+function selectedExperiencesForDay(date: string, selection: DestinationSelection, experiences: LiveExperience[]) {
+  const slotOrder: ExperienceSlot[] = ["Morning", "Lunch", "Afternoon", "Dinner", "Evening"];
+  return experiences
+    .flatMap((experience) => {
       const plan = selection.experiences[experience.id];
-      return plan?.date === day.date && plan.slot === activity.period;
+      return plan?.date === date ? [{ experience, plan }] : [];
+    })
+    .sort((a, b) => slotOrder.indexOf(a.plan.slot) - slotOrder.indexOf(b.plan.slot) || a.experience.name.localeCompare(b.experience.name));
+}
+
+function TravelTimeline({ search, selection, nights, currency }: {
+  search: TripSearchInput;
+  selection: DestinationSelection;
+  nights: number;
+  currency: string;
+}) {
+  const milestones: Array<{ date: string; label: string; title: string; detail: string; selected: boolean }> = [];
+  const hasFlights = search.components.includes("flights");
+  const hasStays = search.components.includes("stays");
+
+  if (hasFlights) {
+    const outbound = selection.outbound;
+    const selectedSeller = outbound && selection.flightSeller?.flightId === outbound.id ? selection.flightSeller : null;
+    const seller = selectedSeller ? ` · ${selectedSeller.option.seller}` : "";
+    const fare = selectedSeller && selectedSeller.option.price !== null
+      ? ` · ${money(selectedSeller.option.price, selectedSeller.option.currency || currency)} selected fare`
+      : outbound?.price !== null && outbound?.price !== undefined ? ` · ${money(outbound.price, outbound.currency || currency)} displayed fare` : "";
+    milestones.push({
+      date: search.departureDate,
+      label: "Departure date",
+      title: "Outbound flight",
+      detail: outbound
+        ? `${outbound.airlines.join(" · ")}${seller} · ${outbound.departure} → ${outbound.arrival} · ${outbound.from} → ${outbound.to}${fare}`
+        : "No outbound flight selected. Choose a flight above to add its actual departure and arrival times.",
+      selected: Boolean(outbound),
     });
-    if (!selected.length) return [activity];
-    if (activity.category === "Meal") {
-      return [{ ...activity, title: `${activity.period} at ${selected.map((item) => item.name).join(" + ")}`, description: selected.map((item) => item.address || item.category).join(" · "), category: "Selected restaurant" }];
-    }
-    return selected.map((item) => ({
-      period: activity.period,
-      title: item.name,
-      description: [item.category, item.address].filter(Boolean).join(" · ") || "Check current opening hours and booking details.",
-      category: item.kind === "restaurant" ? "Selected restaurant" : "Selected activity",
-    }));
-  });
+  }
+
+  if (hasStays) {
+    milestones.push({
+      date: search.departureDate,
+      label: "Check-in date",
+      title: selection.hotel ? selection.hotel.name : "Accommodation check-in",
+      detail: selection.hotel
+        ? `Selected property · ${selection.hotel.totalPrice !== null ? `${money(selection.hotel.totalPrice, selection.hotel.currency || currency)} displayed stay total · ` : ""}Confirm the property's actual check-in time directly with the provider.`
+        : `No property selected. Your requested stay starts ${dateLabel(search.departureDate)}; choose a listing above to add it here.`,
+      selected: Boolean(selection.hotel),
+    });
+    milestones.push({
+      date: search.returnDate,
+      label: "Check-out date",
+      title: "Accommodation check-out",
+      detail: selection.hotel
+        ? `${selection.hotel.name} · ${nights} ${nights === 1 ? "night" : "nights"} · Confirm the property's actual check-out time directly with the provider.`
+        : `Your requested stay ends ${dateLabel(search.returnDate)}. Check-out time depends on the property you choose.`,
+      selected: Boolean(selection.hotel),
+    });
+  }
+
+  if (hasFlights) {
+    const returnFlight = selection.returnFlight;
+    milestones.push({
+      date: search.returnDate,
+      label: "Return date",
+      title: "Return flight",
+      detail: returnFlight
+        ? `${returnFlight.airlines.join(" · ")} · ${returnFlight.departure} → ${returnFlight.arrival} · ${returnFlight.from} → ${returnFlight.to}`
+        : "No return flight selected. Select a return leg to add its actual departure and arrival times.",
+      selected: Boolean(returnFlight),
+    });
+  }
+
+  return <div className="itinerary-travel-timeline" aria-label="Travel and accommodation timeline">
+    {milestones.map((item, index) => <div className={`itinerary-travel-item ${item.selected ? "is-confirmed" : "is-pending"}`} key={`${item.date}-${item.title}-${index}`}>
+      <div className="itinerary-travel-date"><span>{item.label}</span><strong>{dateShort(item.date)}</strong></div>
+      <div className="itinerary-travel-copy"><strong>{item.title}</strong><p>{item.detail}</p></div>
+      <small>{item.selected ? "Selected" : "Needs selection"}</small>
+    </div>)}
+    {hasStays && <p className="itinerary-travel-note">Tripfinder shows the dates you requested. Check-in and check-out times are not assumed when the property has not supplied them.</p>}
+  </div>;
 }
 
 function WeatherPanel({ location, startDate, endDate, configured }: { location: string; startDate: string; endDate: string; configured: boolean }) {
@@ -512,6 +575,10 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         const selection = selections[destination.id] ?? emptySelection();
         const resultExperiences = state?.result?.experiences ?? [];
         const itineraryDates = recommendation.itinerary.map((day, dayIndex) => ({ date: day.date, label: `Day ${dayIndex + 1} · ${dateShort(day.date)}` }));
+        const hasActivityPlanning = search.components.includes("activities");
+        const scheduledDays = recommendation.itinerary
+          .map((day) => ({ day, items: selectedExperiencesForDay(day.date, selection, resultExperiences) }))
+          .filter((entry) => entry.items.length > 0);
         const activityExperiences = resultExperiences.filter((item) => item.kind === "activity");
         const restaurantExperiences = resultExperiences.filter((item) => item.kind === "restaurant");
         const availableAirlines: string[] = Array.from(new Set<string>((state?.result?.flights ?? []).reduce<string[]>((names, flight) => names.concat(flight.airlines), []))).sort((a, b) => a.localeCompare(b));
@@ -539,7 +606,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               {search.components.includes("stays") && search.stayTypes.includes("hotels") && <a className="planner-outbound-link" href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer"><Hotel size={14}/> Hotels · {nights} nights <ArrowUpRight size={12}/></a>}
               {search.components.includes("stays") && search.stayTypes.includes("vacation_rentals") && <a className="planner-outbound-link" href={recommendation.vacationRentalSearchUrl} target="_blank" rel="noreferrer"><Hotel size={14}/> Rentals · {nights} nights <ArrowUpRight size={12}/></a>}
               {search.components.includes("activities") && <a className="planner-outbound-link" href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer"><Activity size={14}/> Things to do · {nights} days <ArrowUpRight size={12}/></a>}
-              <button className="text-action" type="button" onClick={() => setExpanded(isExpanded ? null : destination.id)} aria-expanded={isExpanded}>{isExpanded ? "Hide trip outline" : "Trip outline"}</button>
+              <button className="text-action" type="button" onClick={() => setExpanded(isExpanded ? null : destination.id)} aria-expanded={isExpanded}>{isExpanded ? "Hide schedule" : hasActivityPlanning ? "Trip schedule" : "Travel timeline"}</button>
             </div>
 
             {liveSearchConfigured && <div className="live-search-action"><button type="button" className="live-search-button" disabled={state?.loading} onClick={() => checkLiveOffers(recommendation, Boolean(state?.result))}>{state?.loading ? <><RefreshCw size={14} className="spin"/> {state?.result ? "Refreshing selected categories…" : "Searching selected categories…"}</> : state?.result ? <><RefreshCw size={14}/> Refresh results</> : `Search ${requestedLabels.join(" + ")}`}</button>{!singleDestination && <span>Only the destination you open is searched. Other recommendations do not use API requests until selected.</span>}<span>Identical searches use the shared Neon cache. Refresh bypasses Tripfinder’s saved results and may use a provider search. The provider may still return its own cached data.</span></div>}
@@ -572,10 +639,26 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>
             </div>}
 
-            {isExpanded && <><div className="itinerary-panel"><div className="itinerary-panel-heading"><div><h4>{nights}-night outline</h4></div><p>Suggested pacing. Activities and hours are not reservations.</p></div>
-              <div className="itinerary-days">{recommendation.itinerary.map((day, dayIndex) => <div className="itinerary-day" key={day.date}><div className="itinerary-day-date"><span>DAY {dayIndex + 1}</span><strong>{dateLabel(day.date)}</strong></div><div className="itinerary-activities">{activitiesForDay(day, selection, resultExperiences).map((activity, activityIndex) => <div className={`itinerary-activity ${activity.category === "Meal" || activity.category === "Selected restaurant" ? "is-meal" : ""}`} key={`${day.date}-${activity.period}-${activity.title}-${activityIndex}`}><span>{activity.period}</span><div><strong>{activity.title}</strong><p>{activity.description}</p></div><small>{activity.category}</small></div>)}<p className="itinerary-pace">{day.paceNote}</p></div></div>)}</div>
-              <div className="itinerary-footnote">{destination.sourceNote}</div>
-            </div></>}
+            {isExpanded && <div className="itinerary-panel">
+              <div className="itinerary-panel-heading">
+                <div><h4>{hasActivityPlanning ? "Your trip schedule" : "Travel timeline"}</h4></div>
+                <p>{hasActivityPlanning ? "Only activities and restaurants you add are scheduled here." : "Selected flight and accommodation details only. No activities or meals are generated."}</p>
+              </div>
+
+              {(search.components.includes("flights") || search.components.includes("stays")) && <TravelTimeline search={search} selection={selection} nights={nights} currency={search.currency}/>}
+
+              {hasActivityPlanning && <section className="itinerary-selected-schedule">
+                <h5>Activities and dining you selected</h5>
+                {scheduledDays.length ? <div className="itinerary-days">{scheduledDays.map(({ day, items }) => <div className="itinerary-day" key={day.date}>
+                  <div className="itinerary-day-date"><span>{day.label}</span><strong>{dateLabel(day.date)}</strong></div>
+                  <div className="itinerary-activities">{items.map(({ experience, plan }) => <div className={`itinerary-activity ${experience.kind === "restaurant" ? "is-meal" : ""}`} key={`${day.date}-${experience.id}`}>
+                    <span>{plan.slot}</span>
+                    <div><strong><a className="itinerary-selected-link" href={experienceBookingUrl(experience)} target="_blank" rel="noreferrer">{experience.name} <ExternalLink size={11}/></a></strong><p>{[experience.category, experience.address].filter(Boolean).join(" · ") || "Check current opening hours and booking details."}</p></div>
+                    <small>{experience.kind === "restaurant" ? "Selected restaurant" : "Selected activity"}</small>
+                  </div>)}</div>
+                </div>)}</div> : <div className="itinerary-empty-state">No activities or restaurants have been added to your schedule yet. Choose a result above, select its trip day and time slot, then press Add to trip. Only those selections will appear here.</div>}
+              </section>}
+            </div>}
           </div>
         </motion.article>;
       })}

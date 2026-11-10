@@ -4,8 +4,6 @@ import { destinationMetadata, getDestinationGateways, getUSStateRegion } from ".
 import type { Destination, ItineraryDay, TripRecommendation, TripSearchInput, TripStyle } from "./types";
 import { getTypicalDaytimeHighF, toFahrenheit } from "./climate-normals";
 
-const DAY_NAMES = ["Arrival and getting oriented", "A full day to explore", "A slower local day", "A day for a signature experience", "Room for a favourite repeat", "A final easy day"];
-
 function monthFromDate(value: string): number {
   const date = new Date(`${value}T12:00:00Z`);
   return Number.isNaN(date.getTime()) ? new Date().getUTCMonth() + 1 : date.getUTCMonth() + 1;
@@ -71,47 +69,20 @@ function scoreDestination(destination: Destination, input: TripSearchInput, typi
   return { score: Math.max(0, Math.min(100, Math.round(score))), reasons };
 }
 
-function buildItinerary(destination: Destination, input: TripSearchInput): ItineraryDay[] {
+function buildItinerary(input: TripSearchInput): ItineraryDay[] {
   const nights = Math.max(1, daysBetween(input.departureDate, input.returnDate));
   const days = Math.max(2, Math.min(15, nights + 1));
+
+  // This is a calendar scaffold for user-selected experiences, not a generated plan.
+  // The results UI populates it only with items the traveler explicitly adds.
   return Array.from({ length: days }, (_, index) => {
-    const arrivalDay = index === 0;
-    const lastDay = index === days - 1;
-    const template = destination.itinerary[index] ?? [
-      { title: `Choose one local experience for day ${index + 1}`, description: "Use the live places list to pick an attraction or tour that is open on this date. Check ticket availability and travel time before adding it.", category: "Choose an experience" },
-      { title: "Explore the area around your stay", description: "Keep time for nearby beaches, parks, shops or neighbourhoods, and allow for transport.", category: "Explore nearby" },
-      { title: "Leave the evening flexible", description: "Choose dinner or entertainment near your base after confirming current hours and transport.", category: "Flexible" },
-    ];
-
-    const morning = arrivalDay
-      ? { title: "Arrival and check-in", description: "Confirm transfer, luggage and accommodation check-in arrangements. Keep the morning flexible around your arrival time.", category: "Arrival" }
-      : lastDay
-        ? { title: "Pack and prepare for departure", description: "Confirm checkout, luggage storage and airport transfer timing before leaving your accommodation.", category: "Departure" }
-        : template[0];
-    const afternoon = lastDay
-      ? { title: "Departure transfer and airport check-in", description: "Allow enough time to reach the airport, return a rental car if needed, and complete airline check-in.", category: "Departure" }
-      : template[1];
-    const evening = lastDay
-      ? { title: "Travel home", description: "Follow the confirmed flight schedule. Keep this period clear of sightseeing or other reservations.", category: "Departure" }
-      : template[2];
-
-    const activities = [
-      { ...morning, period: "Morning" as const },
-      { period: "Lunch" as const, title: "Plan lunch", description: "Choose a restaurant or casual dining option near the day's activities. Add a restaurant from the live results to place it here.", category: "Meal" },
-      { ...afternoon, period: "Afternoon" as const },
-      { period: "Dinner" as const, title: "Plan dinner", description: "Choose a restaurant near your accommodation or evening plans. Add a restaurant from the live results to place it here.", category: "Meal" },
-      { ...evening, period: "Evening" as const },
-    ];
-
-    const d = new Date(`${input.departureDate}T12:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + index);
+    const date = new Date(`${input.departureDate}T12:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + index);
     return {
-      date: d.toISOString().slice(0, 10),
-      label: arrivalDay ? "Arrival day" : lastDay ? "Departure day" : DAY_NAMES[Math.min(index, DAY_NAMES.length - 1)],
-      activities,
-      paceNote: arrivalDay || lastDay
-        ? "Light schedule — allow for airport transfers, check-in or checkout, and meal breaks."
-        : "Suggested pacing only. Leave time for lunch and dinner, and verify opening hours, tickets, transport and local conditions before booking.",
+      date: date.toISOString().slice(0, 10),
+      label: index === 0 ? "Start day" : index === days - 1 ? "Final day" : `Day ${index + 1}`,
+      activities: [],
+      paceNote: "",
     };
   });
 }
@@ -235,7 +206,7 @@ export function buildTripRecommendations(input: TripSearchInput): TripRecommenda
         destination,
         ranking,
         typicalDaytimeHighF,
-        itinerary: buildItinerary(destination, input),
+        itinerary: buildItinerary(input),
         liveSearchSupported: !input.components.includes("flights") || Boolean(input.destinationAirportCode || destination.airportCode),
         ...buildProviderLinks(input.origin, destination, input),
       };

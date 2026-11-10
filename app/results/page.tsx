@@ -79,7 +79,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
         <div className="results-section-heading">
           <div><h2>{recommendations.length === 1 ? "Your search" : "Destination ideas"}</h2><p>{recommendations.length} {recommendations.length === 1 ? "destination" : "destinations"} · {tripLength(search)} nights · {travelers} traveler{travelers === 1 ? "" : "s"}</p></div>
         </div>
-        <p className="results-truth-note">Destination ideas and itinerary outlines are planning guidance. Flight, stay and activity results are retrieved only for the categories you select. Prices and availability can change before checkout.</p>
+        <p className="results-truth-note">Flight, stay and activity results are retrieved only for the categories you select. Your schedule shows only the flights, stays, activities and restaurants you explicitly select. Prices and availability can change before checkout.</p>
         <ResultsWorkspace
           search={search}
           recommendations={recommendations}
