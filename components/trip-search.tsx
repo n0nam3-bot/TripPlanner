@@ -268,8 +268,10 @@ export function TripSearch() {
             <small>Choosing an entire place or room type automatically searches vacation rentals only. Hotel room inventory is separate.</small>
           </label>
           <p className="stay-verification-note">Must-haves require explicit listing evidence. A community pool never qualifies as a private pool; an unspecified pool or room type is not assumed to be private or exclusive.</p>
-          <div className="stay-amenity-grid">
-            <div className="stay-amenity-heading"><span>Property feature</span><span>Must have</span><span>Prefer</span></div>
+          <div className="stay-amenity-grid" role="group" aria-label="Accommodation property feature preferences">
+            {Array.from({ length: 3 }, (_, groupIndex) => <div className="stay-amenity-heading" key={`amenity-heading-${groupIndex}`}>
+              <span>Property feature</span><span>Must have</span><span>Prefer</span>
+            </div>)}
             {STAY_AMENITIES.map(({ value, label }) => <div className="stay-amenity-row" key={value}>
               <span>{label}</span>
               <label><input type="checkbox" checked={stayMustHaveAmenities.includes(value)} onChange={(event) => toggleStayAmenity(value, "must", event.target.checked)}/><span className="sr-only">Require {label}</span></label>
