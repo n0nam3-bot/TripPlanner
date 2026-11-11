@@ -31,7 +31,16 @@
 - Recent sanitized request log, response timing, provider breakdown, 24-hour trend and Neon cache health.
 - Telemetry retention cleanup after 90 days; logs omit search text, keys, booking tokens and raw addresses.
 
-## Release 3 — verified trip assembly (next)
+## Release 3 — AI-assisted planning and search efficiency (in progress)
+- Optional OpenRouter free-model router with data-collection denial and zero-data-retention endpoint requirements.
+- Optional Gemini 3.8 Flash free-tier fallback; only called after an explicit visitor opt-in because Google's unpaid service may use prompts and responses to improve its products.
+- Result-aware assistant answers questions using only already-loaded provider results; it does not trigger live travel searches or invent availability, prices, amenities or booking terms.
+- Six-hour Neon cache for identical assistant questions against the same result snapshot.
+- Separate AI provider daily/minute and per-visitor limits, isolated from SerpApi's travel-search counters.
+- AI calls, cache hits, provider errors and blocked requests appear in the existing `/admin` provider breakdown.
+- Next: add natural-language preference parsing and deterministic translation into current search filters; keep all hard constraints and provider inventory validation in application code.
+
+## Release 4 — verified trip assembly (next)
 - Build a structured itinerary cost ledger separating flight, stay, ground transport, activities, food and contingency.
 - Add real activity/point-of-interest provider with licensing and display-rights review.
 - Add distance and travel-time estimates for activities, using a permitted maps/routing provider.
@@ -40,13 +49,13 @@
 - Improve airport autocomplete and multi-airport coverage.
 - Add test fixtures for round-trip token stages, hotel occupancy, currencies, time zones and supplier links.
 
-## Release 4 — persistence and trip workspace
+## Release 5 — persistence and trip workspace
 - Neon persistence for anonymous shareable trip drafts and saved searches.
 - Optional user accounts only if needed.
 - Shareable itinerary links, traveler edits and feedback capture.
 - Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
 
-## Release 5 — supplier depth and monetization
+## Release 6 — supplier depth and monetization
 - Initial Booking.com Demand API v3.3 accommodation adapter implemented as an optional, server-side supplier. Activation requires approved Managed Affiliate Partner access and Partner Centre credentials.
 - Booking.com adapter supports destination resolution, date/guest/room-specific accommodation search, property details/photos, redirect links, Neon caching, stale fallback and `/admin` request telemetry. Google Hotels remains a parallel fallback; Airbnb remains an external search link until authorized inventory access is available.
 - Next: configure approved sandbox credentials and `BOOKING_COM_API_BASE=https://demandapi-sandbox.booking.com/3.3`, validate accommodation types, price/redirect data and cache telemetry, then switch to production credentials and the production base URL. Confirm public display, caching and commercial data rights for each source.

@@ -8,6 +8,8 @@ import type { StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/tri
 import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityConfirmed } from "@/lib/providers/stay-features";
+import { AITripAssistant } from "@/components/trips/ai-trip-assistant";
+import type { TripAssistantContext } from "@/lib/ai/trip-assistant";
 
 type Props = {
   search: TripSearchInput;
@@ -16,6 +18,9 @@ type Props = {
   providerKeyConfigured: boolean;
   databaseConfigured: boolean;
   weatherKeyConfigured: boolean;
+  aiProviderConfigured: boolean;
+  geminiProviderConfigured: boolean;
+  openRouterProviderConfigured: boolean;
 };
 type SearchState = { loading: boolean; error: string; result: LiveTravelSearchResult | null };
 type ReturnState = { loading: boolean; error: string; result: ReturnFlightSearchResult | null };
@@ -442,7 +447,7 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
   </section>;
 }
 
-export function ResultsWorkspace({ search, recommendations, liveSearchConfigured, providerKeyConfigured, databaseConfigured, weatherKeyConfigured }: Props) {
+export function ResultsWorkspace({ search, recommendations, liveSearchConfigured, providerKeyConfigured, databaseConfigured, weatherKeyConfigured, aiProviderConfigured, geminiProviderConfigured, openRouterProviderConfigured }: Props) {
   const [expanded, setExpanded] = useState<string | null>(recommendations.length === 1 ? recommendations[0]?.destination.id ?? null : null);
   const [states, setStates] = useState<Record<string, SearchState>>({});
   const [returnStates, setReturnStates] = useState<Record<string, ReturnState>>({});
@@ -596,6 +601,43 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         directFlightUrl.searchParams.set("curr", search.currency);
         directFlightUrl.searchParams.set("hl", "en");
         directFlightUrl.searchParams.set("gl", "us");
+        const aiContext: TripAssistantContext = {
+          destination: destinationLabel,
+          currency: search.currency,
+          budget: totalBudget,
+          departureDate: search.departureDate,
+          returnDate: search.returnDate,
+          adults: search.adults,
+          childrenAges: search.childrenAges,
+          rooms: search.rooms,
+          preferences: {
+            tripStyle: search.style,
+            mustHave: search.stayMustHaveAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
+            prefer: search.stayPreferredAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
+          },
+          flights: (state?.result?.flights ?? []).slice(0, 8).map((flight) => ({
+            airline: flight.airlines.join(" / "), from: flight.from, to: flight.to,
+            departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops,
+          })),
+          stays: (state?.result?.hotels ?? []).slice(0, 14).map((hotel) => ({
+            name: hotel.name, source: hotel.source, propertyType: hotel.propertyType, spaceType: hotel.spaceType,
+            amenities: hotel.amenities.map((item) => STAY_AMENITY_LABELS[item as StayAmenity] ?? item),
+            totalPrice: hotel.totalPrice, nightlyPrice: hotel.nightlyPrice, rating: hotel.rating, reviews: hotel.reviews,
+          })),
+          experiences: (state?.result?.experiences ?? []).slice(0, 16).map((experience) => ({
+            kind: experience.kind, name: experience.name, category: experience.category,
+            address: experience.address, rating: experience.rating, price: experience.price ?? "",
+          })),
+          selected: {
+            outboundFlight: selection.outbound ? `${selection.outbound.airlines.join(" / ")} · ${selection.outbound.departure} → ${selection.outbound.arrival} · ${selection.outbound.from} → ${selection.outbound.to}` : undefined,
+            returnFlight: selection.returnFlight ? `${selection.returnFlight.airlines.join(" / ")} · ${selection.returnFlight.departure} → ${selection.returnFlight.arrival} · ${selection.returnFlight.from} → ${selection.returnFlight.to}` : undefined,
+            stay: selection.hotel?.name,
+            schedule: Object.entries(selection.experiences).flatMap(([experienceId, plan]) => {
+              const experience = resultExperiences.find((item) => item.id === experienceId);
+              return experience ? [{ name: experience.name, kind: experience.kind, date: plan.date, slot: plan.slot }] : [];
+            }).slice(0, 16),
+          },
+        };
         return <motion.article className={`planner-destination-card ${isExpanded ? "is-expanded" : ""}`} key={destination.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: index * 0.035 }}>
           <div className="planner-destination-body">
             <div className="planner-destination-heading"><div>{destination.country && normalizeDestinationQuery(destination.country) !== normalizeDestinationQuery(destination.city) && <span className="planner-country">{destination.country}</span>}<h3>{destination.city}</h3><p>{destination.summary}</p>{recommendation.typicalDaytimeHighF !== null ? <p className="planner-climate-note">Typical daytime high for these dates: <strong>{Math.round(search.temperatureUnit === "C" ? (recommendation.typicalDaytimeHighF - 32) * 5 / 9 : recommendation.typicalDaytimeHighF)}°{search.temperatureUnit}</strong> <span>· monthly climate average, not a forecast</span></p> : (search.temperatureMin !== null || search.temperatureMax !== null) ? <p className="planner-climate-note">No monthly temperature baseline is available for this location, so your temperature range could not be checked.</p> : null}</div>{airportCode && <span className="planner-airport">{airportCode}</span>}</div>
@@ -634,6 +676,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 </section>
               </>}
               <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} flightSearchUrl={state.result.providerSearchLinks?.flights || directFlightUrl.toString()}/>
+              <AITripAssistant context={aiContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured}/>
               <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>
             </div>}

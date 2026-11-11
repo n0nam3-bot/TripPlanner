@@ -88,6 +88,9 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
           providerKeyConfigured={Boolean(process.env.SERPAPI_API_KEY)}
           databaseConfigured={Boolean(process.env.DATABASE_URL)}
           weatherKeyConfigured={Boolean(process.env.WEATHERAPI_API_KEY)}
+          aiProviderConfigured={Boolean(process.env.OPENROUTER_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim())}
+          geminiProviderConfigured={Boolean(process.env.GEMINI_API_KEY?.trim())}
+          openRouterProviderConfigured={Boolean(process.env.OPENROUTER_API_KEY?.trim())}
         />
       </section>
       <footer className="site-footer shell results-footer">

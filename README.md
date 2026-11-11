@@ -107,7 +107,7 @@ Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRE
 | Booking.com Demand API v3.3 | Partner accommodation search, property details and redirect links | Optional; requires approved `BOOKING_COM_API_TOKEN` and `BOOKING_COM_AFFILIATE_ID` |
 | Neon PostgreSQL | Persistent provider cache and shared request counter | Requires `DATABASE_URL` |
 | Affiliate networks | Commission attribution and affiliate links | Not connected |
-| AI provider | Optional natural-language intent extraction | Not connected; not required for deterministic search validation |
+| OpenRouter and Gemini | Optional AI comparison of already-loaded trip results | Optional; configured server-side |
 | WeatherAPI | Short-range destination forecasts | Optional `WEATHERAPI_API_KEY`; Free plan has a 3-day forecast |
 
 Neon currently stores provider cache and monthly usage counters. It does **not** yet store traveler accounts, saved trips, or synchronized search history. Those are separate later features.
@@ -145,3 +145,14 @@ Vercel automatically generates unique deployment URLs for build records and prev
 - Do not call combined independent bookings an official vacation package.
 - Keep credentials server-side only.
 - Do not scrape travel sites directly or bypass provider terms. Use documented APIs, permitted widgets and outbound search links.
+
+
+## Optional AI assistant
+
+Set `OPENROUTER_API_KEY` to enable the OpenRouter free-model route. Optionally set `GEMINI_API_KEY` to enable Gemini 3.8 Flash as a fallback. `OPENROUTER_MODEL` defaults to `openrouter/free` and is restricted by the application to that route or model IDs ending in `:free`. The server sends OpenRouter routing constraints `data_collection: "deny"` and `zdr: true`; if no eligible free endpoint is available, the request fails instead of relaxing those restrictions.
+
+Gemini is only called when the visitor explicitly checks the free-tier consent box. The request contains the visitor's question and a limited trip snapshot (destination, dates, traveler counts, budget, preferences and provider-result summaries). Google's unpaid Gemini API tier may use prompts and responses to improve its products, so do not send sensitive or confidential information. Gemini's actual request limits vary by project and model; check the active quotas in Google AI Studio. The application applies a separate default cap of 30 Gemini requests/day as an additional guard, not as a statement of Google's quota.
+
+The AI assistant analyzes data already retrieved by Tripfinder. It does not search airline, hotel, rental, attraction or restaurant inventory and does not reduce the underlying SerpApi search requests. It helps visitors compare returned choices, interpret property features and review their selected plans. To conserve travel-provider credits, rely on the shared Neon result cache and avoid refreshes unless current pricing or availability needs to be checked. Identical questions for the same result snapshot are cached in Neon for six hours. AI app limits are independent of SerpApi's travel-search counters and are visible in `/admin`.
+
+Set these optional server-side variables in Vercel (never use a `NEXT_PUBLIC_` prefix): `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_OPENROUTER_DAILY_CAP`, `AI_GEMINI_DAILY_CAP`, and `AI_CLIENT_DAILY_CAP`. No new npm packages are required.

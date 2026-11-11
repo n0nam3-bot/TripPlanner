@@ -12,6 +12,8 @@ export type ProviderEventInput = {
   cacheStatus?: "hit" | "miss" | "stale" | "bypass" | "none";
   httpStatus?: number | null;
   durationMs?: number | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
 };
 
 let schemaReady: Promise<void> | null = null;
@@ -61,8 +63,12 @@ async function ensureTravelTables() {
         cache_status text NOT NULL DEFAULT 'none',
         http_status integer,
         duration_ms integer,
+        prompt_tokens integer,
+        completion_tokens integer,
         created_at timestamptz NOT NULL DEFAULT now()
       )`;
+      await sql`ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS prompt_tokens integer`;
+      await sql`ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS completion_tokens integer`;
       await sql`CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_created_idx ON tripfinder_api_event_log (created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_provider_idx ON tripfinder_api_event_log (provider, category, created_at DESC)`;
       await sql`CREATE TABLE IF NOT EXISTS tripfinder_admin_login_attempts (
@@ -70,6 +76,27 @@ async function ensureTravelTables() {
         attempts integer NOT NULL DEFAULT 0,
         window_started_at timestamptz NOT NULL DEFAULT now(),
         locked_until timestamptz
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_ai_provider_daily_usage (
+        provider_key text NOT NULL,
+        usage_date date NOT NULL,
+        request_count integer NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (provider_key, usage_date)
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_ai_provider_minute_usage (
+        provider_key text NOT NULL,
+        minute_bucket timestamptz NOT NULL,
+        request_count integer NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (provider_key, minute_bucket)
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_ai_client_daily_usage (
+        client_key text NOT NULL,
+        usage_date date NOT NULL,
+        request_count integer NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (client_key, usage_date)
       )`;
     })().catch((error) => {
       schemaReady = null;
@@ -89,9 +116,12 @@ export async function initializeTravelDatabase(): Promise<void> {
     to_regclass('public.tripfinder_provider_hourly_usage') IS NOT NULL AS hourly_usage_ready,
     to_regclass('public.tripfinder_client_usage') IS NOT NULL AS client_usage_ready,
     to_regclass('public.tripfinder_api_event_log') IS NOT NULL AS event_log_ready,
-    to_regclass('public.tripfinder_admin_login_attempts') IS NOT NULL AS admin_auth_ready`;
+    to_regclass('public.tripfinder_admin_login_attempts') IS NOT NULL AS admin_auth_ready,
+    to_regclass('public.tripfinder_ai_provider_daily_usage') IS NOT NULL AS ai_provider_daily_ready,
+    to_regclass('public.tripfinder_ai_provider_minute_usage') IS NOT NULL AS ai_provider_minute_ready,
+    to_regclass('public.tripfinder_ai_client_daily_usage') IS NOT NULL AS ai_client_daily_ready`;
   const row = rows[0] as unknown as Record<string, boolean> | undefined;
-  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready) {
+  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready || !row.ai_provider_daily_ready || !row.ai_provider_minute_ready || !row.ai_client_daily_ready) {
     throw new Error("DATABASE_SCHEMA_UNAVAILABLE");
   }
 }
@@ -211,6 +241,56 @@ export async function reserveProviderSearch(clientKey = "shared"): Promise<numbe
   return Number((rows[0] as unknown as { search_count: number }).search_count);
 }
 
+/** Count one visitor question, regardless of whether provider failover is needed. */
+export async function reserveAIClientRequest(clientKey: string): Promise<void> {
+  await ensureTravelTables();
+  const sql = getSql();
+  const usageDate = new Date().toISOString().slice(0, 10);
+  const rawClientCap = Number(process.env.AI_CLIENT_DAILY_CAP ?? "5");
+  const clientDailyCap = Number.isInteger(rawClientCap) ? Math.max(1, Math.min(20, rawClientCap)) : 5;
+  const rows = await sql`INSERT INTO tripfinder_ai_client_daily_usage (client_key, usage_date, request_count, updated_at)
+    VALUES (${clientKey}, ${usageDate}, 1, now())
+    ON CONFLICT (client_key, usage_date) DO UPDATE SET
+      request_count = tripfinder_ai_client_daily_usage.request_count + 1,
+      updated_at = now()
+    WHERE tripfinder_ai_client_daily_usage.request_count < ${clientDailyCap}
+    RETURNING request_count`;
+  if (!rows.length) throw new Error("AI_CLIENT_DAILY_LIMIT");
+}
+
+/** Reserve a bounded AI provider attempt without touching SerpApi travel-search counters. */
+export async function reserveAIProviderRequest(provider: "Gemini" | "OpenRouter"): Promise<void> {
+  await ensureTravelTables();
+  const sql = getSql();
+  const now = new Date();
+  const usageDate = now.toISOString().slice(0, 10);
+  const minuteBucket = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes())).toISOString();
+  const providerKey = provider.toLowerCase();
+  const envCap = provider === "OpenRouter" ? process.env.AI_OPENROUTER_DAILY_CAP : process.env.AI_GEMINI_DAILY_CAP;
+  const defaultDailyCap = provider === "OpenRouter" ? 40 : 30;
+  const parsedDailyCap = Number(envCap ?? defaultDailyCap);
+  const dailyCap = Number.isInteger(parsedDailyCap) ? Math.max(1, Math.min(provider === "OpenRouter" ? 49 : 200, parsedDailyCap)) : defaultDailyCap;
+  const minuteCap = provider === "OpenRouter" ? 15 : 10;
+
+  const dailyRows = await sql`INSERT INTO tripfinder_ai_provider_daily_usage (provider_key, usage_date, request_count, updated_at)
+    VALUES (${providerKey}, ${usageDate}, 1, now())
+    ON CONFLICT (provider_key, usage_date) DO UPDATE SET
+      request_count = tripfinder_ai_provider_daily_usage.request_count + 1,
+      updated_at = now()
+    WHERE tripfinder_ai_provider_daily_usage.request_count < ${dailyCap}
+    RETURNING request_count`;
+  if (!dailyRows.length) throw new Error("AI_PROVIDER_DAILY_LIMIT");
+
+  const minuteRows = await sql`INSERT INTO tripfinder_ai_provider_minute_usage (provider_key, minute_bucket, request_count, updated_at)
+    VALUES (${providerKey}, ${minuteBucket}, 1, now())
+    ON CONFLICT (provider_key, minute_bucket) DO UPDATE SET
+      request_count = tripfinder_ai_provider_minute_usage.request_count + 1,
+      updated_at = now()
+    WHERE tripfinder_ai_provider_minute_usage.request_count < ${minuteCap}
+    RETURNING request_count`;
+  if (!minuteRows.length) throw new Error("AI_PROVIDER_MINUTE_LIMIT");
+}
+
 export async function getProviderUsage(): Promise<{ month: string; used: number; cap: number; remaining: number }> {
   await ensureTravelTables();
   const rawCap = Number(process.env.SERPAPI_MONTHLY_SEARCH_CAP ?? "200");
@@ -239,18 +319,23 @@ export async function recordProviderEvent(event: ProviderEventInput): Promise<vo
     const status = event.httpStatus === undefined || event.httpStatus === null
       ? null
       : Math.max(100, Math.min(599, Math.floor(event.httpStatus)));
+    const promptTokens = event.promptTokens === undefined || event.promptTokens === null ? null : Math.max(0, Math.min(10000000, Math.floor(event.promptTokens)));
+    const completionTokens = event.completionTokens === undefined || event.completionTokens === null ? null : Math.max(0, Math.min(10000000, Math.floor(event.completionTokens)));
     const inserted = await sql`INSERT INTO tripfinder_api_event_log
-      (provider, category, event_type, outcome, cache_status, http_status, duration_ms)
+      (provider, category, event_type, outcome, cache_status, http_status, duration_ms, prompt_tokens, completion_tokens)
       VALUES (
         ${event.provider.slice(0, 40)}, ${event.category.slice(0, 60)},
         ${event.eventType}, ${event.outcome}, ${event.cacheStatus ?? "none"},
-        ${status}, ${duration}
+        ${status}, ${duration}, ${promptTokens}, ${completionTokens}
       ) RETURNING id`;
     const insertedId = Number((inserted[0] as unknown as { id?: number } | undefined)?.id ?? 0);
     // Keep the event history bounded without running a cleanup query on every request.
     if (insertedId > 0 && insertedId % 250 === 0) {
       await sql`DELETE FROM tripfinder_api_event_log WHERE created_at < now() - interval '90 days'`;
       await sql`DELETE FROM tripfinder_admin_login_attempts WHERE COALESCE(locked_until, window_started_at) < now() - interval '1 day'`;
+      await sql`DELETE FROM tripfinder_ai_provider_daily_usage WHERE usage_date < current_date - interval '30 days'`;
+      await sql`DELETE FROM tripfinder_ai_provider_minute_usage WHERE minute_bucket < now() - interval '1 day'`;
+      await sql`DELETE FROM tripfinder_ai_client_daily_usage WHERE usage_date < current_date - interval '30 days'`;
     }
   } catch (error) {
     // Telemetry is best-effort and must never take down a real provider response.
@@ -289,10 +374,15 @@ export async function clearAdminLoginFailures(clientKey: string): Promise<void> 
 export type AdminDashboardSnapshot = {
   generatedAt: string;
   appUsage: { month: string; monthlyUsed: number; monthlyCap: number; monthlyRemaining: number; hourlyUsed: number; hourlyCap: number; todayReservedSearches: number };
-  periodTotals: { events24h: number; apiCalls24h: number; accountChecks24h: number; cacheHits24h: number; staleCacheHits24h: number; failures24h: number; blocked24h: number; averageProviderMs: number | null };
-  providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; staleCacheHits: number; failures: number; averageMs: number | null }>;
+  periodTotals: { events24h: number; apiCalls24h: number; accountChecks24h: number; cacheHits24h: number; staleCacheHits24h: number; failures24h: number; blocked24h: number; averageProviderMs: number | null; promptTokens24h: number; completionTokens24h: number; totalTokens24h: number };
+  providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; staleCacheHits: number; failures: number; averageMs: number | null; promptTokens: number; completionTokens: number; totalTokens: number }>;
   dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
-  recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; createdAt: string }>;
+  recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; promptTokens: number | null; completionTokens: number | null; createdAt: string }>;
+  aiUsage: {
+    openRouter: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
+    gemini: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
+    clientDailyCap: number;
+  };
   cache: { totalEntries: number; validEntries: number; expiredEntries: number; lastUpdatedAt: string | null };
   clientUsage: { activeClientsToday: number; reservedSearchesToday: number };
 };
@@ -307,7 +397,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
   const hourlyCap = Number.isInteger(rawHourlyCap) ? Math.max(1, Math.min(45, rawHourlyCap)) : 30;
   const now = new Date();
   const month = now.toISOString().slice(0, 7);
-  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows] = await Promise.all([
+  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows, aiDailyRows, aiMinuteRows] = await Promise.all([
     sql`SELECT search_count FROM tripfinder_provider_usage WHERE month_key = ${month} LIMIT 1`,
     sql`SELECT search_count FROM tripfinder_provider_hourly_usage WHERE hour_bucket = date_trunc('hour', now()) LIMIT 1`,
     sql`SELECT count(*)::int AS active_clients, COALESCE(sum(day_count), 0)::int AS reserved_today
@@ -320,7 +410,9 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale' AND category <> 'Account quota')::int AS stale_cache_hits,
         count(*) FILTER (WHERE outcome = 'error')::int AS failures,
         count(*) FILTER (WHERE outcome = 'blocked')::int AS blocked,
-        round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms
+        round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms,
+        COALESCE(sum(prompt_tokens), 0)::int AS prompt_tokens,
+        COALESCE(sum(completion_tokens), 0)::int AS completion_tokens
       FROM tripfinder_api_event_log WHERE created_at >= now() - interval '24 hours'`,
     sql`SELECT provider, category,
         count(*) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota')::int AS api_calls,
@@ -328,7 +420,9 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale' AND category <> 'Account quota')::int AS stale_cache_hits,
         count(*) FILTER (WHERE outcome = 'error')::int AS failures,
-        round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms
+        round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms,
+        COALESCE(sum(prompt_tokens), 0)::int AS prompt_tokens,
+        COALESCE(sum(completion_tokens), 0)::int AS completion_tokens
       FROM tripfinder_api_event_log WHERE created_at >= now() - interval '30 days'
       GROUP BY provider, category ORDER BY api_calls DESC, cache_hits DESC LIMIT 24`,
     sql`SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS hour,
@@ -337,13 +431,15 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE outcome = 'error')::int AS failures
       FROM tripfinder_api_event_log WHERE created_at >= now() - interval '24 hours'
       GROUP BY date_trunc('hour', created_at AT TIME ZONE 'UTC') ORDER BY date_trunc('hour', created_at AT TIME ZONE 'UTC') ASC`,
-    sql`SELECT id, provider, category, event_type, outcome, cache_status, http_status, duration_ms, created_at::text AS created_at
+    sql`SELECT id, provider, category, event_type, outcome, cache_status, http_status, duration_ms, prompt_tokens, completion_tokens, created_at::text AS created_at
       FROM tripfinder_api_event_log ORDER BY created_at DESC LIMIT 60`,
     sql`SELECT count(*)::int AS total_entries,
         count(*) FILTER (WHERE expires_at > now())::int AS valid_entries,
         count(*) FILTER (WHERE expires_at <= now())::int AS expired_entries,
         max(created_at)::text AS last_updated_at
       FROM tripfinder_provider_cache`,
+    sql`SELECT provider_key, request_count FROM tripfinder_ai_provider_daily_usage WHERE usage_date = ${now.toISOString().slice(0, 10)}`,
+    sql`SELECT provider_key, request_count FROM tripfinder_ai_provider_minute_usage WHERE minute_bucket = ${new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes())).toISOString()}`,
   ]);
   const usage = usageRows[0] as unknown as { search_count?: number } | undefined;
   const hourly = hourlyRows[0] as unknown as { search_count?: number } | undefined;
@@ -351,6 +447,15 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
   const totals = totalsRows[0] as unknown as Record<string, number | null> | undefined;
   const cache = cacheRows[0] as unknown as Record<string, number | string | null> | undefined;
   const asNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
+  const aiDaily = aiDailyRows as unknown as Array<{ provider_key: string; request_count: number }>;
+  const aiMinute = aiMinuteRows as unknown as Array<{ provider_key: string; request_count: number }>;
+  const aiUsed = (rows: Array<{ provider_key: string; request_count: number }>, key: string) => asNumber(rows.find((row) => row.provider_key === key)?.request_count);
+  const openRouterCapRaw = Number(process.env.AI_OPENROUTER_DAILY_CAP ?? "40");
+  const openRouterCap = Number.isInteger(openRouterCapRaw) ? Math.max(1, Math.min(49, openRouterCapRaw)) : 40;
+  const geminiCapRaw = Number(process.env.AI_GEMINI_DAILY_CAP ?? "30");
+  const geminiCap = Number.isInteger(geminiCapRaw) ? Math.max(1, Math.min(200, geminiCapRaw)) : 30;
+  const clientCapRaw = Number(process.env.AI_CLIENT_DAILY_CAP ?? "5");
+  const aiClientCap = Number.isInteger(clientCapRaw) ? Math.max(1, Math.min(20, clientCapRaw)) : 5;
   return {
     generatedAt: new Date().toISOString(),
     appUsage: {
@@ -371,10 +476,14 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
       failures24h: asNumber(totals?.failures),
       blocked24h: asNumber(totals?.blocked),
       averageProviderMs: totals?.avg_ms === null || totals?.avg_ms === undefined ? null : asNumber(totals.avg_ms),
+      promptTokens24h: asNumber(totals?.prompt_tokens),
+      completionTokens24h: asNumber(totals?.completion_tokens),
+      totalTokens24h: asNumber(totals?.prompt_tokens) + asNumber(totals?.completion_tokens),
     },
     providerBreakdown: (breakdownRows as unknown as Array<Record<string, unknown>>).map((row) => ({
       provider: String(row.provider), category: String(row.category), apiCalls: asNumber(row.api_calls),
       accountChecks: asNumber(row.account_checks), cacheHits: asNumber(row.cache_hits), staleCacheHits: asNumber(row.stale_cache_hits), failures: asNumber(row.failures), averageMs: row.avg_ms === null ? null : asNumber(row.avg_ms),
+      promptTokens: asNumber(row.prompt_tokens), completionTokens: asNumber(row.completion_tokens), totalTokens: asNumber(row.prompt_tokens) + asNumber(row.completion_tokens),
     })),
     dailyTrend: (trendRows as unknown as Array<Record<string, unknown>>).map((row) => ({
       hour: String(row.hour), apiCalls: asNumber(row.api_calls), cacheHits: asNumber(row.cache_hits), failures: asNumber(row.failures),
@@ -383,8 +492,16 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
       id: asNumber(row.id), provider: String(row.provider), category: String(row.category),
       eventType: String(row.event_type), outcome: String(row.outcome), cacheStatus: String(row.cache_status),
       httpStatus: row.http_status === null ? null : asNumber(row.http_status),
-      durationMs: row.duration_ms === null ? null : asNumber(row.duration_ms), createdAt: String(row.created_at),
+      durationMs: row.duration_ms === null ? null : asNumber(row.duration_ms),
+      promptTokens: row.prompt_tokens === null ? null : asNumber(row.prompt_tokens),
+      completionTokens: row.completion_tokens === null ? null : asNumber(row.completion_tokens),
+      createdAt: String(row.created_at),
     })),
+    aiUsage: {
+      openRouter: { configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "openrouter"), dailyCap: openRouterCap, remainingToday: Math.max(0, openRouterCap - aiUsed(aiDaily, "openrouter")), usedThisMinute: aiUsed(aiMinute, "openrouter"), minuteCap: 15 },
+      gemini: { configured: Boolean(process.env.GEMINI_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "gemini"), dailyCap: geminiCap, remainingToday: Math.max(0, geminiCap - aiUsed(aiDaily, "gemini")), usedThisMinute: aiUsed(aiMinute, "gemini"), minuteCap: 10 },
+      clientDailyCap: aiClientCap,
+    },
     cache: {
       totalEntries: asNumber(cache?.total_entries), validEntries: asNumber(cache?.valid_entries),
       expiredEntries: asNumber(cache?.expired_entries), lastUpdatedAt: cache?.last_updated_at ? String(cache.last_updated_at) : null,

@@ -44,6 +44,14 @@ export async function GET() {
   }
 
   const liveSearchReadyToTest = providerKeyConfigured && databaseConnected && databaseSchemaReady;
+  const aiProviders = {
+    openRouterConfigured: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
+    openRouterModel: process.env.OPENROUTER_MODEL?.trim() || "openrouter/free",
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY?.trim()),
+    geminiModel: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
+    geminiRequiresVisitorOptIn: true,
+    providerUsageTrackedInAdmin: true,
+  };
   return NextResponse.json({
     status: liveSearchReadyToTest ? "ok" : databaseConfigured && !databaseConnected ? "degraded" : "ok",
     app: "tripfinder",
@@ -51,6 +59,7 @@ export async function GET() {
     providerKeyConfigured,
     bookingComConfigured,
     bookingComEndpoint,
+    aiProviders,
     providerCredentialValidation: "validated on the first uncached live search through the provider account endpoint",
     databaseConfigured,
     databaseConnected,
@@ -63,6 +72,9 @@ export async function GET() {
       "tripfinder_client_usage",
       "tripfinder_api_event_log",
       "tripfinder_admin_login_attempts",
+      "tripfinder_ai_provider_daily_usage",
+      "tripfinder_ai_provider_minute_usage",
+      "tripfinder_ai_client_daily_usage",
     ] : [],
     persistentProviderCacheConfigured: databaseSchemaReady,
     monthlyProviderSearchSafetyCap: monthlyCap,
