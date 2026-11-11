@@ -40,6 +40,7 @@ In Vercel, open **TripPlanner → Settings → Environment Variables** and add:
 |---|---|---|
 | `SERPAPI_API_KEY` | Your private SerpApi key | Preview and Production |
 | `DATABASE_URL` | Neon pooled PostgreSQL connection string | Preview and Production |
+| `SUPPORT_TIP_URL` | Public HTTPS tip page; defaults to the supplied Streamlabs page | Production (optional) |
 | `SERPAPI_MONTHLY_SEARCH_CAP` | `200` | Preview and Production (optional; default is 200) |
 | `SERPAPI_HOURLY_SEARCH_CAP` | `30` | Preview and Production (optional; default is 30) |
 | `SERPAPI_PROVIDER_QUOTA_RESERVE` | `75` | Preview and Production (optional; default is 75) |
@@ -52,6 +53,10 @@ In Vercel, open **TripPlanner → Settings → Environment Variables** and add:
 | `BOOKING_COM_BOOKER_COUNTRY` | ISO-2 booker country, e.g. `us` | Preview and Production (optional; defaults to `us`) |
 
 Save the variables and redeploy the latest deployment. For `ADMIN_DASHBOARD_SECRET`, generate a long random password (at least 32 characters), save it as a server-side Vercel environment variable, and enter that same value on `/admin`. Do not use `NEXT_PUBLIC_` prefixes, and never put credentials in GitHub, ZIP files, browser code, or screenshots. Keep secrets in Vercel's server-side environment settings only.
+
+### Optional Tripfinder support tips
+
+The homepage and search-results footer include a voluntary **Support Tripfinder** link. It opens the configured tip page in a new tab; the default is `https://streamlabs.com/artofreyes/tip`. To change providers later, update `SUPPORT_TIP_URL` in Vercel → Project → Settings → Environment Variables and redeploy. This is a public destination URL, not a secret. Tripfinder does not collect payment details, process tips, store tip transactions in Neon, or receive payment webhooks; Streamlabs and its payment processor handle the transaction.
 
 ### Optional Booking.com accommodation supplier
 
@@ -130,7 +135,7 @@ Open http://localhost:3000. Without environment variables the site remains in pl
 
 Vercel automatically generates unique deployment URLs for build records and previews. Tripfinder now redirects alternate deployment/domain hosts to Vercel's stable production domain (`VERCEL_PROJECT_PRODUCTION_URL`). The production branch is `main`; commits from that branch update the same public address. If you later attach a custom domain, Vercel's production-domain variable selects the primary production domain. You can optionally set `SITE_URL` in Vercel to force a specific canonical domain. Preview links intentionally redirect to production so visitors see one public website rather than separate versions.
 
-**Commercial hosting note:** Vercel Hobby is restricted to personal, non-commercial use. Before earning affiliate revenue or otherwise operating the site commercially, review current Vercel terms and move to an eligible plan or another host. See [Vercel plans](https://vercel.com/docs/plans/hobby).
+**Hosting note:** Vercel's current [Fair Use Guidelines](https://vercel.com/docs/limits/fair-use-guidelines) explicitly state that asking for donations does not fall under commercial usage. That exception applies to voluntary tips; affiliate links, advertising, or other financial-gain uses may be treated as commercial and require an eligible plan. Review the current policy before enabling other monetization. The Streamlabs tip link is external and does not use Neon to process or store payments.
 
 ## Product quality rules
 

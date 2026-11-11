@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, ArrowRight, CalendarDays, MapPin, Plane, Users, Wallet } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { ResultsWorkspace } from "@/components/trips/results-workspace";
+import { SupportTipLink } from "@/components/support-tip-link";
 import { buildTripRecommendations, tripLength } from "@/lib/trip-planner/engine";
 import { parseTripSearch } from "@/lib/trip-planner/validation";
 
@@ -90,7 +91,13 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
         />
       </section>
       <footer className="site-footer shell results-footer">
-        <div className="footer-top"><div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Plan the whole trip in one place.</p></div><Link href="/#plan" className="text-link dark-link">New search <ArrowRight size={16}/></Link></div>
+        <div className="footer-top">
+          <div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Plan the whole trip in one place.</p></div>
+          <div className="footer-side">
+            <SupportTipLink />
+            <Link href="/#plan" className="text-link dark-link">New search <ArrowRight size={16}/></Link>
+          </div>
+        </div>
         <div className="footer-bottom"><span>© {new Date().getFullYear()} Tripfinder</span><span>Independent planning tool · Bookings completed with providers</span></div>
       </footer>
     </main>

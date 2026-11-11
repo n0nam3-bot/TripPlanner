@@ -4,6 +4,7 @@ import { SiteHeader } from "@/components/site-header";
 import { TripSearch } from "@/components/trip-search";
 import { InspirationShowcase } from "@/components/inspiration-showcase";
 import { Reveal } from "@/components/motion";
+import { SupportTipLink } from "@/components/support-tip-link";
 
 // Inspiration links use rolling departure dates; render them per request, not at build time.
 export const dynamic = "force-dynamic";
@@ -69,7 +70,10 @@ export default function Home() {
       <footer className="site-footer shell landing-footer">
         <div className="footer-top">
           <div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Make room for somewhere new.</p></div>
-          <div className="footer-links"><Link href="#discover">Discover</Link><Link href="#plan">Plan a trip</Link></div>
+          <div className="footer-side">
+            <SupportTipLink />
+            <div className="footer-links"><Link href="#discover">Discover</Link><Link href="#plan">Plan a trip</Link></div>
+          </div>
         </div>
         <div className="footer-bottom"><span>© {new Date().getFullYear()} Tripfinder</span><span>Bookings are completed with travel providers.</span></div>
       </footer>
