@@ -31,14 +31,18 @@
 - Recent sanitized request log, response timing, provider breakdown, 24-hour trend and Neon cache health.
 - Telemetry retention cleanup after 90 days; logs omit search text, keys, booking tokens and raw addresses.
 
-## Release 3 — AI-assisted planning and search efficiency (in progress)
+## Release 3 — AI-assisted planning and search efficiency (implemented; pending production verification)
 - Optional OpenRouter free-model router with data-collection denial and zero-data-retention endpoint requirements.
 - Optional Gemini 3.8 Flash free-tier fallback; only called after an explicit visitor opt-in because Google's unpaid service may use prompts and responses to improve its products.
 - Result-aware assistant answers questions using only already-loaded provider results; it does not trigger live travel searches or invent availability, prices, amenities or booking terms.
 - Six-hour Neon cache for identical assistant questions against the same result snapshot.
 - Separate AI provider daily/minute and per-visitor limits, isolated from SerpApi's travel-search counters.
 - AI calls, cache hits, provider errors and blocked requests appear in the existing `/admin` provider breakdown.
-- Next: add natural-language preference parsing and deterministic translation into current search filters; keep all hard constraints and provider inventory validation in application code.
+- Added explicit natural-language preference parsing on the initial search form. Visitors review an allowlisted draft and apply it before any travel-provider search runs.
+- Parser supports destinations/areas, dates, travelers, rooms, budgets, trip components, hotel/rental type, entire-place/private/shared room, amenities, cabin, stops, hotel rating, cancellation and temperature preferences.
+- Model output is parsed as JSON, allowlisted server-side, and cannot write directly to URLs or invoke travel providers. Unknown or unsupported values are ignored; current form values are changed only after visitor confirmation.
+- Parser calls are cached in Neon for 24 hours, share existing AI daily/minute controls, and are logged as a separate `/admin` category without storing prompt text.
+- Gemini fallback remains opt-in per parsing request. No Vercel AI Gateway integration.
 
 ## Release 4 — verified trip assembly (next)
 - Build a structured itinerary cost ledger separating flight, stay, ground transport, activities, food and contingency.

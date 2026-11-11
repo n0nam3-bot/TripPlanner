@@ -51,6 +51,7 @@ export type TripAssistantContext = {
 };
 
 export type AICompletion = { provider: AIProviderName; model: string; answer: string; httpStatus: number; durationMs: number; promptTokens: number | null; completionTokens: number | null };
+export type AICompletionOptions = { systemPrompt?: string; maxTokens?: number; jsonMode?: boolean };
 
 function tokenCount(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.min(10000000, Math.floor(value)) : null;
@@ -85,7 +86,7 @@ async function readError(response: Response): Promise<string> {
   return `HTTP_${response.status}`;
 }
 
-export async function requestOpenRouterCompletion(question: string, context: TripAssistantContext): Promise<AICompletion> {
+export async function requestOpenRouterCompletion(question: string, context: TripAssistantContext, options: AICompletionOptions = {}): Promise<AICompletion> {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENROUTER_NOT_CONFIGURED");
   const configuredModel = process.env.OPENROUTER_MODEL?.trim() || "openrouter/free";
@@ -104,10 +105,11 @@ export async function requestOpenRouterCompletion(question: string, context: Tri
     body: JSON.stringify({
       model: configuredModel,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: options.systemPrompt || SYSTEM_PROMPT },
         { role: "user", content: `Traveler question:\n${question}\n\nTripfinder result snapshot (provider data only):\n${JSON.stringify(context)}` },
       ],
-      max_tokens: 650,
+      max_tokens: options.maxTokens ?? 650,
+      ...(options.jsonMode ? { response_format: { type: "json_object" } } : {}),
       provider: { data_collection: "deny", zdr: true, allow_fallbacks: true },
     }),
     cache: "no-store",
@@ -124,7 +126,7 @@ export async function requestOpenRouterCompletion(question: string, context: Tri
   return { provider: "OpenRouter", model: usedModel, answer: answer.slice(0, 7000), httpStatus: response.status, durationMs: Date.now() - started, promptTokens: tokenCount(usage.prompt_tokens), completionTokens: tokenCount(usage.completion_tokens) };
 }
 
-export async function requestGeminiCompletion(question: string, context: TripAssistantContext): Promise<AICompletion> {
+export async function requestGeminiCompletion(question: string, context: TripAssistantContext, options: AICompletionOptions = {}): Promise<AICompletion> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_NOT_CONFIGURED");
   const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
@@ -135,9 +137,9 @@ export async function requestGeminiCompletion(question: string, context: TripAss
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      systemInstruction: { parts: [{ text: options.systemPrompt || SYSTEM_PROMPT }] },
       contents: [{ role: "user", parts: [{ text: `Traveler question:\n${question}\n\nTripfinder result snapshot (provider data only):\n${JSON.stringify(context)}` }] }],
-      generationConfig: { maxOutputTokens: 650 },
+      generationConfig: { maxOutputTokens: options.maxTokens ?? 650, ...(options.jsonMode ? { responseMimeType: "application/json" } : {}) },
     }),
     cache: "no-store",
     signal: AbortSignal.timeout(18000),

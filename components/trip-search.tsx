@@ -2,8 +2,9 @@
 
 import { type FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, Users, Wallet } from "lucide-react";
+import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, Sparkles, Users, Wallet } from "lucide-react";
 import type { TripComponent, StayAmenity, StaySpaceType, StayType } from "@/lib/trip-planner/types";
+import type { SearchPreferenceDraft } from "@/lib/ai/search-preferences";
 import { getDestinationGateways, getDestinationRegionScope, getLocationSuggestions, type LocationSuggestion } from "@/lib/trip-planner/location-suggestions";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
 
@@ -138,6 +139,12 @@ export function TripSearch() {
   const [stayPreferredAmenities, setStayPreferredAmenities] = useState<StayAmenity[]>([]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [plainLanguageDescription, setPlainLanguageDescription] = useState("");
+  const [allowGeminiPreferenceParsing, setAllowGeminiPreferenceParsing] = useState(false);
+  const [parsingPreferences, setParsingPreferences] = useState(false);
+  const [preferenceParseError, setPreferenceParseError] = useState("");
+  const [preferenceDraft, setPreferenceDraft] = useState<SearchPreferenceDraft | null>(null);
+  const [preferenceParseSource, setPreferenceParseSource] = useState("");
 
   function toggleComponent(value: TripComponent) {
     setComponents((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
@@ -165,6 +172,105 @@ export function TripSearch() {
     setComponents(values);
     if (values.includes("stays") && stayTypes.length === 0) setStayTypes(["hotels"]);
   }
+
+  async function interpretSearchPreferences() {
+    setPreferenceParseError("");
+    setPreferenceDraft(null);
+    const description = plainLanguageDescription.trim();
+    if (description.length < 8) {
+      setPreferenceParseError("Describe what you want in at least a few words.");
+      return;
+    }
+    if (description.length > 2000) {
+      setPreferenceParseError("Keep the description under 2,000 characters.");
+      return;
+    }
+    setParsingPreferences(true);
+    try {
+      const response = await fetch("/api/ai/parse-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description,
+          todayLocal: dateAfter(0),
+          allowGemini: allowGeminiPreferenceParsing,
+          current: {
+            origin, destination, destinationArea, depart, return: returnDate, adults: Number(adults), childrenAges: childrenAges.split(/[ ,]+/).filter(Boolean).map(Number),
+            rooms: Number(rooms), budget: Number(budget), budgetMode, currency, style, components, stayTypes, staySpaceType,
+            stayMust: stayMustHaveAmenities, stayPrefer: stayPreferredAmenities, cabin, stops,
+            hotelRating: Number(hotelRating), freeCancellation, temperatureMin, temperatureMax, temperatureUnit,
+          },
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as { draft?: SearchPreferenceDraft; provider?: string; cached?: boolean; error?: string };
+      if (!response.ok || !payload.draft) throw new Error(payload.error || "Tripfinder couldn't interpret those preferences.");
+      setPreferenceDraft(payload.draft);
+      setPreferenceParseSource(`${payload.provider || "AI"}${payload.cached ? " · cached" : ""}`);
+    } catch (caught) {
+      setPreferenceParseError(caught instanceof Error ? caught.message : "Preference parsing failed. Your current selections are unchanged.");
+    } finally {
+      setParsingPreferences(false);
+    }
+  }
+
+  function applyParsedPreferences() {
+    if (!preferenceDraft) return;
+    const draft = preferenceDraft;
+    if (draft.origin) {
+      setOrigin(draft.origin);
+      setOriginAirportCode(resolveAirportCode(draft.origin) || "");
+    }
+    if (draft.destination) setDestination(draft.destination);
+    if (draft.destinationArea !== undefined) setDestinationArea(draft.destinationArea);
+    else if (draft.destination) setDestinationArea("");
+    if (draft.destination || draft.destinationArea) setDestinationAirportCode(resolveAirportCode(draft.destinationArea || draft.destination || "") || "");
+    if (draft.departureDate) setDepart(draft.departureDate);
+    if (draft.returnDate) setReturnDate(draft.returnDate);
+    if (draft.adults !== undefined) setAdults(String(draft.adults));
+    if (draft.childrenAges) setChildrenAges(draft.childrenAges.join(", "));
+    if (draft.rooms !== undefined) setRooms(String(draft.rooms));
+    if (draft.budget !== undefined) setBudget(String(draft.budget));
+    if (draft.budgetMode) setBudgetMode(draft.budgetMode);
+    if (draft.currency) setCurrency(draft.currency);
+    if (draft.components) setComponents(draft.components);
+    if (draft.tripStyle) setStyle(draft.tripStyle);
+    if (draft.stayTypes) setStayTypes(draft.stayTypes);
+    if (draft.staySpaceType) setStaySpaceType(draft.staySpaceType);
+    if (draft.mustHaveAmenities) setStayMustHaveAmenities(draft.mustHaveAmenities);
+    if (draft.preferredAmenities) setStayPreferredAmenities(draft.preferredAmenities);
+    if (draft.cabinClass) setCabin(draft.cabinClass);
+    if (draft.stops) setStops(draft.stops);
+    if (draft.minimumHotelRating !== undefined) setHotelRating(String(draft.minimumHotelRating));
+    if (draft.freeCancellation !== undefined) setFreeCancellation(draft.freeCancellation);
+    if (draft.temperatureMin !== undefined) setTemperatureMin(String(draft.temperatureMin));
+    if (draft.temperatureMax !== undefined) setTemperatureMax(String(draft.temperatureMax));
+    if (draft.temperatureUnit) setTemperatureUnit(draft.temperatureUnit);
+    setPreferenceDraft(null);
+    setPreferenceParseError("");
+    setError("");
+  }
+
+  const parsedPreferenceSummary = preferenceDraft ? [
+    preferenceDraft.destinationArea ? `Area: ${preferenceDraft.destinationArea}${preferenceDraft.destination ? `, ${preferenceDraft.destination}` : ""}` : preferenceDraft.destination ? `Destination: ${preferenceDraft.destination}` : "",
+    preferenceDraft.origin ? `Leaving from: ${preferenceDraft.origin}` : "",
+    preferenceDraft.departureDate || preferenceDraft.returnDate ? `Dates: ${preferenceDraft.departureDate || "keep current start"} – ${preferenceDraft.returnDate || "keep current end"}` : "",
+    preferenceDraft.adults !== undefined ? `${preferenceDraft.adults} adults` : "",
+    preferenceDraft.childrenAges ? `Children's ages: ${preferenceDraft.childrenAges.join(", ")}` : "",
+    preferenceDraft.budget !== undefined ? `Budget: ${preferenceDraft.currency || currency} ${preferenceDraft.budget.toLocaleString()}${preferenceDraft.budgetMode === "per_person" ? " per person" : preferenceDraft.budgetMode === "total" ? " total" : ""}` : "",
+    preferenceDraft.rooms !== undefined ? `${preferenceDraft.rooms} rooms` : "",
+    preferenceDraft.components ? `Search: ${preferenceDraft.components.join(" + ")}` : "",
+    preferenceDraft.staySpaceType && preferenceDraft.staySpaceType !== "any" ? `Space: ${preferenceDraft.staySpaceType.replaceAll("_", " ")}` : "",
+    preferenceDraft.mustHaveAmenities?.length ? `Must have: ${preferenceDraft.mustHaveAmenities.join(", ").replaceAll("_", " ")}` : "",
+    preferenceDraft.preferredAmenities?.length ? `Prefer: ${preferenceDraft.preferredAmenities.join(", ").replaceAll("_", " ")}` : "",
+    preferenceDraft.stayTypes ? `Accommodation: ${preferenceDraft.stayTypes.join(" + ").replaceAll("_", " ")}` : "",
+    preferenceDraft.tripStyle && preferenceDraft.tripStyle !== "any" ? `Trip style: ${preferenceDraft.tripStyle}` : "",
+    preferenceDraft.cabinClass ? `Cabin: ${preferenceDraft.cabinClass.replaceAll("_", " ")}` : "",
+    preferenceDraft.stops ? `Stops: ${preferenceDraft.stops.replaceAll("_", " ")}` : "",
+    preferenceDraft.minimumHotelRating !== undefined && preferenceDraft.minimumHotelRating > 0 ? `${preferenceDraft.minimumHotelRating}-star minimum` : "",
+    preferenceDraft.freeCancellation ? "Free cancellation preferred" : "",
+    preferenceDraft.temperatureMin !== undefined || preferenceDraft.temperatureMax !== undefined ? `Typical daytime high: ${preferenceDraft.temperatureMin ?? "no minimum"} to ${preferenceDraft.temperatureMax ?? "no maximum"}°${preferenceDraft.temperatureUnit || temperatureUnit}` : "",
+    ...(preferenceDraft.notes || []).map((note) => `Please confirm: ${note}`),
+  ].filter(Boolean) : [];
 
   function changeTemperatureUnit(nextUnit: "F" | "C") {
     if (nextUnit === temperatureUnit) return;
@@ -241,6 +347,34 @@ export function TripSearch() {
           return <button type="button" key={preset.label} className={active ? "is-active" : ""} aria-pressed={active} onClick={() => applyPreset(preset.components)}>{preset.label}</button>;
         })}
       </div>
+
+      <section className="plain-language-search" aria-labelledby="plain-language-title">
+        <div className="plain-language-heading">
+          <span className="plain-language-icon"><Sparkles size={17}/></span>
+          <div><strong id="plain-language-title">Describe what you're looking for</strong><small>Tripfinder can translate everyday language into your search filters. Review everything before searching.</small></div>
+        </div>
+        <textarea
+          value={plainLanguageDescription}
+          onChange={(event) => { setPlainLanguageDescription(event.target.value); setPreferenceDraft(null); setPreferenceParseError(""); }}
+          rows={2}
+          maxLength={2000}
+          placeholder="Example: A whole house in the Poconos for 8 adults, under $2,000, with a private hot tub, grill and full kitchen. Prefer an indoor heated pool nearby."
+          aria-label="Describe your trip and accommodation preferences"
+        />
+        <div className="plain-language-actions">
+          <label className="plain-language-gemini"><input type="checkbox" checked={allowGeminiPreferenceParsing} onChange={(event) => setAllowGeminiPreferenceParsing(event.target.checked)}/> Allow Google Gemini as a fallback (sends this description and form details to Google)</label>
+          <button type="button" className="button button-outline plain-language-button" onClick={interpretSearchPreferences} disabled={parsingPreferences || plainLanguageDescription.trim().length < 8}>
+            {parsingPreferences ? <><RefreshCw size={14} className="spin"/> Interpreting</> : <><Sparkles size={14}/> Interpret preferences</>}
+          </button>
+        </div>
+        {preferenceParseError && <p className="form-error" role="alert">{preferenceParseError}</p>}
+        {preferenceDraft && <div className="parsed-preferences-preview">
+          <div className="parsed-preferences-title"><strong>Review interpreted preferences</strong><small>{preferenceParseSource}</small></div>
+          {parsedPreferenceSummary.length ? <ul>{parsedPreferenceSummary.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No supported filters were identified. Try describing the destination, dates, budget or features more specifically.</p>}
+          <div className="parsed-preferences-buttons"><button type="button" className="button button-dark" onClick={applyParsedPreferences} disabled={!parsedPreferenceSummary.length}>Apply to search</button><button type="button" className="button button-outline" onClick={() => setPreferenceDraft(null)}>Discard</button></div>
+        </div>}
+        <p className="plain-language-disclaimer">AI suggestions are not bookings or availability checks. Only confirmed form selections are submitted to travel providers. Gemini is not used unless you enable its fallback above.</p>
+      </section>
 
       <div className="component-picker" aria-label="What to search for">
         {COMPONENTS.map(({ value, label, description, icon: Icon }) => {
