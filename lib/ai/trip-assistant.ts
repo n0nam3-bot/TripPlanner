@@ -29,6 +29,11 @@ export type TripAssistantContext = {
     propertyType: string;
     spaceType: string;
     amenities: string[];
+    description?: string;
+    address?: string;
+    essentialInfo?: string[];
+    excludedAmenities?: string[];
+    nearbyPlaces?: Array<{ name: string; category: string; transportations: Array<{ type: string; duration: string }> }>;
     totalPrice: number | null;
     nightlyPrice: number | null;
     rating: number | null;
@@ -71,7 +76,7 @@ const SYSTEM_PROMPT = [
 ].join(" ");
 
 
-const TRIP_TOPIC_PATTERN = /\b(?:trip|travel|destination|vacation|holiday|flight|airline|airport|plane|layover|nonstop|baggage|luggage|seat|boarding|departure|arrival|hotel|hotels|stay|stays|accommodation|property|properties|rental|rentals|airbnb|resort|room|rooms|check.?in|check.?out|pool|wifi|wi.fi|internet|kitchen|parking|balcony|air conditioning|gym|spa|sauna|pet friendly|washer|dryer|breakfast|hot tub|jacuzzi|beach|shore|coast|ocean|waterfront|walkable|walking distance|nearby|neighborhood|restaurant|restaurants|dining|food options|cafe|cafes|activity|activities|attraction|attractions|tour|tours|things to do|itinerary|schedule|budget|price|prices|cost|costs|fee|fees|taxes|currency|traveler|travelers|guest|guests|adult|adults|child|children|kid|kids|weather|forecast|temperature|rain|wind|sunny|transport|transportation|transfer|rental car|car hire|airport transfer|route|transit|train|bus|taxi|rideshare|drive|driving|directions|selected option|selected flight|selected stay|reservation|booking|booking options|cancellation|amenity|amenities|must.have|preference|preferences)\b/i;
+const TRIP_TOPIC_PATTERN = /\b(?:trip|travel|destination|vacation|holiday|flight|airline|airport|plane|layover|nonstop|baggage|luggage|seat|boarding|departure|arrival|hotel|hotels|stay|stays|accommodation|property|properties|rental|rentals|airbnb|resort|room|rooms|check.?in|check.?out|pool|wifi|wi.fi|internet|kitchen|parking|balcony|air conditioning|gym|spa|sauna|pet friendly|washer|dryer|breakfast|hot tub|jacuzzi|beachfront|beach front|beach|beaches|playa|playas|plage|plages|shore|coast|ocean|seafront|waterfront|walkable|walking distance|nearby|neighborhood|restaurant|restaurants|dining|food options|cafe|cafes|activity|activities|attraction|attractions|tour|tours|things to do|itinerary|schedule|budget|price|prices|cost|costs|fee|fees|taxes|currency|traveler|travelers|guest|guests|adult|adults|child|children|kid|kids|weather|forecast|temperature|rain|wind|sunny|transport|transportation|transfer|rental car|car hire|airport transfer|route|transit|train|bus|taxi|rideshare|drive|driving|directions|selected option|selected flight|selected stay|reservation|booking|booking options|cancellation|amenity|amenities|must.have|preference|preferences)\b/i;
 const CLEARLY_OFF_TOPIC_PATTERN = /\b(?:coding|programming|javascript|typescript|python|java|react|next\.js|html|css|sql|source code|code snippet|write code|generate code|debug code|software development|api endpoint|database schema|algorithm|homework|essay|poem|story|joke|riddle|song lyrics|music theory|movie|movies|film|films|television|tv show|streaming|celebrity|sports|football|basketball|baseball|video game|gaming|politics|election|stock market|stock portfolio|crypto|cryptocurrency|tax return|recipe|cooking|book recommendations|novel|fiction|medical diagnosis|legal advice)\b/i;
 const PROMPT_OVERRIDE_PATTERN = /\b(?:ignore|bypass|disregard|override)\b.{0,45}\b(?:system|developer|previous|prior)\b.{0,25}\b(?:prompt|instruction|rule)s?\b/i;
 
@@ -96,31 +101,116 @@ export function isTripfinderQuestionInScope(question: string, history: TripAssis
   if (destination.length >= 3 && normalized.toLowerCase().includes(destination.toLowerCase())) return true;
 
   const hasOptions = Boolean(context.flights?.length || context.stays?.length || context.experiences?.length);
-  const comparisonIntent = /\b(?:which|what|best|better|cheaper|cheapest|least expensive|most affordable|compare|recommend|choose|pick)\b/i.test(normalized);
+  const comparisonIntent = /\b(?:which|what|best|better|cheaper|cheapest|least expensive|most affordable|compare|recommend|choose|pick|are any|do any)\b/i.test(normalized);
   const optionReference = /\b(?:this|that|these|those|it|they|them|one|ones|first|second|third|last|option|options|flight|stay|property|hotel|rental|activity|restaurant|itinerary|schedule)\b/i.test(normalized);
   if (hasOptions && comparisonIntent && optionReference) return true;
 
-  const refersToPriorTripDiscussion = /\b(?:it|that|this|they|them|those|these|the first|the second|the other|same one|why|how about|what about|tell me more|and then)\b/i.test(normalized);
+  // Short follow-ups inherit the topic of the immediately preceding travel exchange.
+  // Explicit off-topic terms and prompt-override attempts are rejected above first.
+  const followUpOnly = /^(?:yes|yeah|yep|no|nope|but|so|and|also|okay|ok|right|then)\b/i.test(normalized)
+    || /^(?:which ones|what about them|how about those|are any|do any|why is that|why are they)\b/i.test(normalized);
+  const recentTravelExchange = history.slice(-6).some((message) =>
+    TRIP_TOPIC_PATTERN.test(message.content)
+    || /\b(?:beachfront|beach access|walking distance|must.have|selected stay|selected flight|Tripfinder results)\b/i.test(message.content)
+  );
+  if (hasOptions && followUpOnly && recentTravelExchange) return true;
+
+  const refersToPriorTripDiscussion = /\b(?:it|that|this|they|them|those|these|the first|the second|the other|same one|why|how about|what about|tell me more|and then|yes|yeah|but|so)\b/i.test(normalized);
   const priorTripQuestion = history.some((message) => message.role === "user" && TRIP_TOPIC_PATTERN.test(message.content));
   return refersToPriorTripDiscussion && priorTripQuestion;
 }
 
-export function buildTripAssistantLocalFallback(question: string, context: TripAssistantContext): string | null {
-  const asksAboutBeachAccess = /\b(?:beach|shore|ocean|coast|seafront|waterfront)\b/i.test(question)
-    && /\b(?:walk|walking|outside|steps|front|access|closest|near|nearby|distance|next to|right by)\b/i.test(question);
-  if (!asksAboutBeachAccess) return null;
+function hasBeachKeyword(value: string): boolean {
+  return /\b(?:beach(?:es|front)?|beach front|playas?|plages?|shore|ocean|coast|seafront|sea front)\b/i.test(value);
+}
 
-  const explicitlyBeachfront = (context.stays ?? []).filter((stay) => {
-    const evidence = [stay.name, stay.propertyType, ...stay.amenities].join(" ");
-    return /\b(?:beachfront|beach front|direct beach access|beach access|private beach|beach on site|beach on property|on the beach)\b/i.test(evidence);
-  });
+function extractDistanceToBeach(value: string): string | null {
+  if (!value || !hasBeachKeyword(value)) return null;
+  const beachTerms = "(?:beach|beaches|playa|playas|plage|plages|shore|ocean|coast)";
+  const patterns = [
+    new RegExp(`\\b(\\d+(?:\\.\\d+)?)\\s*(?:-| )?(?:minutes?|mins?)\\s*(?:'s?\\s*)?(?:walk|walking|on foot|by foot|drive|driving)?\\b[^.!?]{0,55}\\b${beachTerms}\\b`, "i"),
+    new RegExp(`\\b${beachTerms}\\b[^.!?]{0,55}\\b(\\d+(?:\\.\\d+)?)\\s*(?:-| )?(?:minutes?|mins?)\\s*(?:'s?\\s*)?(?:walk|walking|on foot|by foot|drive|driving)?\\b`, "i"),
+    new RegExp(`\\b(\\d+(?:\\.\\d+)?)\\s*(?:-| )?(?:km|kilometers?|mi|miles?)\\b[^.!?]{0,55}\\b${beachTerms}\\b`, "i"),
+    new RegExp(`\\b${beachTerms}\\b[^.!?]{0,55}\\b(\\d+(?:\\.\\d+)?)\\s*(?:-| )?(?:km|kilometers?|mi|miles?)\\b`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (match) {
+      const unit = /\b(?:km|kilometers?)\b/i.test(match[0]) ? "km" : /\b(?:mi|miles?)\b/i.test(match[0]) ? "mi" : "min";
+      const mode = /\b(?:walk|walking|on foot|by foot)\b/i.test(match[0]) ? " walk" : /\b(?:drive|driving)\b/i.test(match[0]) ? " drive" : "";
+      return `${match[1]} ${unit}${mode}`;
+    }
+  }
+  return null;
+}
 
-  if (explicitlyBeachfront.length) {
-    const names = explicitlyBeachfront.slice(0, 5).map((stay) => stay.name).join(", ");
-    return `The loaded stay data explicitly mentions beachfront or beach access for: ${names}. However, the result snapshot does not confirm the exact walking distance from the room or entrance, whether access is direct, or whether the beach is private or public. Verify those details with the property before booking.`;
+function beachEvidence(stay: NonNullable<TripAssistantContext["stays"]>[number]) {
+  const coreText = [stay.name, stay.propertyType, stay.description ?? "", stay.address ?? "", ...(stay.amenities ?? []), ...(stay.essentialInfo ?? [])].join(". ");
+  const descriptionDistances = [stay.description ?? "", ...(stay.essentialInfo ?? [])]
+    .map((value) => extractDistanceToBeach(value))
+    .filter((value): value is string => Boolean(value));
+  const nearbyBeachDistances = (stay.nearbyPlaces ?? [])
+    .filter((place) => hasBeachKeyword(`${place.name} ${place.category}`))
+    .flatMap((place) => place.transportations.map((transport) => {
+      const duration = transport.duration.trim();
+      return duration ? `${place.name}: ${duration}${transport.type ? ` (${transport.type})` : ""}` : "";
+    }))
+    .filter(Boolean);
+  const distances = [...new Set([...descriptionDistances, ...nearbyBeachDistances])];
+  const frontageTerms = /\b(?:beachfront|beach front|on the beach|seafront|sea front|oceanfront|ocean front|frente a la playa|a pie de playa|en la playa)\b/i;
+  const frontageNegated = /\b(?:not|isn['’]?t|is not|does not|doesn['’]?t|no longer|no es|no está)\b.{0,45}\b(?:beachfront|beach front|on the beach|seafront|sea front|oceanfront|ocean front|frente a la playa|a pie de playa|en la playa)\b/i.test(coreText);
+  const frontMatch = frontageNegated ? null : coreText.match(frontageTerms);
+  const accessMatch = coreText.match(/\b(?:direct beach access|direct access to the beach|private beach access|acceso directo a la playa)\b/i);
+  const genericAccessMatch = coreText.match(/\b(?:beach access|access to the beach|acceso a la playa)\b/i);
+  return { frontMatch: frontMatch?.[0] ?? null, accessMatch: accessMatch?.[0] ?? null, genericAccessMatch: genericAccessMatch?.[0] ?? null, distance: distances[0] ?? null, distances };
+}
+
+export function buildTripAssistantLocalFallback(question: string, context: TripAssistantContext, history: TripAssistantMessage[] = []): string | null {
+  const priorBeachDiscussion = history.slice(-6).some((message) => hasBeachKeyword(message.content));
+  const isBeachFollowUp = priorBeachDiscussion && /\b(?:which|what|ones?|those|these|they|them|yes|but|so|are any|do any)\b/i.test(question);
+  const beachQuestion = hasBeachKeyword(question) || isBeachFollowUp;
+  if (!beachQuestion) return null;
+
+  const distanceIntent = /\b(?:closest|nearest|how far|distance|walking distance|minutes? away|km away|miles? away|near(?:est)?(?:by)?)\b/i.test(question);
+  const frontageIntent = /\b(?:beachfront|beach front|on the beach|walk outside|steps? outside|walk straight onto|right outside|direct beach access|front of the beach|a pie de playa|frente a la playa|not actually beachfront)\b/i.test(question)
+    || (!distanceIntent && priorBeachDiscussion && /\b(?:which ones|which one|are any|do any|those ones)\b/i.test(question));
+  const classified = (context.stays ?? []).map((stay) => ({ stay, evidence: beachEvidence(stay) }));
+
+  if (distanceIntent) {
+    const withDistance = classified.filter(({ evidence }) => evidence.distances.length > 0);
+    if (!withDistance.length) {
+      return "The currently loaded stay details do not include a measurable walking or driving distance to a beach, so I can’t reliably rank the properties by proximity. A general “near beach” label is not a measured distance.";
+    }
+    return `**Beach distances explicitly present in the loaded stay details:** ${withDistance.slice(0, 10).map(({ stay, evidence }) => `${stay.name} — ${evidence.distances.join("; ")}`).join(". ")}. Distances may use different travel modes or provider estimates, so compare the stated mode (walking vs. driving) rather than assuming they are equivalent. These are provider-supplied details, not an independently verified route.`;
   }
 
-  return "I can’t reliably identify a walk-out beach property from the results currently loaded. None of the supplied stay details explicitly confirms beachfront location or direct beach access, and a nearby beach or map distance is not proof that you can walk straight out of the property onto the beach. Check the property listing or contact the host to verify direct beach access.";
+  const beachfront = classified.filter(({ evidence }) => evidence.frontMatch && !evidence.distance);
+  const directAccess = classified.filter(({ evidence }) => !evidence.frontMatch && evidence.accessMatch && !evidence.distance);
+  const genericAccess = classified.filter(({ evidence }) => !evidence.frontMatch && !evidence.accessMatch && evidence.genericAccessMatch && !evidence.distance);
+  const separatedByDistance = classified.filter(({ evidence }) => evidence.distance);
+
+  const lines: string[] = [];
+  if (beachfront.length) {
+    lines.push(`**Listings described as beachfront / on the beach:** ${beachfront.slice(0, 8).map(({ stay, evidence }) => `${stay.name} (“${evidence.frontMatch}”)`).join("; ")}.`);
+  } else {
+    lines.push("**I can’t confirm any currently loaded stay as truly beachfront.** None has clear on-the-beach wording without a separate distance-to-beach indication.");
+  }
+  if (directAccess.length) {
+    lines.push(`**Direct beach access is mentioned, but beachfront location is not established:** ${directAccess.slice(0, 8).map(({ stay, evidence }) => `${stay.name} (“${evidence.accessMatch}”)`).join("; ")}.`);
+  }
+  if (genericAccess.length) {
+    lines.push(`**Beach access is mentioned, but the result does not confirm direct access or a beachfront position:** ${genericAccess.slice(0, 8).map(({ stay, evidence }) => `${stay.name} (“${evidence.genericAccessMatch}”)`).join("; ")}.`);
+  }
+  if (separatedByDistance.length) {
+    lines.push(`**Not beachfront based on the supplied distance details:** ${separatedByDistance.slice(0, 10).map(({ stay, evidence }) => `${stay.name} — ${evidence.distances.join("; ")} to/from a nearby beach`).join("; ")}.`);
+  }
+  if (!context.stays?.length) {
+    lines.push("No stay details are currently loaded for this destination. Open or reload the stay results and ask again.");
+  } else if (!beachfront.length && !directAccess.length && !genericAccess.length && !separatedByDistance.length) {
+    lines.push("The loaded listings do not provide enough beach-specific location or distance information to rank them. A generic “near beach” amenity is not proof of beachfront access.");
+  }
+  lines.push("This is a classification of the loaded listing text, not an independent confirmation. Before booking, ask the host whether the property entrance opens directly onto the beach and confirm the exact route.");
+  return lines.join("\n\n");
 }
 
 function completionText(value: unknown): string {
@@ -226,7 +316,20 @@ export function sanitizeTripAssistantContext(value: unknown): TripAssistantConte
   }) : [];
   const stays = Array.isArray(root.stays) ? root.stays.slice(0, 14).map((item) => {
     const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
-    return { name: text(row.name, 160), source: text(row.source, 60), propertyType: text(row.propertyType, 100), spaceType: text(row.spaceType, 50), amenities: list(row.amenities), totalPrice: number(row.totalPrice), nightlyPrice: number(row.nightlyPrice), rating: number(row.rating), reviews: number(row.reviews) };
+    const nearbyPlaces = Array.isArray(row.nearbyPlaces) ? row.nearbyPlaces.slice(0, 5).map((place) => {
+      const nearby = place && typeof place === "object" ? place as Record<string, unknown> : {};
+      const transportations = Array.isArray(nearby.transportations) ? nearby.transportations.slice(0, 2).map((transport) => {
+        const mode = transport && typeof transport === "object" ? transport as Record<string, unknown> : {};
+        return { type: text(mode.type, 24), duration: text(mode.duration, 40) };
+      }) : [];
+      return { name: text(nearby.name, 120), category: text(nearby.category, 80), transportations };
+    }) : [];
+    return {
+      name: text(row.name, 160), source: text(row.source, 60), propertyType: text(row.propertyType, 100), spaceType: text(row.spaceType, 50),
+      amenities: list(row.amenities), description: text(row.description, 650), address: text(row.address, 120),
+      essentialInfo: list(row.essentialInfo, 10), excludedAmenities: list(row.excludedAmenities, 10), nearbyPlaces,
+      totalPrice: number(row.totalPrice), nightlyPrice: number(row.nightlyPrice), rating: number(row.rating), reviews: number(row.reviews)
+    };
   }) : [];
   const experiences = Array.isArray(root.experiences) ? root.experiences.slice(0, 16).map((item) => {
     const row = item && typeof item === "object" ? item as Record<string, unknown> : {};

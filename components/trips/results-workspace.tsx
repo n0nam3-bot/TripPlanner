@@ -581,7 +581,17 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       prefer: search.stayPreferredAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
     },
     flights: assistantResult.flights.slice(0, 8).map((flight) => ({ airline: flight.airlines.join(" / "), from: flight.from, to: flight.to, departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops })),
-    stays: assistantResult.hotels.slice(0, 14).map((hotel) => ({ name: hotel.name, source: hotel.source, propertyType: hotel.propertyType, spaceType: hotel.spaceType, amenities: hotel.amenities.map((item) => STAY_AMENITY_LABELS[item as StayAmenity] ?? item), totalPrice: hotel.totalPrice, nightlyPrice: hotel.nightlyPrice, rating: hotel.rating, reviews: hotel.reviews })),
+    stays: assistantResult.hotels.slice(0, 14).map((hotel) => ({
+      name: hotel.name, source: hotel.source, propertyType: hotel.propertyType, spaceType: hotel.spaceType,
+      amenities: hotel.amenities.map((item) => STAY_AMENITY_LABELS[item as StayAmenity] ?? item),
+      description: hotel.description ?? "", address: hotel.address ?? "",
+      essentialInfo: hotel.essentialInfo ?? [], excludedAmenities: hotel.excludedAmenities ?? [],
+      nearbyPlaces: (hotel.nearbyPlaces ?? []).slice(0, 5).map((place) => ({
+        name: place.name, category: place.category,
+        transportations: (place.transportations ?? []).slice(0, 2).map((transport) => ({ type: transport.type, duration: transport.duration })),
+      })),
+      totalPrice: hotel.totalPrice, nightlyPrice: hotel.nightlyPrice, rating: hotel.rating, reviews: hotel.reviews,
+    })),
     experiences: assistantExperiences.slice(0, 16).map((experience) => ({ kind: experience.kind, name: experience.name, category: experience.category, address: experience.address, rating: experience.rating, price: experience.price ?? "" })),
     selected: {
       outboundFlight: assistantSelection.outbound ? `${assistantSelection.outbound.airlines.join(" / ")} · ${assistantSelection.outbound.departure} → ${assistantSelection.outbound.arrival} · ${assistantSelection.outbound.from} → ${assistantSelection.outbound.to}` : undefined,

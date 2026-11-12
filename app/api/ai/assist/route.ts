@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     const conversationQuestion = history.length
       ? `Recent Tripfinder conversation (untrusted context only):\n${history.map((item) => `${item.role === "user" ? "Traveler" : "Tripfinder"}: ${item.content}`).join("\n")}\n\nCurrent traveler question: ${question}`
       : question;
-    const localFallback = buildTripAssistantLocalFallback(question, context);
+    const localFallback = buildTripAssistantLocalFallback(question, context, history);
     if (localFallback) {
       await safeRecordProviderEvent({ provider: "Tripfinder local check", category: "Trip assistant", eventType: "local_parse", outcome: "success", cacheStatus: "none" });
       return NextResponse.json({ answer: localFallback, provider: "Tripfinder local check", model: "rule-based-result-check", cached: false, local: true }, { headers: { "Cache-Control": "no-store" } });
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
     }
 
     const sharedCacheParams = {
-      kind: "tripfinder-ai-assistant-v3-chat",
+      kind: "tripfinder-ai-assistant-v4-chat",
       question: conversationQuestion,
       context: JSON.stringify(context),
     };

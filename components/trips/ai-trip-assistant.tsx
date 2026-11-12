@@ -15,7 +15,8 @@ type ChatMessage = TripAssistantMessage & { id: string; provider?: string; cache
 
 const quickQuestions = [
   "Which stay best matches my must-have features?",
-  "Which property is closest to the beach?",
+  "Which stays are explicitly beachfront?",
+  "Which properties are closest to a beach by walking distance?",
   "Compare the flight options by price and timing.",
   "Review my selected activities and dining schedule.",
 ];
@@ -114,7 +115,7 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
       </div>}
 
       {geminiAvailable && <details className="trip-ai-consent-details">
-        <summary>Gemini privacy permission <span>{allowGemini ? "Enabled" : "Optional · off"}</span></summary>
+        <summary>Gemini fallback consent <span>{allowGemini ? "On" : "Off · optional"}</span></summary>
         <label><input type="checkbox" checked={allowGemini} onChange={(event) => setAllowGemini(event.target.checked)} disabled={loading}/><span>Allow Gemini free-tier fallback. Google receives your question and a limited trip snapshot and may use free-tier prompts and responses to improve its products; human reviewers may process them. Keep this off unless you accept these terms. Do not include sensitive personal details.</span></label>
       </details>}
       <form className="trip-ai-chat-composer" onSubmit={submit}>
