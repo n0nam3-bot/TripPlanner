@@ -7,7 +7,7 @@ const CITY_CODES: Record<string, string> = {
   lax: "LAX", "san francisco": "SFO", seattle: "SEA", denver: "DEN", dallas: "DFW", houston: "IAH", phoenix: "PHX",
   charlotte: "CLT", detroit: "DTW", minneapolis: "MSP", "san diego": "SAN", austin: "AUS", nashville: "BNA",
   toronto: "YTO", montreal: "YUL", vancouver: "YVR", london: "LON", paris: "PAR", rome: "ROM", tokyo: "TYO",
-  "las vegas": "LAS", "san juan": "SJU", cancun: "CUN", "mexico city": "MEX",
+  "las vegas": "LAS", "san juan": "SJU", cancun: "CUN", "mexico city": "MEX", "las terrenas": "AZS", samana: "AZS",
 };
 
 export function resolveAirportCode(input: string): string | null {

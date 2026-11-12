@@ -143,8 +143,13 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   const explicitPrivatePool = !privatePoolNegated && (/\b(private|exclusive|not shared|only for (?:my|our|the) (?:group|guests))\b.{0,35}\bpool\b|\bpool\b.{0,35}\b(private|exclusive|not shared)\b/i.test(source));
   const explicitSharedPool = !sharedPoolNegated && (/\b(shared|community|communal)\b.{0,35}\bpool\b|\bpool\b.{0,35}\b(shared|community|communal)\b/i.test(source));
   if (!explicitPrivatePool) {
-    mustHave = mustHave.map((item) => item === "private_pool" ? (explicitSharedPool ? "shared_pool" : "pool") : item);
-    preferred = preferred.map((item) => item === "private_pool" ? (explicitSharedPool ? "shared_pool" : "pool") : item);
+    if (privatePoolNegated) {
+      mustHave = mustHave.filter((item) => item !== "private_pool");
+      preferred = preferred.filter((item) => item !== "private_pool");
+    } else {
+      mustHave = mustHave.map((item) => item === "private_pool" ? (explicitSharedPool ? "shared_pool" : "pool") : item);
+      preferred = preferred.map((item) => item === "private_pool" ? (explicitSharedPool ? "shared_pool" : "pool") : item);
+    }
   }
   if (!explicitSharedPool) {
     mustHave = mustHave.filter((item) => item !== "shared_pool");
@@ -181,6 +186,115 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
     if (notes.length) draft.notes = notes;
   }
   return draft;
+}
+
+
+const KNOWN_DESTINATION_AREAS: Array<{ aliases: string[]; destination: string; destinationArea: string }> = [
+  { aliases: ["las terrenas"], destination: "Dominican Republic", destinationArea: "Las Terrenas" },
+  { aliases: ["samana", "samaná"], destination: "Dominican Republic", destinationArea: "Samaná" },
+  { aliases: ["las galeras"], destination: "Dominican Republic", destinationArea: "Las Galeras" },
+  { aliases: ["punta cana"], destination: "Dominican Republic", destinationArea: "Punta Cana" },
+  { aliases: ["bavaro", "bávaro", "bavaro beach"], destination: "Dominican Republic", destinationArea: "Bávaro" },
+  { aliases: ["cap cana"], destination: "Dominican Republic", destinationArea: "Cap Cana" },
+  { aliases: ["santo domingo"], destination: "Dominican Republic", destinationArea: "Santo Domingo" },
+  { aliases: ["santiago de los caballeros", "santiago"], destination: "Dominican Republic", destinationArea: "Santiago" },
+  { aliases: ["puerto plata"], destination: "Dominican Republic", destinationArea: "Puerto Plata" },
+  { aliases: ["la romana"], destination: "Dominican Republic", destinationArea: "La Romana" },
+  { aliases: ["bayahibe"], destination: "Dominican Republic", destinationArea: "Bayahibe" },
+  { aliases: ["sosua", "sosúa"], destination: "Dominican Republic", destinationArea: "Sosúa" },
+  { aliases: ["cabarete"], destination: "Dominican Republic", destinationArea: "Cabarete" },
+  { aliases: ["poconos", "pocono mountains"], destination: "Pennsylvania", destinationArea: "Poconos" },
+  { aliases: ["lake harmony"], destination: "Pennsylvania", destinationArea: "Lake Harmony" },
+  { aliases: ["jim thorpe"], destination: "Pennsylvania", destinationArea: "Jim Thorpe" },
+  { aliases: ["stroudsburg", "east stroudsburg"], destination: "Pennsylvania", destinationArea: "Stroudsburg" },
+];
+
+function normalizedPhrase(value: string): string {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function containsPhrase(source: string, phrase: string): boolean {
+  return (` ${normalizedPhrase(source)} `).includes(` ${normalizedPhrase(phrase)} `);
+}
+
+/** Deterministic fallback for common wording; it never invents dates or availability. */
+export function parseDeterministicSearchPreferenceDraft(description: string, todayLocal: string): SearchPreferenceDraft {
+  const source = description.trim();
+  const raw: Record<string, unknown> = {};
+  const area = [...KNOWN_DESTINATION_AREAS]
+    .sort((a, b) => Math.max(...b.aliases.map((item) => normalizedPhrase(item).length)) - Math.max(...a.aliases.map((item) => normalizedPhrase(item).length)))
+    .find((item) => item.aliases.some((alias) => containsPhrase(source, alias)));
+  if (area) {
+    raw.destination = area.destination;
+    raw.destinationArea = area.destinationArea;
+  } else {
+    const countries = ["Dominican Republic", "Puerto Rico", "United States", "United Kingdom", "Mexico", "Portugal", "Jamaica", "Aruba", "Canada", "France", "Italy", "Spain", "Japan"];
+    const country = countries.find((item) => containsPhrase(source, item));
+    if (country) raw.destination = country;
+  }
+
+  const asksRental = /\b(airbnb|vrbo|vacation rental|vacation rentals|holiday rental|holiday rentals|rental home|rental property|renting a place|rent a house|rent a home|rent a cabin|rent a villa)\b/i.test(source);
+  const asksHotel = /\b(hotel|hotels|motel|resort|inn|hostel)\b/i.test(source);
+  if (asksRental || asksHotel) {
+    raw.stayTypes = asksRental && asksHotel ? ["vacation_rentals", "hotels"] : asksRental ? ["vacation_rentals"] : ["hotels"];
+    raw.components = ["stays"];
+  }
+  if (/\b(flights?|airfare|plane tickets?)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "flights"] )];
+  if (/\b(activities|things to do|attractions|excursions|tours|restaurants|dining)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "activities"] )];
+
+  if (/\b(beachfront|on the beach|oceanfront|steps from the beach|direct beach access)\b/i.test(source)) {
+    raw.tripStyle = "beach";
+    raw.mustHaveAmenities = ["beach_access"];
+  } else if (/\b(by|near|close to|nearby) the beach\b/i.test(source) || /\bbeach\b/i.test(source)) {
+    raw.tripStyle = "beach";
+    raw.preferredAmenities = ["beach_access"];
+    raw.notes = ["Beach proximity was requested. Confirm the property's actual walking distance and whether beach access is direct."];
+  }
+
+  const privatePool = /\bprivate pool\b/i.test(source) && !/\b(no|not|without|don't|do not)\b.{0,30}\bprivate pool\b/i.test(source);
+  const sharedPool = /\b(shared|community|communal) pool\b/i.test(source);
+  const mustHave = Array.isArray(raw.mustHaveAmenities) ? raw.mustHaveAmenities as string[] : [];
+  const preferred = Array.isArray(raw.preferredAmenities) ? raw.preferredAmenities as string[] : [];
+  const addMust = (id: string) => { if (!mustHave.includes(id)) mustHave.push(id); };
+  const addPrefer = (id: string) => { if (!preferred.includes(id) && !mustHave.includes(id)) preferred.push(id); };
+  const poolNegated = /\b(no|not|without|don\'t|do not|doesn\'t|does not)\b.{0,36}\b(pool)\b/i.test(source);
+  if (privatePool) addMust("private_pool");
+  else if (sharedPool) addMust("shared_pool");
+  else if (!poolNegated && /\bpool\b/i.test(source)) addMust("pool");
+  if (/\bindoor pool\b/i.test(source)) addMust("indoor_pool");
+  if (/\bheated pool\b/i.test(source)) addMust("heated_pool");
+  if (/\boutdoor pool\b/i.test(source)) addMust("outdoor_pool");
+  if (/\b(hot tub|jacuzzi|jetted tub)\b/i.test(source)) addMust("hot_tub");
+  if (/\bsauna\b/i.test(source)) addMust("sauna");
+  if (/\b(grill|barbecue|barbeque|bbq)\b/i.test(source)) addMust("outdoor_grill");
+  if (/\b(full|fully equipped|full size) kitchen\b/i.test(source)) addMust("kitchen");
+  else if (/\bkitchenette\b/i.test(source)) addMust("kitchenette");
+  else if (/\bkitchen\b/i.test(source)) addMust("kitchen");
+  if (/\bfireplace\b/i.test(source)) addMust("fireplace");
+  if (/\b(washer|washing machine).{0,20}(dryer)?|washer and dryer|laundry\b/i.test(source)) addMust("washer_dryer");
+  if (/\b(balcony|terrace)\b/i.test(source)) addMust("balcony_terrace");
+  if (/\bfree parking\b/i.test(source)) addMust("free_parking");
+  if (/\bpet friendly|pets allowed\b/i.test(source)) addMust("pet_friendly");
+  if (/\b(wi fi|wifi|wireless internet)\b/i.test(source)) addMust("wifi");
+  if (/\bair conditioning\b/i.test(source)) addMust("air_conditioning");
+  if (mustHave.length) raw.mustHaveAmenities = mustHave;
+  if (preferred.length) raw.preferredAmenities = preferred;
+
+  const adults = source.match(/\b(\d{1,2})\s*(?:adults?|people|persons|travelers|travellers|guests)\b/i);
+  if (adults) raw.adults = Number(adults[1]);
+  const rooms = source.match(/\b(\d{1,2})\s*rooms?\b/i);
+  if (rooms) raw.rooms = Number(rooms[1]);
+  const budget = source.match(/\b(?:under|below|up to|max(?:imum)?|budget(?: of)?)\s*(?:us\$|\$)?\s*([\d,]+)|\$\s*([\d,]+)/i);
+  if (budget) {
+    raw.budget = Number((budget[1] || budget[2]).replace(/,/g, ""));
+    raw.budgetMode = /per person|each|per traveler|per traveller/i.test(source) ? "per_person" : "total";
+    raw.currency = /\b(cad|canadian dollars?)\b/i.test(source) ? "CAD" : /\b(eur|euros?)\b/i.test(source) ? "EUR" : /\b(gbp|pounds?)\b/i.test(source) ? "GBP" : "USD";
+  }
+
+  if (/\b(entire|whole) (house|home|property|place|cabin|condo|villa)\b|\bprivate (house|home|property|cabin|condo|villa)\b/i.test(source)) raw.staySpaceType = "entire_place";
+  else if (/\bprivate room\b/i.test(source)) raw.staySpaceType = "private_room";
+  else if (/\bshared room\b/i.test(source)) raw.staySpaceType = "shared_room";
+  return sanitizeSearchPreferenceDraft(raw, todayLocal, source);
 }
 
 export const SEARCH_PREFERENCE_SYSTEM_PROMPT = [

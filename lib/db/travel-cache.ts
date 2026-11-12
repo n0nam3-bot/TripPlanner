@@ -7,7 +7,7 @@ type CacheRow = { payload: JsonRecord | string; created_at: string };
 export type ProviderEventInput = {
   provider: string;
   category: string;
-  eventType: "provider_request" | "cache_hit" | "provider_error" | "request_blocked" | "account_check";
+  eventType: "provider_request" | "cache_hit" | "provider_error" | "request_blocked" | "account_check" | "local_parse" | "provider_fallback";
   outcome: "success" | "error" | "blocked";
   cacheStatus?: "hit" | "miss" | "stale" | "bypass" | "none";
   httpStatus?: number | null;

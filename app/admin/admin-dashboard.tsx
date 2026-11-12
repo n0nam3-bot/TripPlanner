@@ -26,7 +26,7 @@ function shortTime(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function eventLabel(type: string): string {
-  return ({ provider_request: "Provider call", cache_hit: "Cache hit", provider_error: "Provider error", request_blocked: "Request blocked", account_check: "Account check" } as Record<string, string>)[type] ?? type;
+  return ({ provider_request: "Provider call", cache_hit: "Cache hit", provider_error: "Provider error", request_blocked: "Request blocked", account_check: "Account check", local_parse: "Local parse", provider_fallback: "Local fallback" } as Record<string, string>)[type] ?? type;
 }
 
 export default function AdminDashboard() {

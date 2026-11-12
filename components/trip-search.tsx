@@ -202,10 +202,10 @@ export function TripSearch() {
           },
         }),
       });
-      const payload = await response.json().catch(() => ({})) as { draft?: SearchPreferenceDraft; provider?: string; cached?: boolean; error?: string };
+      const payload = await response.json().catch(() => ({})) as { draft?: SearchPreferenceDraft; provider?: string; cached?: boolean; fallback?: boolean; error?: string };
       if (!response.ok || !payload.draft) throw new Error(payload.error || "Tripfinder couldn't interpret those preferences.");
       setPreferenceDraft(payload.draft);
-      setPreferenceParseSource(`${payload.provider || "AI"}${payload.cached ? " · cached" : ""}`);
+      setPreferenceParseSource(`${payload.provider || "AI"}${payload.cached ? " · cached" : payload.fallback ? " · local fallback" : payload.provider === "Tripfinder Smart Parser" ? " · no AI call" : ""}`);
     } catch (caught) {
       setPreferenceParseError(caught instanceof Error ? caught.message : "Preference parsing failed. Your current selections are unchanged.");
     } finally {
@@ -351,7 +351,7 @@ export function TripSearch() {
       <section className="plain-language-search" aria-labelledby="plain-language-title">
         <div className="plain-language-heading">
           <span className="plain-language-icon"><Sparkles size={17}/></span>
-          <div><strong id="plain-language-title">Describe what you're looking for</strong><small>Tripfinder can translate everyday language into your search filters. Review everything before searching.</small></div>
+          <div><strong id="plain-language-title">Describe what you're looking for</strong><small>Tripfinder recognizes common destinations and preferences locally, and uses configured AI for more detailed requests. Review everything before searching.</small></div>
         </div>
         <textarea
           value={plainLanguageDescription}

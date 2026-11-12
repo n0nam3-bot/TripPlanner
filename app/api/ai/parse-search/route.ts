@@ -16,6 +16,7 @@ import {
 import {
   extractSearchPreferenceJson,
   sanitizeSearchPreferenceDraft,
+  parseDeterministicSearchPreferenceDraft,
   SEARCH_PREFERENCE_SYSTEM_PROMPT,
   type SearchPreferenceDraft,
 } from "@/lib/ai/search-preferences";
@@ -53,6 +54,10 @@ function errorMessage(code: string): string {
   if (code.includes("AI_PROVIDER_DAILY_LIMIT")) return "The configured free AI allowance has been reached for today. Your existing search form is unchanged.";
   if (code.includes("AI_PROVIDER_MINUTE_LIMIT")) return "The AI service is receiving requests too quickly. Try again in a minute.";
   if (code.includes("OPENROUTER_MODEL_MUST_BE_FREE")) return "OpenRouter is not configured with a free model. Set OPENROUTER_MODEL to openrouter/free or a model ending in :free.";
+  if (code.includes("OPENROUTER_HTTP_401") || code.includes("GEMINI_HTTP_401")) return "The AI provider rejected its API key. Check the corresponding Vercel environment variable and redeploy.";
+  if (code.includes("OPENROUTER_HTTP_402") || code.includes("GEMINI_HTTP_402")) return "The AI provider did not accept this request under its current free allowance or account balance.";
+  if (code.includes("OPENROUTER_HTTP_429") || code.includes("GEMINI_HTTP_429")) return "The AI provider is rate-limiting requests. Try again later; your travel search form has not changed.";
+  if (code.includes("AI_SEARCH_PARSER_INVALID_JSON") || code.includes("AI_SEARCH_PARSER_EMPTY_DRAFT") || code.includes("OPENROUTER_EMPTY_RESPONSE")) return "The AI provider returned an unusable response. Tripfinder's local parser can still recognize common destinations and stay preferences; try naming the city or area and the features you want.";
   if (code.includes("DATABASE_NOT_CONFIGURED") || code.includes("DATABASE_UNAVAILABLE")) return "Preference parsing needs the Neon cache and usage limiter. Check DATABASE_URL.";
   return "Tripfinder couldn't interpret that description. Your current search selections have not been changed; try a shorter or more specific description.";
 }
@@ -74,8 +79,37 @@ export async function POST(request: Request) {
     const allowGemini = body.allowGemini === true;
     const hasOpenRouter = Boolean(process.env.OPENROUTER_API_KEY?.trim());
     const hasGemini = Boolean(process.env.GEMINI_API_KEY?.trim());
+    const localDraft = parseDeterministicSearchPreferenceDraft(description, todayLocal);
+    const localDraftFields = Object.entries(localDraft).filter(([key, value]) => key !== "notes" && value !== undefined).length;
+    const hasLocalDraft = localDraftFields > 0;
+    const hasUnparsedComplexDetail = /\b(20\d{2}|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|nights?|days?|adults?|children|kids?|travelers?|travellers?|guests?|rooms?|bedrooms?|under|below|budget|between|per person|each|stop(?:s)?|economy|business class)\b|\$\s*\d/i.test(description);
+    const isShortHighConfidenceRequest = Boolean(localDraft.destination && localDraft.components?.length)
+      && description.length <= 220
+      && !hasUnparsedComplexDetail;
+
+    const sendLocalDraft = async (reason: "direct" | "fallback") => {
+      await recordProviderEvent({ provider: "Tripfinder Smart Parser", category: "Search preference parser", eventType: reason === "direct" ? "local_parse" : "provider_fallback", outcome: "success", cacheStatus: "none" });
+      return NextResponse.json({
+        draft: localDraft,
+        provider: "Tripfinder Smart Parser",
+        model: "local-rules-v1",
+        cached: false,
+        fallback: reason === "fallback",
+        note: reason === "direct"
+          ? "Recognized locally; no AI provider request was needed. Review the fields before applying."
+          : "AI providers were unavailable or returned an unusable response. These are the details Tripfinder could identify locally; review them carefully and add anything missing manually.",
+      }, { headers: { "Cache-Control": "no-store" } });
+    };
+
+    // Common, high-confidence descriptions are parsed locally to avoid a fragile
+    // dependency on free-model availability and to save AI requests.
+    if (hasLocalDraft && isShortHighConfidenceRequest) return sendLocalDraft("direct");
     if (!hasOpenRouter && !(allowGemini && hasGemini)) {
-      return NextResponse.json({ error: "Connect OPENROUTER_API_KEY, or enable the Gemini fallback and configure GEMINI_API_KEY." }, { status: 503 });
+      if (hasLocalDraft) return sendLocalDraft("fallback");
+      const configMessage = allowGemini && !hasGemini && !hasOpenRouter
+        ? "Gemini fallback is enabled in the form, but GEMINI_API_KEY is not configured in Vercel. Add the key or configure OPENROUTER_API_KEY."
+        : "No AI provider is configured, and Tripfinder could not identify enough details locally. Configure OPENROUTER_API_KEY or enable Gemini after adding GEMINI_API_KEY.";
+      return NextResponse.json({ error: configMessage }, { status: 503 });
     }
 
     const normalizedDescription = description.toLocaleLowerCase().replace(/\s+/g, " ").trim();
@@ -85,15 +119,24 @@ export async function POST(request: Request) {
     const geminiKey = providerCacheKey({ ...cacheBase, provider: "gemini-consented" });
 
     for (const key of [...(hasOpenRouter ? [openRouterKey] : []), ...(allowGemini && hasGemini ? [geminiKey] : [])]) {
-      const cached = await getProviderCache(key);
-      const draft = cached?.payload?.draft;
-      if (draft && typeof draft === "object" && !Array.isArray(draft)) {
-        await recordProviderEvent({ provider: "Tripfinder AI Cache", category: "Search preference parser", eventType: "cache_hit", outcome: "success", cacheStatus: "hit" });
-        return NextResponse.json({ draft, provider: cached?.payload?.provider ?? "Cached AI", model: cached?.payload?.model ?? "cached", cached: true }, { headers: { "Cache-Control": "no-store" } });
+      try {
+        const cached = await getProviderCache(key);
+        const draft = cached?.payload?.draft;
+        if (draft && typeof draft === "object" && !Array.isArray(draft)) {
+          await recordProviderEvent({ provider: "Tripfinder AI Cache", category: "Search preference parser", eventType: "cache_hit", outcome: "success", cacheStatus: "hit" });
+          return NextResponse.json({ draft, provider: cached?.payload?.provider ?? "Cached AI", model: cached?.payload?.model ?? "cached", cached: true }, { headers: { "Cache-Control": "no-store" } });
+        }
+      } catch {
+        // Cache failure must not prevent preference parsing from continuing.
       }
     }
 
-    await reserveAIClientRequest(clientKey);
+    try {
+      await reserveAIClientRequest(clientKey);
+    } catch (error) {
+      if (hasLocalDraft) return sendLocalDraft("fallback");
+      throw error;
+    }
     const context: TripAssistantContext = {
       destination: safeText(current.destination, 120) || "Not selected",
       currency: safeText(current.currency, 3) || "USD",
@@ -153,6 +196,7 @@ export async function POST(request: Request) {
       }
     }
 
+    if (hasLocalDraft) return sendLocalDraft("fallback");
     const onlyLimits = failures.length > 0 && failures.every((item) => item.includes("LIMIT"));
     return NextResponse.json({ error: errorMessage(failures[0] || "AI_PROVIDER_UNAVAILABLE") }, { status: onlyLimits ? 429 : 503, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
