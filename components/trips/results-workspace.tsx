@@ -10,6 +10,7 @@ import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityConfirmed } from "@/lib/providers/stay-features";
 import { AITripAssistant } from "@/components/trips/ai-trip-assistant";
 import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssistantContext } from "@/lib/ai/trip-assistant";
+import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-ledger";
 
 type Props = {
   search: TripSearchInput;
@@ -336,6 +337,83 @@ function SelectedTripSummary({ selection, experiences, currency, nights, flightS
       <div><small>Stay · {nights} nights</small>{selection.hotel ? <><strong><a href={selection.hotel.providerOffers.find((offer) => offer.url)?.url || selection.hotel.bookingUrl || `https://www.google.com/travel/hotels?q=${encodeURIComponent(selection.hotel.name)}`} target="_blank" rel="noreferrer">{selection.hotel.name} <ExternalLink size={11}/></a></strong><span>{selection.hotel.totalPrice !== null ? `${money(selection.hotel.totalPrice, selection.hotel.currency || currency)} provider-displayed stay total` : "Price not supplied"}</span></> : <span>No hotel or rental selected</span>}</div>
       <div><small>Activities & dining</small><strong>{activities.length} activities · {restaurants.length} restaurants</strong><div className="selected-place-links">{selectedExperiences.length ? selectedExperiences.map((item) => <a key={item.id} href={experienceBookingUrl(item)} target="_blank" rel="noreferrer">{item.name} <ExternalLink size={10}/></a>) : <span>No places added yet</span>}</div></div>
     </div>
+  </section>;
+}
+
+function TripCostLedger({ selection, experiences, currency, nights, people, budget, flightRequested, stayRequested, activitiesRequested }: {
+  selection: DestinationSelection;
+  experiences: LiveExperience[];
+  currency: string;
+  nights: number;
+  people: number;
+  budget: number;
+  flightRequested: boolean;
+  stayRequested: boolean;
+  activitiesRequested: boolean;
+}) {
+  const [groundTransport, setGroundTransport] = useState("");
+  const [activityEstimate, setActivityEstimate] = useState("");
+  const [diningEstimate, setDiningEstimate] = useState("");
+  const [contingencyPercent, setContingencyPercent] = useState("10");
+  const selectedExperiences = experiences.filter((experience) => Boolean(selection.experiences[experience.id]));
+  const selectedActivities = selectedExperiences.filter((experience) => experience.kind === "activity");
+  const selectedRestaurants = selectedExperiences.filter((experience) => experience.kind === "restaurant");
+  const parsedContingency = parseCostEstimate(contingencyPercent);
+  const invalidContingency = Boolean(contingencyPercent.trim()) && (parsedContingency === null || parsedContingency > 50);
+  const ledger = buildTripCostLedger({
+    currency,
+    nights,
+    budget,
+    flightRequested,
+    stayRequested,
+    activitiesRequested,
+    outbound: selection.outbound ? { price: selection.outbound.price, currency: selection.outbound.currency } : null,
+    returnFlight: selection.returnFlight ? { price: selection.returnFlight.price, currency: selection.returnFlight.currency } : null,
+    flightSeller: selection.flightSeller ? { price: selection.flightSeller.option.price, currency: selection.flightSeller.option.currency, seller: selection.flightSeller.option.seller, type: selection.flightSeller.option.type } : null,
+    hotel: selection.hotel ? { name: selection.hotel.name, totalPrice: selection.hotel.totalPrice, nightlyPrice: selection.hotel.nightlyPrice, currency: selection.hotel.currency } : null,
+    activities: selectedActivities.map((experience) => ({ name: experience.name, price: experience.price })),
+    restaurants: selectedRestaurants.map((experience) => ({ name: experience.name, price: experience.price })),
+    manual: {
+      groundTransport: parseCostEstimate(groundTransport),
+      activities: activitiesRequested ? parseCostEstimate(activityEstimate) : null,
+      dining: activitiesRequested ? parseCostEstimate(diningEstimate) : null,
+    },
+    contingencyPercent: invalidContingency || parsedContingency === null ? 0 : parsedContingency,
+  });
+  const format = (amount: number, code: string) => {
+    try { return new Intl.NumberFormat("en-US", { style: "currency", currency: code, maximumFractionDigits: 2 }).format(amount); }
+    catch { return `${code} ${amount.toFixed(2)}`; }
+  };
+  const invalidEstimate = (value: string) => Boolean(value.trim()) && parseCostEstimate(value) === null;
+  const selectedCount = Number(Boolean(selection.outbound)) + Number(Boolean(selection.hotel)) + selectedExperiences.length;
+  if (!selectedCount) return null;
+
+  return <section className="trip-cost-ledger" aria-labelledby="trip-cost-ledger-title">
+    <div className="trip-cost-ledger-heading">
+      <div><span className="eyebrow">COST BREAKDOWN</span><h4 id="trip-cost-ledger-title">Your trip cost ledger</h4><p>{people} traveler{people === 1 ? "" : "s"} · {nights} night{nights === 1 ? "" : "s"} · {currency}</p></div>
+      <span className="trip-cost-ledger-status">Planning estimate</span>
+    </div>
+    <div className="trip-cost-ledger-rows">
+      {ledger.rows.map((row) => <div className="trip-cost-ledger-row" key={row.id}>
+        <div><strong>{row.label}</strong><small>{row.detail}</small></div>
+        <div className={`trip-cost-ledger-amount is-${row.status}`}>{row.amount === null ? "Not priced" : format(row.amount, row.currency)}</div>
+      </div>)}
+    </div>
+    <div className="trip-cost-ledger-inputs">
+      <label><span>Ground transport · group estimate</span><input type="text" inputMode="decimal" placeholder="e.g. 180" value={groundTransport} onChange={(event) => setGroundTransport(event.target.value)}/>{invalidEstimate(groundTransport) && <small className="trip-cost-input-error">Enter a valid amount (up to two decimal places).</small>}</label>
+      {activitiesRequested && <label><span>Activities · group estimate</span><input type="text" inputMode="decimal" placeholder="e.g. 250" value={activityEstimate} onChange={(event) => setActivityEstimate(event.target.value)}/>{invalidEstimate(activityEstimate) && <small className="trip-cost-input-error">Enter a valid amount (up to two decimal places).</small>}</label>}
+      {activitiesRequested && <label><span>Food & dining · group estimate</span><input type="text" inputMode="decimal" placeholder="e.g. 400" value={diningEstimate} onChange={(event) => setDiningEstimate(event.target.value)}/>{invalidEstimate(diningEstimate) && <small className="trip-cost-input-error">Enter a valid amount (up to two decimal places).</small>}</label>}
+      <label><span>Contingency allowance (%)</span><input type="number" min="0" max="50" step="1" value={contingencyPercent} onChange={(event) => setContingencyPercent(event.target.value)}/><small>Applied only to priced stay totals and estimates entered above.</small>{invalidContingency && <small className="trip-cost-input-error">Use a percentage from 0 to 50.</small>}</label>
+    </div>
+    <div className="trip-cost-ledger-total">
+      <div><span>Priced subtotal</span><strong>{format(ledger.pricedSubtotal, currency)}</strong></div>
+      <div><span>Contingency</span><strong>{format(ledger.contingencyAmount, currency)}</strong></div>
+      <div className="trip-cost-ledger-grand"><span>Known / entered planning amount</span><strong>{format(ledger.planningTotal, currency)}</strong></div>
+      <p>{ledger.remainingBeforeUnpriced >= 0
+        ? `${format(ledger.remainingBeforeUnpriced, currency)} of your ${format(budget, currency)} budget remains against the priced items shown. This is not a complete trip total.`
+        : `Priced items and entered estimates exceed your ${format(budget, currency)} budget by ${format(Math.abs(ledger.remainingBeforeUnpriced), currency)}, before any unpriced categories.`}</p>
+    </div>
+    <p className="trip-cost-ledger-disclaimer">Provider display prices are not confirmed bookings. Flight amounts are shown for reference but excluded until the seller confirms the passenger/party basis and a combined fare. Activities and restaurant price text are not converted into totals. Ground transport, activities and dining estimates are optional amounts you enter for the whole group. No currency conversion or taxes/fee assumptions are applied.</p>
   </section>;
 }
 
@@ -693,6 +771,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 </section>
               </>}
               <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} flightSearchUrl={state.result.providerSearchLinks?.flights || directFlightUrl.toString()}/>
+              <TripCostLedger selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} people={people} budget={totalBudget} flightRequested={search.components.includes("flights")} stayRequested={search.components.includes("stays")} activitiesRequested={search.components.includes("activities")}/>
               <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>
             </div>}

@@ -45,7 +45,7 @@
 - Gemini fallback remains opt-in per parsing request. No Vercel AI Gateway integration.
 
 ## Release 4 — verified trip assembly (next)
-- Build a structured itinerary cost ledger separating flight, stay, ground transport, activities, food and contingency.
+- [x] Add an in-results trip cost ledger separating provider-displayed stay totals, reference-only flight quotes, user-entered ground transport/activity/dining estimates and a transparent contingency allowance. The displayed planning amount is explicitly partial; unknown amounts and ambiguous flight price bases are excluded.
 - Add real activity/point-of-interest provider with licensing and display-rights review.
 - Add distance and travel-time estimates for activities, using a permitted maps/routing provider.
 - Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.

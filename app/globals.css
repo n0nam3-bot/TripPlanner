@@ -1431,3 +1431,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .trip-ai-result-action button:hover, .trip-ai-result-action a:hover { border-color: #8ca38e; background: #edf4eb; }
 article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4px; animation: trip-ai-result-pulse 2.8s ease-out; }
 @keyframes trip-ai-result-pulse { 0%, 35% { box-shadow: 0 0 0 5px rgba(166, 90, 59, .18); } 100% { box-shadow: 0 0 0 0 rgba(166, 90, 59, 0); } }
+
+/* Verified Trip Assembly — cost ledger */
+.trip-cost-ledger { margin: 16px 0 20px; padding: 18px; border: 1px solid #dce5dd; border-radius: var(--radius-inner); background: #fbfcfa; }
+.trip-cost-ledger-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 13px; }
+.trip-cost-ledger-heading .eyebrow { color: #789080; font-size: 9px; letter-spacing: .12em; font-weight: 750; }
+.trip-cost-ledger-heading h4 { margin: 4px 0 3px; color: #1b3025; font-size: 18px; font-weight: 700; }
+.trip-cost-ledger-heading p { margin: 0; color: #64756a; font-size: 11px; }
+.trip-cost-ledger-status { padding: 5px 8px; border-radius: 999px; background: #edf3ed; color: #41644d; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.trip-cost-ledger-rows { border-top: 1px solid #e4eae4; }
+.trip-cost-ledger-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 16px; align-items: start; padding: 11px 0; border-bottom: 1px solid #e9eee9; }
+.trip-cost-ledger-row strong { display: block; color: #304438; font-size: 12px; }
+.trip-cost-ledger-row small { display: block; max-width: 760px; margin-top: 3px; color: #68786e; font-size: 10px; line-height: 1.5; }
+.trip-cost-ledger-amount { color: #243d2e; font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.trip-cost-ledger-amount.is-reference_only { color: #886b3b; }
+.trip-cost-ledger-amount.is-unpriced { color: #89958c; font-size: 11px; font-weight: 600; }
+.trip-cost-ledger-amount.is-user_estimate, .trip-cost-ledger-amount.is-contingency { color: #315f45; }
+.trip-cost-ledger-inputs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; padding: 14px 0; }
+.trip-cost-ledger-inputs label { display: flex; flex-direction: column; gap: 5px; color: #405649; font-size: 10px; font-weight: 700; }
+.trip-cost-ledger-inputs input { width: 100%; min-height: 37px; padding: 8px 10px; border: 1px solid #d7e0d8; border-radius: 8px; background: #fff; color: #1e3327; font-size: 13px; outline-offset: 2px; }
+.trip-cost-ledger-inputs input:focus { border-color: #789681; }
+.trip-cost-ledger-inputs label > small { color: #738176; font-size: 9px; font-weight: 450; line-height: 1.35; }
+.trip-cost-input-error { color: #a23c31 !important; }
+.trip-cost-ledger-total { padding-top: 12px; border-top: 1px solid #dce5dd; }
+.trip-cost-ledger-total > div { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0; color: #5f7066; font-size: 11px; }
+.trip-cost-ledger-total > div strong { color: #2f4838; font-size: 13px; font-variant-numeric: tabular-nums; }
+.trip-cost-ledger-total .trip-cost-ledger-grand { margin-top: 5px; padding-top: 10px; border-top: 1px solid #e4eae4; color: #263d30; font-weight: 750; }
+.trip-cost-ledger-total .trip-cost-ledger-grand strong { color: #1a3827; font-size: 19px; }
+.trip-cost-ledger-total > p { margin: 8px 0 0; color: #496754; font-size: 10px; line-height: 1.5; }
+.trip-cost-ledger-disclaimer { margin: 10px 0 0; color: #7b887e; font-size: 9px; line-height: 1.5; }
+@media (max-width: 620px) { .trip-cost-ledger { padding: 13px; } .trip-cost-ledger-inputs { grid-template-columns: 1fr; } .trip-cost-ledger-row { grid-template-columns: minmax(0,1fr) auto; gap: 9px; } .trip-cost-ledger-row small { max-width: none; } }
