@@ -560,6 +560,40 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
 
   const requestedLabels = search.components.map((component) => component === "flights" ? "Flights" : component === "stays" ? (search.stayTypes.includes("vacation_rentals") && search.stayTypes.includes("hotels") ? "Hotels and vacation rentals" : search.stayTypes.includes("vacation_rentals") ? "Vacation rentals" : "Hotels") : "Things to do");
 
+  const assistantRecommendation = recommendations.find((item) => item.destination.id === expanded)
+    ?? recommendations.find((item) => Boolean(states[item.destination.id]?.result))
+    ?? null;
+  const assistantResult = assistantRecommendation ? states[assistantRecommendation.destination.id]?.result ?? null : null;
+  const assistantSelection = assistantRecommendation ? selections[assistantRecommendation.destination.id] ?? emptySelection() : emptySelection();
+  const assistantExperiences = assistantResult?.experiences ?? [];
+  const assistantContext: TripAssistantContext | null = assistantRecommendation && assistantResult ? {
+    destination: formatDestinationLabel(assistantRecommendation.destination.city, assistantRecommendation.destination.country),
+    currency: search.currency,
+    budget: totalBudget,
+    departureDate: search.departureDate,
+    returnDate: search.returnDate,
+    adults: search.adults,
+    childrenAges: search.childrenAges,
+    rooms: search.rooms,
+    preferences: {
+      tripStyle: search.style,
+      mustHave: search.stayMustHaveAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
+      prefer: search.stayPreferredAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
+    },
+    flights: assistantResult.flights.slice(0, 8).map((flight) => ({ airline: flight.airlines.join(" / "), from: flight.from, to: flight.to, departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops })),
+    stays: assistantResult.hotels.slice(0, 14).map((hotel) => ({ name: hotel.name, source: hotel.source, propertyType: hotel.propertyType, spaceType: hotel.spaceType, amenities: hotel.amenities.map((item) => STAY_AMENITY_LABELS[item as StayAmenity] ?? item), totalPrice: hotel.totalPrice, nightlyPrice: hotel.nightlyPrice, rating: hotel.rating, reviews: hotel.reviews })),
+    experiences: assistantExperiences.slice(0, 16).map((experience) => ({ kind: experience.kind, name: experience.name, category: experience.category, address: experience.address, rating: experience.rating, price: experience.price ?? "" })),
+    selected: {
+      outboundFlight: assistantSelection.outbound ? `${assistantSelection.outbound.airlines.join(" / ")} · ${assistantSelection.outbound.departure} → ${assistantSelection.outbound.arrival} · ${assistantSelection.outbound.from} → ${assistantSelection.outbound.to}` : undefined,
+      returnFlight: assistantSelection.returnFlight ? `${assistantSelection.returnFlight.airlines.join(" / ")} · ${assistantSelection.returnFlight.departure} → ${assistantSelection.returnFlight.arrival} · ${assistantSelection.returnFlight.from} → ${assistantSelection.returnFlight.to}` : undefined,
+      stay: assistantSelection.hotel?.name,
+      schedule: Object.entries(assistantSelection.experiences).flatMap(([experienceId, plan]) => {
+        const experience = assistantExperiences.find((item) => item.id === experienceId);
+        return experience ? [{ name: experience.name, kind: experience.kind, date: plan.date, slot: plan.slot }] : [];
+      }).slice(0, 16),
+    },
+  } : null;
+
   return <div className="planner-results-workspace">
     <div className="results-overview-bar">
       <div><small>Budget</small><strong>{money(totalBudget, search.currency)}</strong><span>{search.budgetMode === "total" ? "for the whole group" : "per traveler"}</span></div>
@@ -601,43 +635,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         directFlightUrl.searchParams.set("curr", search.currency);
         directFlightUrl.searchParams.set("hl", "en");
         directFlightUrl.searchParams.set("gl", "us");
-        const aiContext: TripAssistantContext = {
-          destination: destinationLabel,
-          currency: search.currency,
-          budget: totalBudget,
-          departureDate: search.departureDate,
-          returnDate: search.returnDate,
-          adults: search.adults,
-          childrenAges: search.childrenAges,
-          rooms: search.rooms,
-          preferences: {
-            tripStyle: search.style,
-            mustHave: search.stayMustHaveAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
-            prefer: search.stayPreferredAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
-          },
-          flights: (state?.result?.flights ?? []).slice(0, 8).map((flight) => ({
-            airline: flight.airlines.join(" / "), from: flight.from, to: flight.to,
-            departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops,
-          })),
-          stays: (state?.result?.hotels ?? []).slice(0, 14).map((hotel) => ({
-            name: hotel.name, source: hotel.source, propertyType: hotel.propertyType, spaceType: hotel.spaceType,
-            amenities: hotel.amenities.map((item) => STAY_AMENITY_LABELS[item as StayAmenity] ?? item),
-            totalPrice: hotel.totalPrice, nightlyPrice: hotel.nightlyPrice, rating: hotel.rating, reviews: hotel.reviews,
-          })),
-          experiences: (state?.result?.experiences ?? []).slice(0, 16).map((experience) => ({
-            kind: experience.kind, name: experience.name, category: experience.category,
-            address: experience.address, rating: experience.rating, price: experience.price ?? "",
-          })),
-          selected: {
-            outboundFlight: selection.outbound ? `${selection.outbound.airlines.join(" / ")} · ${selection.outbound.departure} → ${selection.outbound.arrival} · ${selection.outbound.from} → ${selection.outbound.to}` : undefined,
-            returnFlight: selection.returnFlight ? `${selection.returnFlight.airlines.join(" / ")} · ${selection.returnFlight.departure} → ${selection.returnFlight.arrival} · ${selection.returnFlight.from} → ${selection.returnFlight.to}` : undefined,
-            stay: selection.hotel?.name,
-            schedule: Object.entries(selection.experiences).flatMap(([experienceId, plan]) => {
-              const experience = resultExperiences.find((item) => item.id === experienceId);
-              return experience ? [{ name: experience.name, kind: experience.kind, date: plan.date, slot: plan.slot }] : [];
-            }).slice(0, 16),
-          },
-        };
+
         return <motion.article className={`planner-destination-card ${isExpanded ? "is-expanded" : ""}`} key={destination.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: index * 0.035 }}>
           <div className="planner-destination-body">
             <div className="planner-destination-heading"><div>{destination.country && normalizeDestinationQuery(destination.country) !== normalizeDestinationQuery(destination.city) && <span className="planner-country">{destination.country}</span>}<h3>{destination.city}</h3><p>{destination.summary}</p>{recommendation.typicalDaytimeHighF !== null ? <p className="planner-climate-note">Typical daytime high for these dates: <strong>{Math.round(search.temperatureUnit === "C" ? (recommendation.typicalDaytimeHighF - 32) * 5 / 9 : recommendation.typicalDaytimeHighF)}°{search.temperatureUnit}</strong> <span>· monthly climate average, not a forecast</span></p> : (search.temperatureMin !== null || search.temperatureMax !== null) ? <p className="planner-climate-note">No monthly temperature baseline is available for this location, so your temperature range could not be checked.</p> : null}</div>{airportCode && <span className="planner-airport">{airportCode}</span>}</div>
@@ -676,7 +674,6 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 </section>
               </>}
               <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} flightSearchUrl={state.result.providerSearchLinks?.flights || directFlightUrl.toString()}/>
-              <AITripAssistant context={aiContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured}/>
               <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>
             </div>}
@@ -705,6 +702,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         </motion.article>;
       })}
     </div>
+
+    {assistantContext && assistantRecommendation && <AITripAssistant key={assistantRecommendation.destination.id} context={assistantContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured}/>}
 
     <div className="planner-method-note"><p><strong>How to read these results.</strong> Flights, properties and places come from the selected providers. Straight-line distances are geographic estimates, not driving times. Weather is only shown when the forecast provider can cover the requested dates. Confirm final terms with the booking provider.</p></div>
   </div>;

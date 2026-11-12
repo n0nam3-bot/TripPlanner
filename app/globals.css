@@ -1340,35 +1340,52 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .stay-amenity-row > span { font-size: 10px; }
 }
 
-/* AI-assisted review of the already-loaded provider results. */
-.trip-ai-assistant { margin: 16px 0 18px; padding: 20px; border: 1px solid #dfe5dc; background: #fbfcf8; }
-.trip-ai-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; padding-bottom: 13px; border-bottom: 1px solid #e8ece5; }
-.trip-ai-heading .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: #788b7a; }
-.trip-ai-heading h4 { margin: 7px 0 5px; color: #26372e; font-family: "Playfair Display", Georgia, serif; font-size: 21px; font-weight: 500; }
-.trip-ai-heading p { max-width: 660px; margin: 0; color: #78847a; font-size: 11px; line-height: 1.6; }
-.trip-ai-mark { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; color: #5c7862; background: #edf2eb; }
-.trip-ai-quick-prompts { display: flex; flex-wrap: wrap; gap: 7px; padding: 13px 0 10px; }
-.trip-ai-quick-prompts button { padding: 7px 9px; color: #54695b; background: #fff; border: 1px solid #dfe6dc; border-radius: 2px; font-size: 9px; text-align: left; cursor: pointer; }
-.trip-ai-quick-prompts button:hover { border-color: #90a590; background: #f4f7f1; }
-.trip-ai-quick-prompts button:disabled { opacity: .6; cursor: wait; }
-.trip-ai-form { display: grid; gap: 8px; }
-.trip-ai-form > label:not(.trip-ai-consent) { color: #536357; font-size: 10px; font-weight: 700; }
-.trip-ai-form textarea { width: 100%; min-height: 75px; resize: vertical; padding: 11px 12px; color: #26372e; background: #fff; border: 1px solid #dfe5dc; border-radius: 2px; outline: none; font: inherit; font-size: 11px; line-height: 1.6; }
-.trip-ai-form textarea:focus { border-color: #8ca18d; box-shadow: 0 0 0 2px rgba(110, 139, 111, .12); }
-.trip-ai-consent { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; color: #778278; font-size: 9px; line-height: 1.55; cursor: pointer; }
-.trip-ai-consent input { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 1px; accent-color: #607a65; }
-.trip-ai-consent strong { color: #4b5d50; }
-.trip-ai-form-footer { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
-.trip-ai-form-footer p { max-width: 620px; margin: 0; color: #8a948b; font-size: 9px; line-height: 1.5; }
-.trip-ai-form-footer .button { min-height: 36px; padding: 8px 12px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
-.trip-ai-setup, .trip-ai-error { margin: 13px 0 0; padding: 10px 12px; color: #806747; background: #f7f2e9; border-left: 2px solid #c39a5e; font-size: 10px; line-height: 1.55; }
-.trip-ai-error { color: #94564c; background: #f8efed; border-left-color: #bd7568; }
-.trip-ai-reply { margin-top: 13px; padding: 14px 15px; background: #fff; border: 1px solid #dfe5dc; }
-.trip-ai-reply-meta { display: flex; align-items: center; gap: 9px; color: #57705e; font-size: 9px; text-transform: uppercase; letter-spacing: .45px; }
-.trip-ai-reply-meta span { color: #a0a99f; }
-.trip-ai-answer { margin-top: 10px; color: #3f4d43; font-size: 11px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
-.trip-ai-caution { margin: 10px 0 0; padding-top: 8px; color: #939c92; border-top: 1px solid #edf0eb; font-size: 9px; line-height: 1.5; }
-@media (max-width: 640px) { .trip-ai-assistant { padding: 14px; } .trip-ai-form-footer { align-items: stretch; flex-direction: column; } .trip-ai-form-footer .button { align-self: flex-start; } .trip-ai-heading h4 { font-size: 18px; } }
+/* Floating, minimized Tripfinder travel assistant. */
+.trip-ai-dock { position: fixed; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); z-index: 1200; font-family: inherit; }
+.trip-ai-launcher { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 50px; padding: 0 18px; color: #fff; background: #a94f38; border: 1px solid #91402e; border-radius: 999px; box-shadow: 0 8px 28px rgba(48, 37, 29, .22); font-size: 13px; font-weight: 700; cursor: pointer; transition: transform .18s ease, box-shadow .18s ease, background .18s ease; }
+.trip-ai-launcher:hover { background: #93412f; box-shadow: 0 10px 32px rgba(48, 37, 29, .28); transform: translateY(-1px); }
+.trip-ai-launcher.is-open { width: 46px; min-height: 46px; padding: 0; color: #425447; background: #f8faf5; border-color: #dbe2d7; box-shadow: 0 5px 20px rgba(48, 37, 29, .16); }
+.trip-ai-panel { position: absolute; right: 0; bottom: 62px; display: flex; flex-direction: column; width: min(390px, calc(100vw - 32px)); max-height: min(690px, 74vh); overflow: hidden; color: #344339; background: #fbfcf8; border: 1px solid #dfe5dc; border-radius: 16px; box-shadow: 0 18px 58px rgba(38, 49, 41, .24); }
+.trip-ai-chat-header { display: flex; align-items: center; gap: 10px; padding: 13px 15px; background: #f3f6ef; border-bottom: 1px solid #e5eae1; }
+.trip-ai-chat-mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #5c7862; background: #e4ece1; border-radius: 10px; }
+.trip-ai-chat-header > div { display: grid; min-width: 0; gap: 2px; flex: 1; }
+.trip-ai-chat-header strong { color: #26372e; font-family: "Playfair Display", Georgia, serif; font-size: 16px; font-weight: 600; }
+.trip-ai-chat-header small { color: #7c897f; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trip-ai-window-control { display: grid; width: 34px; height: 34px; place-items: center; color: #647568; background: transparent; border: 0; border-radius: 8px; cursor: pointer; }
+.trip-ai-window-control:hover { background: #e8eee5; }
+.trip-ai-chat-messages { display: flex; flex-direction: column; gap: 10px; min-height: 160px; padding: 14px; overflow-y: auto; overscroll-behavior: contain; }
+.trip-ai-chat-row { display: flex; width: 100%; }
+.trip-ai-chat-row.is-user { justify-content: flex-end; }
+.trip-ai-chat-row.is-assistant { justify-content: flex-start; }
+.trip-ai-chat-bubble { max-width: 91%; padding: 10px 12px; color: #405047; background: #eef3eb; border: 1px solid #e1e8de; border-radius: 13px 13px 13px 3px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.trip-ai-chat-row.is-user .trip-ai-chat-bubble { color: #fff; background: #526c59; border-color: #526c59; border-radius: 13px 13px 3px 13px; }
+.trip-ai-chat-bubble p { margin: 0; white-space: pre-wrap; }
+.trip-ai-chat-bubble small { display: block; margin-top: 6px; color: #839085; font-size: 9px; }
+.trip-ai-chat-row.is-user .trip-ai-chat-bubble small { color: #dce7dc; }
+.trip-ai-chat-bubble.is-thinking { display: inline-flex; align-items: center; gap: 8px; color: #66776a; }
+.trip-ai-chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.trip-ai-chat-suggestions button { padding: 7px 9px; color: #526a58; background: #fff; border: 1px solid #dce5d9; border-radius: 10px; font-size: 10px; line-height: 1.35; text-align: left; cursor: pointer; }
+.trip-ai-chat-suggestions button:hover { border-color: #9bab99; background: #f6f8f3; }
+.trip-ai-chat-suggestions button:disabled { opacity: .55; cursor: wait; }
+.trip-ai-chat-setup { margin: 0 13px 10px; padding: 10px 11px; color: #806747; background: #f7f2e9; border-left: 2px solid #c39a5e; font-size: 10px; line-height: 1.5; }
+.trip-ai-consent-details { margin: 0 13px 9px; padding: 8px 10px; background: #f4f6f1; border: 1px solid #e5eae1; border-radius: 8px; }
+.trip-ai-consent-details summary { display: flex; justify-content: space-between; gap: 8px; color: #607263; font-size: 10px; font-weight: 700; cursor: pointer; list-style: none; }
+.trip-ai-consent-details summary::-webkit-details-marker { display: none; }
+.trip-ai-consent-details summary span { color: #8b968b; font-weight: 500; }
+.trip-ai-consent-details label { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; color: #778278; font-size: 9px; line-height: 1.5; }
+.trip-ai-consent-details input { flex: 0 0 auto; width: 14px; height: 14px; margin: 1px 0 0; accent-color: #607a65; }
+.trip-ai-chat-composer { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid #e8ece5; background: #fff; }
+.trip-ai-chat-composer textarea { flex: 1; min-width: 0; min-height: 42px; max-height: 112px; resize: vertical; padding: 10px 11px; color: #26372e; background: #fbfcf8; border: 1px solid #dfe5dc; border-radius: 10px; outline: none; font: inherit; font-size: 12px; line-height: 1.45; }
+.trip-ai-chat-composer textarea:focus { border-color: #8ca18d; box-shadow: 0 0 0 2px rgba(110, 139, 111, .12); }
+.trip-ai-chat-composer > button { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; color: #fff; background: #a94f38; border: 0; border-radius: 10px; cursor: pointer; }
+.trip-ai-chat-composer > button:disabled { opacity: .5; cursor: not-allowed; }
+.trip-ai-chat-footer { padding: 0 13px 11px; color: #929c91; background: #fff; font-size: 9px; line-height: 1.4; }
+@media (max-width: 640px) {
+  .trip-ai-dock { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .trip-ai-panel { position: fixed; right: 12px; bottom: calc(74px + env(safe-area-inset-bottom, 0px)); width: calc(100vw - 24px); max-height: min(72dvh, 660px); border-radius: 14px; }
+  .trip-ai-chat-messages { min-height: 140px; padding: 12px; }
+  .trip-ai-launcher { min-height: 46px; padding: 0 15px; }
+}
 
 /* Plain-language search preference interpreter */
 .plain-language-search { margin: 0 0 22px; padding: 16px 17px; border: 1px solid #e2e8df; border-radius: 8px; background: linear-gradient(135deg, #fbfcf9 0%, #f5f8f3 100%); }
