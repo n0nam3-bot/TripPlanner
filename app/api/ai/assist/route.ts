@@ -69,7 +69,7 @@ export async function POST(request: Request) {
       : question;
     const localFallback = buildTripAssistantLocalFallback(question, context);
     if (localFallback) {
-      await safeRecordProviderEvent({ provider: "Tripfinder local check", category: "Trip assistant", eventType: "local_fallback", outcome: "success", cacheStatus: "none" });
+      await safeRecordProviderEvent({ provider: "Tripfinder local check", category: "Trip assistant", eventType: "local_parse", outcome: "success", cacheStatus: "none" });
       return NextResponse.json({ answer: localFallback, provider: "Tripfinder local check", model: "rule-based-result-check", cached: false, local: true }, { headers: { "Cache-Control": "no-store" } });
     }
 
