@@ -689,6 +689,16 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const assistantResult = assistantRecommendation ? states[assistantRecommendation.destination.id]?.result ?? null : null;
   const assistantSelection = assistantRecommendation ? selections[assistantRecommendation.destination.id] ?? emptySelection() : emptySelection();
   const assistantExperiences = assistantResult?.experiences ?? [];
+  // Send balanced place categories and retain the selected property even when it
+  // is beyond the first page of provider results. The assistant needs both the
+  // restaurant and attraction coordinates to answer proximity questions.
+  const assistantStayRows = assistantResult
+    ? [...(assistantSelection.hotel ? [assistantSelection.hotel] : []), ...assistantResult.hotels.filter((hotel) => hotel.id !== assistantSelection.hotel?.id)].slice(0, 14)
+    : [];
+  const assistantExperienceRows = [
+    ...assistantExperiences.filter((experience) => experience.kind === "activity").slice(0, 20),
+    ...assistantExperiences.filter((experience) => experience.kind === "restaurant").slice(0, 20),
+  ];
   const assistantContext: TripAssistantContext | null = assistantRecommendation && assistantResult ? {
     destination: formatDestinationLabel(assistantRecommendation.destination.city, assistantRecommendation.destination.country),
     currency: search.currency,
@@ -704,7 +714,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       prefer: search.stayPreferredAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
     },
     flights: assistantResult.flights.slice(0, 8).map((flight) => ({ id: flight.id, airline: flight.airlines.join(" / "), from: flight.from, to: flight.to, departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops })),
-    stays: assistantResult.hotels.slice(0, 14).map((hotel) => ({
+    stays: assistantStayRows.map((hotel) => ({
       id: hotel.id,
       name: hotel.name,
       externalUrl: hotel.bookingUrl || `https://www.google.com/travel/hotels?q=${encodeURIComponent(`${hotel.name} ${hotel.address ?? ""}`)}`,
@@ -713,22 +723,25 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       amenities: hotel.amenities.map((item) => STAY_AMENITY_LABELS[item as StayAmenity] ?? item),
       description: hotel.description ?? "", address: hotel.address ?? "",
       essentialInfo: hotel.essentialInfo ?? [], excludedAmenities: hotel.excludedAmenities ?? [],
-      nearbyPlaces: (hotel.nearbyPlaces ?? []).slice(0, 5).map((place) => ({
+      latitude: hotel.latitude, longitude: hotel.longitude,
+      nearbyPlaces: (hotel.nearbyPlaces ?? []).slice(0, 8).map((place) => ({
         name: place.name, category: place.category,
         transportations: (place.transportations ?? []).slice(0, 2).map((transport) => ({ type: transport.type, duration: transport.duration })),
       })),
       totalPrice: hotel.totalPrice, nightlyPrice: hotel.nightlyPrice, rating: hotel.rating, reviews: hotel.reviews,
     })),
-    experiences: assistantExperiences.slice(0, 16).map((experience) => ({
+    experiences: assistantExperienceRows.map((experience) => ({
       id: experience.id, kind: experience.kind, name: experience.name,
       externalUrl: experience.website || experience.mapsUrl,
       externalUrlLabel: experience.website ? "Open official site" : "Open in Maps",
       category: experience.category, address: experience.address, rating: experience.rating, price: experience.price ?? "",
+      latitude: experience.latitude, longitude: experience.longitude,
     })),
     selected: {
       outboundFlight: assistantSelection.outbound ? `${assistantSelection.outbound.airlines.join(" / ")} · ${assistantSelection.outbound.departure} → ${assistantSelection.outbound.arrival} · ${assistantSelection.outbound.from} → ${assistantSelection.outbound.to}` : undefined,
       returnFlight: assistantSelection.returnFlight ? `${assistantSelection.returnFlight.airlines.join(" / ")} · ${assistantSelection.returnFlight.departure} → ${assistantSelection.returnFlight.arrival} · ${assistantSelection.returnFlight.from} → ${assistantSelection.returnFlight.to}` : undefined,
       stay: assistantSelection.hotel?.name,
+      stayId: assistantSelection.hotel?.id,
       schedule: Object.entries(assistantSelection.experiences).flatMap(([experienceId, plan]) => {
         const experience = assistantExperiences.find((item) => item.id === experienceId);
         return experience ? [{ name: experience.name, kind: experience.kind, date: plan.date, slot: plan.slot }] : [];
