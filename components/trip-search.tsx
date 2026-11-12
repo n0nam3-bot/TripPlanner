@@ -239,9 +239,9 @@ export function TripSearch() {
           todayLocal: dateAfter(0),
           allowGemini: allowGeminiPreferenceParsing,
           current: {
-            origin, destination, destinationArea, depart, return: returnDate, adults: Number(adults), childrenAges: childrenAges.split(/[ ,]+/).filter(Boolean).map(Number),
+            origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, return: returnDate, adults: Number(adults), childrenAges: childrenAges.split(/[ ,]+/).filter(Boolean).map(Number),
             rooms: Number(rooms), budget: Number(budget), budgetMode, currency, style, components, stayTypes, staySpaceType,
-            stayMust: stayMustHaveAmenities, stayPrefer: stayPreferredAmenities, cabin, stops,
+            stayMust: stayMustHaveAmenities, stayPrefer: stayPreferredAmenities, cabin, stops, preferredLayoverCountries, avoidLayoverCountries,
             hotelRating: Number(hotelRating), freeCancellation, temperatureMin, temperatureMax, temperatureUnit,
           },
         }),
@@ -260,14 +260,14 @@ export function TripSearch() {
   function applyParsedPreferences() {
     if (!preferenceDraft) return;
     const draft = preferenceDraft;
-    if (draft.origin) {
-      setOrigin(draft.origin);
-      setOriginAirportCode(resolveAirportCode(draft.origin) || "");
-    }
+    if (draft.origin) setOrigin(draft.origin);
+    if (draft.originAirportCode) setOriginAirportCode(draft.originAirportCode);
+    else if (draft.origin) setOriginAirportCode(resolveAirportCode(draft.origin) || "");
     if (draft.destination) setDestination(draft.destination);
     if (draft.destinationArea !== undefined) setDestinationArea(draft.destinationArea);
     else if (draft.destination) setDestinationArea("");
-    if (draft.destination || draft.destinationArea) setDestinationAirportCode(resolveAirportCode(draft.destinationArea || draft.destination || "") || "");
+    if (draft.destinationAirportCode) setDestinationAirportCode(draft.destinationAirportCode);
+    else if (draft.destination || draft.destinationArea) setDestinationAirportCode(resolveAirportCode(draft.destinationArea || draft.destination || "") || "");
     if (draft.departureDate) setDepart(draft.departureDate);
     if (draft.returnDate) setReturnDate(draft.returnDate);
     if (draft.adults !== undefined) setAdults(String(draft.adults));
@@ -284,6 +284,15 @@ export function TripSearch() {
     if (draft.preferredAmenities) setStayPreferredAmenities(draft.preferredAmenities);
     if (draft.cabinClass) setCabin(draft.cabinClass);
     if (draft.stops) setStops(draft.stops);
+    if (draft.preferredLayoverCountries) {
+      const avoided = new Set(draft.avoidLayoverCountries || avoidLayoverCountries);
+      setPreferredLayoverCountries(draft.preferredLayoverCountries.filter((country) => !avoided.has(country)));
+    }
+    if (draft.avoidLayoverCountries) {
+      const avoided = new Set(draft.avoidLayoverCountries);
+      setAvoidLayoverCountries(draft.avoidLayoverCountries);
+      setPreferredLayoverCountries((current) => current.filter((country) => !avoided.has(country)));
+    }
     if (draft.minimumHotelRating !== undefined) setHotelRating(String(draft.minimumHotelRating));
     if (draft.freeCancellation !== undefined) setFreeCancellation(draft.freeCancellation);
     if (draft.temperatureMin !== undefined) setTemperatureMin(String(draft.temperatureMin));
@@ -296,9 +305,10 @@ export function TripSearch() {
 
   const parsedPreferenceSummary = preferenceDraft ? [
     preferenceDraft.destinationArea ? `Area: ${preferenceDraft.destinationArea}${preferenceDraft.destination ? `, ${preferenceDraft.destination}` : ""}` : preferenceDraft.destination ? `Destination: ${preferenceDraft.destination}` : "",
-    preferenceDraft.origin ? `Leaving from: ${preferenceDraft.origin}` : "",
-    preferenceDraft.departureDate || preferenceDraft.returnDate ? `Dates: ${preferenceDraft.departureDate || "keep current start"} – ${preferenceDraft.returnDate || "keep current end"}` : "",
-    preferenceDraft.adults !== undefined ? `${preferenceDraft.adults} adults` : "",
+    preferenceDraft.origin ? `Leaving from: ${preferenceDraft.origin}${preferenceDraft.originAirportCode ? ` (${preferenceDraft.originAirportCode})` : ""}` : "",
+    preferenceDraft.destinationAirportCode ? `Arrival airport: ${preferenceDraft.destinationAirportCode}` : "",
+    preferenceDraft.departureDate || preferenceDraft.returnDate ? `Depart: ${preferenceDraft.departureDate || "keep current date"} · Return: ${preferenceDraft.returnDate || "keep current date"}` : "",
+    preferenceDraft.adults !== undefined ? `${preferenceDraft.adults} travelers` : "",
     preferenceDraft.childrenAges ? `Children's ages: ${preferenceDraft.childrenAges.join(", ")}` : "",
     preferenceDraft.budget !== undefined ? `Budget: ${preferenceDraft.currency || currency} ${preferenceDraft.budget.toLocaleString()}${preferenceDraft.budgetMode === "per_person" ? " per person" : preferenceDraft.budgetMode === "total" ? " total" : ""}` : "",
     preferenceDraft.rooms !== undefined ? `${preferenceDraft.rooms} rooms` : "",
@@ -310,6 +320,8 @@ export function TripSearch() {
     preferenceDraft.tripStyle && preferenceDraft.tripStyle !== "any" ? `Trip style: ${preferenceDraft.tripStyle}` : "",
     preferenceDraft.cabinClass ? `Cabin: ${preferenceDraft.cabinClass.replaceAll("_", " ")}` : "",
     preferenceDraft.stops ? `Stops: ${preferenceDraft.stops.replaceAll("_", " ")}` : "",
+    preferenceDraft.preferredLayoverCountries?.length ? `Preferred connections: ${preferenceDraft.preferredLayoverCountries.join(", ")}` : "",
+    preferenceDraft.avoidLayoverCountries?.length ? `Avoid connections through: ${preferenceDraft.avoidLayoverCountries.join(", ")}` : "",
     preferenceDraft.minimumHotelRating !== undefined && preferenceDraft.minimumHotelRating > 0 ? `${preferenceDraft.minimumHotelRating}-star minimum` : "",
     preferenceDraft.freeCancellation ? "Free cancellation preferred" : "",
     preferenceDraft.temperatureMin !== undefined || preferenceDraft.temperatureMax !== undefined ? `Typical daytime high: ${preferenceDraft.temperatureMin ?? "no minimum"} to ${preferenceDraft.temperatureMax ?? "no maximum"}°${preferenceDraft.temperatureUnit || temperatureUnit}` : "",

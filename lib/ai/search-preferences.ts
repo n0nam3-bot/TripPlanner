@@ -1,3 +1,5 @@
+import { LAYOVER_COUNTRY_OPTIONS } from "@/lib/trip-planner/flight-routing";
+import { resolveAirportCode } from "@/lib/trip-planner/airports";
 import type {
   CabinClass,
   StayAmenity,
@@ -10,7 +12,9 @@ import type {
 
 export type SearchPreferenceDraft = {
   origin?: string;
+  originAirportCode?: string;
   destination?: string;
+  destinationAirportCode?: string;
   destinationArea?: string;
   departureDate?: string;
   returnDate?: string;
@@ -28,6 +32,8 @@ export type SearchPreferenceDraft = {
   preferredAmenities?: StayAmenity[];
   cabinClass?: CabinClass;
   stops?: StopPreference;
+  preferredLayoverCountries?: string[];
+  avoidLayoverCountries?: string[];
   minimumHotelRating?: 0 | 3 | 4 | 5;
   freeCancellation?: boolean;
   temperatureMin?: number;
@@ -47,6 +53,9 @@ const amenities = new Set<StayAmenity>([
 const cabins = new Set<CabinClass>(["economy", "premium_economy", "business", "first"]);
 const stops = new Set<StopPreference>(["any", "nonstop", "one_stop", "two_stops"]);
 const currencies = new Set(["USD", "CAD", "EUR", "GBP"]);
+const layoverCountries = [...LAYOVER_COUNTRY_OPTIONS];
+const layoverCountryByNormalized = new Map(layoverCountries.map((country) => [country.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(), country]));
+const COUNTRY_ALIASES: Record<string, string> = { usa: "United States", us: "United States", america: "United States", uk: "United Kingdom", uae: "United Arab Emirates", korea: "South Korea" };
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -71,6 +80,17 @@ function enumList<T extends string>(value: unknown, allowed: Set<T>, max = 10): 
   if (!Array.isArray(value)) return undefined;
   const result = [...new Set(value.filter((item): item is T => typeof item === "string" && allowed.has(item as T)))].slice(0, max);
   return result.length ? result : undefined;
+}
+
+function sanitizeCountryList(value: unknown, max = 12): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const resolved = value.map((item) => {
+    if (typeof item !== "string") return undefined;
+    const normalized = item.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    return COUNTRY_ALIASES[normalized] ?? layoverCountryByNormalized.get(normalized);
+  }).filter((item): item is string => Boolean(item));
+  const unique = [...new Set(resolved)].slice(0, max);
+  return unique.length ? unique : undefined;
 }
 
 function validDate(value: unknown, todayLocal: string): string | undefined {
@@ -102,9 +122,13 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   const origin = cleanText(raw.origin, 90);
   const destination = cleanText(raw.destination, 120);
   const destinationArea = cleanText(raw.destinationArea, 100);
+  const originAirportCode = cleanText(raw.originAirportCode, 3)?.toUpperCase();
+  const destinationAirportCode = cleanText(raw.destinationAirportCode, 3)?.toUpperCase();
   if (origin) draft.origin = origin;
+  if (originAirportCode && /^[A-Z]{3}$/.test(originAirportCode)) draft.originAirportCode = originAirportCode;
   if (destination) draft.destination = destination;
   if (destinationArea) draft.destinationArea = destinationArea;
+  if (destinationAirportCode && /^[A-Z]{3}$/.test(destinationAirportCode)) draft.destinationAirportCode = destinationAirportCode;
 
   const departureDate = validDate(raw.departureDate, todayLocal);
   const returnDate = validDate(raw.returnDate, todayLocal);
@@ -159,6 +183,8 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   preferred = [...new Set(preferred)].filter((item) => !mustHave.includes(item));
   const cabinClass = enumValue(raw.cabinClass, cabins);
   const stopPreference = enumValue(raw.stops, stops);
+  const preferredLayoverCountries = sanitizeCountryList(raw.preferredLayoverCountries, 8);
+  const avoidLayoverCountries = sanitizeCountryList(raw.avoidLayoverCountries, 12) ?? [];
   const minimumHotelRating = boundedNumber(raw.minimumHotelRating, 0, 5, true);
   const temperatureUnit = enumValue(raw.temperatureUnit, new Set(["F", "C"] as const));
   const temperatureMin = boundedNumber(raw.temperatureMin, -40, temperatureUnit === "C" ? 55 : 130);
@@ -176,6 +202,8 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   if (preferred.length) draft.preferredAmenities = preferred;
   if (cabinClass) draft.cabinClass = cabinClass;
   if (stopPreference) draft.stops = stopPreference;
+  if (preferredLayoverCountries) draft.preferredLayoverCountries = preferredLayoverCountries.filter((country) => !avoidLayoverCountries.includes(country));
+  if (avoidLayoverCountries.length) draft.avoidLayoverCountries = avoidLayoverCountries;
   if (minimumHotelRating !== undefined && [0, 3, 4, 5].includes(minimumHotelRating)) draft.minimumHotelRating = minimumHotelRating as 0 | 3 | 4 | 5;
   if (typeof raw.freeCancellation === "boolean") draft.freeCancellation = raw.freeCancellation;
   if (temperatureUnit) draft.temperatureUnit = temperatureUnit;
@@ -217,20 +245,120 @@ function containsPhrase(source: string, phrase: string): boolean {
   return (` ${normalizedPhrase(source)} `).includes(` ${normalizedPhrase(phrase)} `);
 }
 
-/** Deterministic fallback for common wording; it never invents dates or availability. */
+const MONTHS: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5,
+  jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+};
+
+type ParsedDateToken = { index: number; month: number; day: number; year?: number; raw: string };
+
+function collectDateTokens(source: string): ParsedDateToken[] {
+  const found: ParsedDateToken[] = [];
+  const iso = /\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g;
+  for (const match of source.matchAll(iso)) {
+    found.push({ index: match.index ?? 0, year: Number(match[1]), month: Number(match[2]), day: Number(match[3]), raw: match[0] });
+  }
+  const monthNames = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join("|");
+  const monthFirst = new RegExp(`\\b(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(20\\d{2}))?\\b`, "gi");
+  for (const match of source.matchAll(monthFirst)) {
+    found.push({ index: match.index ?? 0, month: MONTHS[match[1].toLowerCase()], day: Number(match[2]), year: match[3] ? Number(match[3]) : undefined, raw: match[0] });
+  }
+  const dayFirst = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthNames})(?:,?\\s+(20\\d{2}))?\\b`, "gi");
+  for (const match of source.matchAll(dayFirst)) {
+    found.push({ index: match.index ?? 0, day: Number(match[1]), month: MONTHS[match[2].toLowerCase()], year: match[3] ? Number(match[3]) : undefined, raw: match[0] });
+  }
+  const numeric = /\b(\d{1,2})[/.](\d{1,2})(?:[/.](20\d{2}))?\b/g;
+  for (const match of source.matchAll(numeric)) {
+    found.push({ index: match.index ?? 0, month: Number(match[1]), day: Number(match[2]), year: match[3] ? Number(match[3]) : undefined, raw: match[0] });
+  }
+  const unique = new Map<number, ParsedDateToken>();
+  for (const token of found.sort((a, b) => a.index - b.index)) {
+    if (token.month < 1 || token.month > 12 || token.day < 1 || token.day > 31) continue;
+    if (!unique.has(token.index)) unique.set(token.index, token);
+  }
+  return [...unique.values()].sort((a, b) => a.index - b.index);
+}
+
+function formatISODate(year: number, month: number, day: number): string | undefined {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return undefined;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function resolveDateToken(token: ParsedDateToken, todayLocal: string, notBefore = todayLocal): string | undefined {
+  const floor = new Date(`${notBefore}T00:00:00Z`);
+  const startYear = token.year ?? floor.getUTCFullYear();
+  const endYear = token.year ?? startYear + 4;
+  for (let year = startYear; year <= endYear; year += 1) {
+    const value = formatISODate(year, token.month, token.day);
+    if (!value) continue;
+    if (token.year !== undefined && value < todayLocal) return undefined;
+    if (value >= notBefore) return value;
+  }
+  return undefined;
+}
+
+function extractLayoverCountryPreferences(source: string): { preferred: string[]; avoided: string[] } {
+  const preferred: string[] = [];
+  const avoided: string[] = [];
+  for (const country of LAYOVER_COUNTRY_OPTIONS) {
+    const escaped = country.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`(^|[^a-z])${escaped}(?=$|[^a-z])`, "i").exec(source);
+    if (!match || match.index === undefined) continue;
+    const before = source.slice(Math.max(0, match.index - 100), match.index);
+    // Use the latest connection instruction before this country, rather than
+    // letting an avoid/prefer statement about a different country leak over.
+    const intentMatches = [...before.matchAll(/\b(avoid|avoiding|exclude|excluding|skip|never|prefer|preferred|ideally|favor|favour)\b/gi)];
+    const latestIntent = intentMatches.length ? intentMatches[intentMatches.length - 1][1].toLowerCase() : "";
+    const negativeTransit = /\b(?:do not|don't|dont|not to|no)\b[^.!?;]{0,45}\b(?:connect|stop|layover|transit)\b[^.!?;]{0,24}$/i.test(before);
+    if (["avoid", "avoiding", "exclude", "excluding", "skip", "never"].includes(latestIntent) || negativeTransit) avoided.push(country);
+    else if (["prefer", "preferred", "ideally", "favor", "favour"].includes(latestIntent)
+      || /\b(connect through|connection through|layover in|stop in|stops in|transit through|connect via|route through)\b/i.test(before)) preferred.push(country);
+  }
+  return {
+    preferred: [...new Set(preferred)].filter((country) => !avoided.includes(country)).slice(0, 8),
+    avoided: [...new Set(avoided)].slice(0, 12),
+  };
+}
+
+/** Deterministic parser used when an AI provider is unavailable or incomplete. */
 export function parseDeterministicSearchPreferenceDraft(description: string, todayLocal: string): SearchPreferenceDraft {
   const source = description.trim();
   const raw: Record<string, unknown> = {};
-  const area = [...KNOWN_DESTINATION_AREAS]
+
+  const destinationClause = source.match(/\bto\s+(.+?)(?=\s+\b(?:on|depart(?:ing)?|return|back|budget|our|avoid|prefer|premium|eco|business|economy|with|for)\b|[,;]|$)/i)?.[1]?.trim();
+  const destinationSearchText = destinationClause || source;
+  const area = [...KNOWN_DESTINATION_AREAS, { aliases: ["tirana", "tirane"], destination: "Albania", destinationArea: "Tirana" }]
     .sort((a, b) => Math.max(...b.aliases.map((item) => normalizedPhrase(item).length)) - Math.max(...a.aliases.map((item) => normalizedPhrase(item).length)))
-    .find((item) => item.aliases.some((alias) => containsPhrase(source, alias)));
+    .find((item) => item.aliases.some((alias) => containsPhrase(destinationSearchText, alias)));
   if (area) {
     raw.destination = area.destination;
     raw.destinationArea = area.destinationArea;
   } else {
-    const countries = ["Dominican Republic", "Puerto Rico", "United States", "United Kingdom", "Mexico", "Portugal", "Jamaica", "Aruba", "Canada", "France", "Italy", "Spain", "Japan"];
-    const country = countries.find((item) => containsPhrase(source, item));
+    const countries = [...new Set<string>([...LAYOVER_COUNTRY_OPTIONS, "Dominican Republic", "Puerto Rico", "United States", "United Kingdom", "Mexico", "Portugal", "Jamaica", "Aruba", "Canada", "France", "Italy", "Spain", "Japan"] )];
+    const normalizedDestinationText = ` ${normalizedPhrase(destinationSearchText)} `;
+    const country = countries
+      .map((item) => ({ country: item, index: normalizedDestinationText.indexOf(` ${normalizedPhrase(item)} `) }))
+      .filter((item) => item.index >= 0)
+      .sort((a, b) => a.index - b.index)[0]?.country;
     if (country) raw.destination = country;
+  }
+
+  const fromTo = source.match(/\bfrom\s+(.+?)\s+to\s+/i);
+  if (fromTo?.[1]) {
+    const requestedOrigin = fromTo[1].trim().replace(/[,.]+$/, "");
+    const originCode = resolveAirportCode(requestedOrigin);
+    if (requestedOrigin) raw.origin = /^[a-z]{3}$/i.test(requestedOrigin) ? requestedOrigin.toUpperCase() : originCode ? `${requestedOrigin} (${originCode})` : requestedOrigin;
+    if (originCode) raw.originAirportCode = originCode;
+  }
+  if (destinationClause) {
+    const explicitCode = destinationClause.match(/\b([a-z]{3})\)?$/i)?.[1]?.toUpperCase();
+    if (explicitCode && /^[A-Z]{3}$/.test(explicitCode)) raw.destinationAirportCode = explicitCode;
+  }
+  if (!raw.destinationAirportCode && typeof raw.destination === "string") {
+    const destinationCode = resolveAirportCode(String(raw.destinationArea || raw.destination));
+    if (destinationCode) raw.destinationAirportCode = destinationCode;
   }
 
   const asksRental = /\b(airbnb|vrbo|vacation rental|vacation rentals|holiday rental|holiday rentals|rental home|rental property|renting a place|rent a house|rent a home|rent a cabin|rent a villa)\b/i.test(source);
@@ -239,8 +367,8 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
     raw.stayTypes = asksRental && asksHotel ? ["vacation_rentals", "hotels"] : asksRental ? ["vacation_rentals"] : ["hotels"];
     raw.components = ["stays"];
   }
-  if (/\b(flights?|airfare|plane tickets?)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "flights"] )];
-  if (/\b(activities|things to do|attractions|excursions|tours|restaurants|dining)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "activities"] )];
+  if (/\b(flights?|fly|flying|airfare|air travel|plane tickets?)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "flights"])];
+  if (/\b(activities|things to do|attractions|excursions|tours|restaurants|dining)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "activities"])];
 
   if (/\b(beachfront|on the beach|oceanfront|steps from the beach|direct beach access)\b/i.test(source)) {
     raw.tripStyle = "beach";
@@ -256,8 +384,7 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
   const mustHave = Array.isArray(raw.mustHaveAmenities) ? raw.mustHaveAmenities as string[] : [];
   const preferred = Array.isArray(raw.preferredAmenities) ? raw.preferredAmenities as string[] : [];
   const addMust = (id: string) => { if (!mustHave.includes(id)) mustHave.push(id); };
-  const addPrefer = (id: string) => { if (!preferred.includes(id) && !mustHave.includes(id)) preferred.push(id); };
-  const poolNegated = /\b(no|not|without|don\'t|do not|doesn\'t|does not)\b.{0,36}\b(pool)\b/i.test(source);
+  const poolNegated = /\b(no|not|without|don't|do not|doesn't|does not)\b.{0,36}\b(pool)\b/i.test(source);
   if (privatePool) addMust("private_pool");
   else if (sharedPool) addMust("shared_pool");
   else if (!poolNegated && /\bpool\b/i.test(source)) addMust("pool");
@@ -280,20 +407,63 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
   if (mustHave.length) raw.mustHaveAmenities = mustHave;
   if (preferred.length) raw.preferredAmenities = preferred;
 
+  const explicitParty = source.match(/\b(?:flights?|airfare|tickets?|booking|reservation|trip|travel)\s+for\s+(\d{1,2})\b|\b(?:for|party of|group of)\s+(\d{1,2})\s*(?=(?:adults?|people|persons|travelers?|travellers?|guests?)\b|(?:from|going|leaving|traveling|travelling)\b)/i);
   const adults = source.match(/\b(\d{1,2})\s*(?:adults?|people|persons|travelers|travellers|guests)\b/i);
-  if (adults) raw.adults = Number(adults[1]);
+  if (explicitParty) raw.adults = Number(explicitParty[1] || explicitParty[2]);
+  else if (adults) raw.adults = Number(adults[1]);
   const rooms = source.match(/\b(\d{1,2})\s*rooms?\b/i);
   if (rooms) raw.rooms = Number(rooms[1]);
-  const budget = source.match(/\b(?:under|below|up to|max(?:imum)?|budget(?: of)?)\s*(?:us\$|\$)?\s*([\d,]+)|\$\s*([\d,]+)/i);
+
+  const budget = source.match(/\b(?:under|below|up to|max(?:imum)?|budget(?:\s+of)?|budget\s+is|budget\s+it\s+is)[^\d$€£]{0,28}(?:us\$|[$€£])?\s*([\d,]+)/i)
+    || source.match(/([$€£])\s*([\d,]+)/);
   if (budget) {
-    raw.budget = Number((budget[1] || budget[2]).replace(/,/g, ""));
+    const amountText = budget[2] && budget[1] && /^[$€£]$/.test(budget[1]) ? budget[2] : budget[1];
+    raw.budget = Number(amountText.replace(/,/g, ""));
     raw.budgetMode = /per person|each|per traveler|per traveller/i.test(source) ? "per_person" : "total";
-    raw.currency = /\b(cad|canadian dollars?)\b/i.test(source) ? "CAD" : /\b(eur|euros?)\b/i.test(source) ? "EUR" : /\b(gbp|pounds?)\b/i.test(source) ? "GBP" : "USD";
+    raw.currency = /\b(cad|canadian dollars?)\b/i.test(source) ? "CAD" : /\b(eur|euros?)\b|€/i.test(source) ? "EUR" : /\b(gbp|pounds?)\b|£/i.test(source) ? "GBP" : "USD";
+  }
+
+  if (/\b(premium\s*(?:economy|eco)|premium\s+coach|prem\s+eco)\b/i.test(source)) raw.cabinClass = "premium_economy";
+  else if (/\b(first class|first cabin)\b/i.test(source)) raw.cabinClass = "first";
+  else if (/\b(business class|business cabin)\b/i.test(source)) raw.cabinClass = "business";
+  else if (/\b(economy|coach)\b/i.test(source)) raw.cabinClass = "economy";
+
+  if (/\b(nonstop|non stop|direct flight)\b/i.test(source)) raw.stops = "nonstop";
+  else if (/\b(up to|maximum of|max)\s+1\s+stop\b/i.test(source) || /\bone stop\b/i.test(source)) raw.stops = "one_stop";
+  else if (/\b(up to|maximum of|max)\s+2\s+stops?\b/i.test(source) || /\btwo stops\b/i.test(source)) raw.stops = "two_stops";
+
+  const layovers = extractLayoverCountryPreferences(source);
+  if (layovers.preferred.length) raw.preferredLayoverCountries = layovers.preferred;
+  if (layovers.avoided.length) raw.avoidLayoverCountries = layovers.avoided;
+
+  const dateTokens = collectDateTokens(source);
+  if (dateTokens.length) {
+    const first = dateTokens[0];
+    const firstContext = source.slice(Math.max(0, first.index - 28), first.index);
+    if (/\b(return|returning|back)\b/i.test(firstContext)) {
+      const resolved = resolveDateToken(first, todayLocal);
+      if (resolved) raw.returnDate = resolved;
+    } else {
+      const departure = resolveDateToken(first, todayLocal);
+      if (departure) raw.departureDate = departure;
+      if (dateTokens.length > 1) {
+        const second = dateTokens[1];
+        const secondContext = source.slice(Math.max(0, second.index - 32), second.index);
+        const resolvedReturn = resolveDateToken(second, todayLocal, departure || todayLocal);
+        if (resolvedReturn && (!departure || resolvedReturn > departure)) raw.returnDate = resolvedReturn;
+        if (!departure && /\b(return|returning|back)\b/i.test(secondContext) && resolvedReturn) raw.returnDate = resolvedReturn;
+      }
+    }
+    if (dateTokens.some((item) => item.year === undefined) && (raw.departureDate || raw.returnDate)) {
+      const dateLabel = [raw.departureDate, raw.returnDate].filter((item): item is string => typeof item === "string").join(" – ");
+      raw.notes = [...(Array.isArray(raw.notes) ? raw.notes as string[] : []), `No year was specified. Tripfinder selected the next upcoming date(s): ${dateLabel}. Confirm the year before searching.`];
+    }
   }
 
   if (/\b(entire|whole) (house|home|property|place|cabin|condo|villa)\b|\bprivate (house|home|property|cabin|condo|villa)\b/i.test(source)) raw.staySpaceType = "entire_place";
   else if (/\bprivate room\b/i.test(source)) raw.staySpaceType = "private_room";
   else if (/\bshared room\b/i.test(source)) raw.staySpaceType = "shared_room";
+
   return sanitizeSearchPreferenceDraft(raw, todayLocal, source);
 }
 
@@ -302,14 +472,18 @@ export const SEARCH_PREFERENCE_SYSTEM_PROMPT = [
   "Return exactly one JSON object and no markdown. Do not execute searches or claim availability.",
   "Only populate fields explicitly stated or strongly implied by the traveler's request. Use null for every field not requested; never copy a current form value merely because it is present in context.",
   "Keep existing choices unchanged unless the traveler explicitly changes them. Output only the changed fields.",
-  "For US state or country plus city/region, set destination to the parent state/country and destinationArea to the requested city/area. Examples: Poconos, Pennsylvania => destination='Pennsylvania', destinationArea='Poconos'; Punta Cana, Dominican Republic => destination='Dominican Republic', destinationArea='Punta Cana'. For a standalone city/country, set destination to a clearly qualified city and country and leave destinationArea null.",
+  "For US state or country plus city/region, set destination to the parent state/country and destinationArea to the requested city/area. Examples: Poconos, Pennsylvania => destination='Pennsylvania', destinationArea='Poconos'; Punta Cana, Dominican Republic => destination='Dominican Republic', destinationArea='Punta Cana'; Tirana, Albania => destination='Albania', destinationArea='Tirana', destinationAirportCode='TIA'. For a country plus airport code, keep the country in destination and the three-letter code in destinationAirportCode (for example Albania and TIA).",
+
   "Recognize accommodation intent: hotel => stayTypes=['hotels']; Airbnb, house, cabin, condo, villa, vacation rental or entire home => stayTypes=['vacation_rentals']; both => both. A request to rent a whole house, cabin, condo, villa or entire home means staySpaceType='entire_place'; private room => 'private_room'; shared room => 'shared_room'.",
   "Translate amenities only to these IDs: private_pool, shared_pool, pool, indoor_pool, heated_pool, outdoor_pool, hot_tub, sauna, outdoor_grill, kitchen, kitchenette, fireplace, washer_dryer, balcony_terrace, free_parking, pet_friendly, beach_access, gym, wifi, air_conditioning. Do not infer private_pool from a generic pool. If the traveler says private pool, use private_pool. If community/shared pool, use shared_pool. If simply pool, use pool.",
   "Features phrased as must-have, need, require, or a direct 'with X' condition go into mustHaveAmenities. Features phrased as prefer, ideally, would like, or nice-to-have go into preferredAmenities. Never put the same amenity in both.",
   "Recognize components: airfare/flight => flights; lodging/stay/hotel/rental => stays; sightseeing/tours/activities/restaurants => activities. Do not add unrelated components.",
+  "Recognize route endpoints and explicit three-letter airport codes; populate origin, originAirportCode, destination, destinationArea, and destinationAirportCode when stated. For example, from NYC to Albania TIA means originAirportCode=NYC, destination=Albania, destinationAirportCode=TIA.",
+  "Recognize avoid/prefer connection-country instructions and populate avoidLayoverCountries and preferredLayoverCountries using canonical country names from the available country options. An avoid instruction must never be put in the preferred list.",
+  "Recognize premium eco, premium economy, or premium coach as cabinClass=premium_economy. A phrase like 'flight for 2' means adults=2 unless children are explicitly mentioned.",
   "Allowed tripStyle: any, beach, city, food, nature, romantic, family, adventure, culture. Allowed cabinClass: economy, premium_economy, business, first. Allowed stops: any, nonstop, one_stop, two_stops. Allowed currency: USD, CAD, EUR, GBP. Allowed staySpaceType: any, entire_place, private_room, shared_room.",
   "Dates must be YYYY-MM-DD using the supplied local current date. If a date is ambiguous, omit it and add a short note asking the traveler to confirm. Do not invent missing years or dates.",
   "Budget must be a number without a currency symbol. Distinguish total budget from per-person budget. Adults 1-9, childrenAges 1-17, rooms 1-8.",
-  "JSON keys: origin,destination,destinationArea,departureDate,returnDate,adults,childrenAges,rooms,budget,budgetMode,currency,components,tripStyle,stayTypes,staySpaceType,mustHaveAmenities,preferredAmenities,cabinClass,stops,minimumHotelRating,freeCancellation,temperatureMin,temperatureMax,temperatureUnit,notes.",
+  "JSON keys: origin,originAirportCode,destination,destinationArea,destinationAirportCode,departureDate,returnDate,adults,childrenAges,rooms,budget,budgetMode,currency,components,tripStyle,stayTypes,staySpaceType,mustHaveAmenities,preferredAmenities,cabinClass,stops,preferredLayoverCountries,avoidLayoverCountries,minimumHotelRating,freeCancellation,temperatureMin,temperatureMax,temperatureUnit,notes.",
   "For fields not requested, return null. For arrays with no requested values, return null rather than an empty array.",
 ].join(" ");

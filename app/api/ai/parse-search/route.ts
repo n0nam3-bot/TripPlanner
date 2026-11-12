@@ -13,6 +13,7 @@ import {
   requestOpenRouterCompletion,
   type TripAssistantContext,
 } from "@/lib/ai/trip-assistant";
+import { LAYOVER_COUNTRY_OPTIONS } from "@/lib/trip-planner/flight-routing";
 import {
   extractSearchPreferenceJson,
   sanitizeSearchPreferenceDraft,
@@ -33,7 +34,7 @@ function safeText(value: unknown, max: number): string {
 function safeCurrent(value: unknown): Record<string, unknown> {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const result: Record<string, unknown> = {};
-  const stringFields = ["origin", "destination", "destinationArea", "depart", "return", "style", "budgetMode", "currency", "staySpaceType", "cabin", "stops"];
+  const stringFields = ["origin", "originAirportCode", "destination", "destinationAirportCode", "destinationArea", "depart", "return", "style", "budgetMode", "currency", "staySpaceType", "cabin", "stops"];
   for (const key of stringFields) {
     const value = safeText(raw[key], 120);
     if (value) result[key] = value;
@@ -43,7 +44,7 @@ function safeCurrent(value: unknown): Record<string, unknown> {
     const value = raw[key];
     if (typeof value === "number" && Number.isFinite(value)) result[key] = value;
   }
-  for (const key of ["components", "stayTypes", "stayMust", "stayPrefer"]) {
+  for (const key of ["components", "stayTypes", "stayMust", "stayPrefer", "preferredLayoverCountries", "avoidLayoverCountries"]) {
     if (Array.isArray(raw[key])) result[key] = raw[key].slice(0, 24).map((item) => safeText(item, 40)).filter(Boolean);
   }
   return result;
@@ -83,9 +84,21 @@ export async function POST(request: Request) {
     const localDraftFields = Object.entries(localDraft).filter(([key, value]) => key !== "notes" && value !== undefined).length;
     const hasLocalDraft = localDraftFields > 0;
     const hasUnparsedComplexDetail = /\b(20\d{2}|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|nights?|days?|adults?|children|kids?|travelers?|travellers?|guests?|rooms?|bedrooms?|under|below|budget|between|per person|each|stop(?:s)?|economy|business class)\b|\$\s*\d/i.test(description);
+    const requestedDates = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}|\b20\d{2}-\d{2}-\d{2}\b|\b\d{1,2}[/.]\d{1,2}\b/i.test(description);
+    const requestedBudget = /\b(budget|under|below|up to|max(?:imum)?)\b|[$€£]\s*\d/i.test(description);
+    const requestedPartySize = /\b(?:flights?|airfare|tickets?|booking|reservation|trip|travel)\s+for\s+\d{1,2}\b|\b(?:for|party of|group of)\s+\d{1,2}\s*(?=(?:adults?|people|persons|travelers?|travellers?|guests?)\b|(?:from|going|leaving|traveling|travelling)\b)|\b\d{1,2}\s*(?:adults?|people|persons|travelers?|travellers?|guests?)\b/i.test(description);
+    const requestedCabin = /\b(premium\s*(?:economy|eco)|premium\s+coach|prem\s+eco|first class|business class|economy|coach)\b/i.test(description);
+    const connectionCountryMentioned = LAYOVER_COUNTRY_OPTIONS.some((country) => new RegExp(`(^|[^a-z])${country.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^a-z])`, "i").test(description));
+    const requestedConnectionConstraint = connectionCountryMentioned && /\b(avoid|avoiding|exclude|excluding|skip|prefer|preferred|connect through|connection through|layover in|stops? to|stop in|transit through)\b/i.test(description);
+    const localFlightDetailsComplete = (!requestedDates || Boolean(localDraft.departureDate || localDraft.returnDate))
+      && (!requestedBudget || localDraft.budget !== undefined)
+      && (!requestedPartySize || localDraft.adults !== undefined)
+      && (!requestedCabin || Boolean(localDraft.cabinClass))
+      && (!requestedConnectionConstraint || Boolean(localDraft.preferredLayoverCountries?.length || localDraft.avoidLayoverCountries?.length));
     const isShortHighConfidenceRequest = Boolean(localDraft.destination && localDraft.components?.length)
-      && description.length <= 220
-      && !hasUnparsedComplexDetail;
+      && description.length <= 400
+      && (!hasUnparsedComplexDetail || localFlightDetailsComplete)
+      && localFlightDetailsComplete;
 
     const sendLocalDraft = async (reason: "direct" | "fallback") => {
       await recordProviderEvent({ provider: "Tripfinder Smart Parser", category: "Search preference parser", eventType: reason === "direct" ? "local_parse" : "provider_fallback", outcome: "success", cacheStatus: "none" });
@@ -114,7 +127,7 @@ export async function POST(request: Request) {
 
     const normalizedDescription = description.toLocaleLowerCase().replace(/\s+/g, " ").trim();
     const currentKey = JSON.stringify(current);
-    const cacheBase = { kind: "tripfinder-search-preference-draft-v1", description: normalizedDescription, current: currentKey, todayLocal };
+    const cacheBase = { kind: "tripfinder-search-preference-draft-v2", description: normalizedDescription, current: currentKey, todayLocal };
     const openRouterKey = providerCacheKey({ ...cacheBase, provider: "openrouter" });
     const geminiKey = providerCacheKey({ ...cacheBase, provider: "gemini-consented" });
 
@@ -149,6 +162,8 @@ export async function POST(request: Request) {
         tripStyle: safeText(current.style, 40) || undefined,
         mustHave: Array.isArray(current.stayMust) ? current.stayMust as string[] : [],
         prefer: Array.isArray(current.stayPrefer) ? current.stayPrefer as string[] : [],
+        preferredLayoverCountries: Array.isArray(current.preferredLayoverCountries) ? current.preferredLayoverCountries as string[] : [],
+        avoidedLayoverCountries: Array.isArray(current.avoidLayoverCountries) ? current.avoidLayoverCountries as string[] : [],
       },
     };
     const question = [
@@ -177,7 +192,10 @@ export async function POST(request: Request) {
         const completion = await attempt.run();
         const raw = extractSearchPreferenceJson(completion.answer);
         if (!raw) throw new Error("AI_SEARCH_PARSER_INVALID_JSON");
-        const draft: SearchPreferenceDraft = sanitizeSearchPreferenceDraft(raw, todayLocal, description);
+        // The local parser acts as a deterministic backstop for dates, IATA codes,
+        // party size, cabin aliases and connection-country constraints. Merge it
+        // over the model response so a partial AI answer cannot silently drop them.
+        const draft: SearchPreferenceDraft = sanitizeSearchPreferenceDraft({ ...raw, ...localDraft }, todayLocal, description);
         const usableFields = Object.entries(draft).filter(([key, value]) => key !== "notes" && value !== undefined).length;
         if (!usableFields) throw new Error("AI_SEARCH_PARSER_EMPTY_DRAFT");
 
