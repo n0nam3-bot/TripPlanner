@@ -44,8 +44,10 @@
 - Parser calls are cached in Neon for 24 hours, share existing AI daily/minute controls, and are logged as a separate `/admin` category without storing prompt text.
 - Gemini fallback remains opt-in per parsing request. No Vercel AI Gateway integration.
 
-## Release 4 — verified trip assembly (next)
+## Release 4 — verified trip assembly (in progress)
 - [x] Add an in-results trip cost ledger separating provider-displayed stay totals, reference-only flight quotes, user-entered ground transport/activity/dining estimates and a transparent contingency allowance. The displayed planning amount is explicitly partial; unknown amounts and ambiguous flight price bases are excluded.
+- [x] Replace the dense trip-selection text block with compact flight, accommodation, activity and dining cards, including direct links to the exact selected result and clearly separate provider links.
+- [x] Extend the travel timeline with selected flight departure/arrival times, links to selected results, editable property check-in/check-out time notes, and exact user-entered activity/restaurant times. Provider-unsupplied times remain visibly unconfirmed; editing a time does not create a reservation.
 - Add real activity/point-of-interest provider with licensing and display-rights review.
 - Add distance and travel-time estimates for activities, using a permitted maps/routing provider.
 - Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.
