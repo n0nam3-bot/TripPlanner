@@ -15,6 +15,7 @@ export type TripAssistantContext = {
     prefer?: string[];
   };
   flights?: Array<{
+    id: string;
     airline: string;
     from: string;
     to: string;
@@ -24,7 +25,10 @@ export type TripAssistantContext = {
     stops: number;
   }>;
   stays?: Array<{
+    id: string;
     name: string;
+    externalUrl?: string;
+    externalUrlLabel?: string;
     source: string;
     propertyType: string;
     spaceType: string;
@@ -40,8 +44,11 @@ export type TripAssistantContext = {
     reviews: number | null;
   }>;
   experiences?: Array<{
+    id: string;
     kind: "activity" | "restaurant";
     name: string;
+    externalUrl?: string;
+    externalUrlLabel?: string;
     category: string;
     address: string;
     rating: number | null;
@@ -57,6 +64,13 @@ export type TripAssistantContext = {
 
 export type AICompletion = { provider: AIProviderName; model: string; answer: string; httpStatus: number; durationMs: number; promptTokens: number | null; completionTokens: number | null };
 export type TripAssistantMessage = { role: "user" | "assistant"; content: string };
+export type TripAssistantResultAction = {
+  kind: "stay" | "flight" | "activity" | "restaurant";
+  label: string;
+  anchor: string;
+  externalUrl?: string;
+  externalUrlLabel?: string;
+};
 export type AICompletionOptions = { systemPrompt?: string; maxTokens?: number; jsonMode?: boolean };
 
 function tokenCount(value: unknown): number | null {
@@ -115,7 +129,16 @@ export function isTripfinderQuestionInScope(question: string, history: TripAssis
   );
   if (hasOptions && followUpOnly && recentTravelExchange) return true;
 
-  const refersToPriorTripDiscussion = /\b(?:it|that|this|they|them|those|these|the first|the second|the other|same one|why|how about|what about|tell me more|and then|yes|yeah|but|so)\b/i.test(normalized);
+  const linkOrNavigationFollowUp = /\b(?:direct\s+)?(?:link|url)\b|\b(?:show me|take me|bring me to|go to)\b|\bopen (?:it|that|the (?:listing|property|stay|result))\b/i.test(normalized);
+  const recentResultReference = history.slice(-8).some((message) =>
+    TRIP_TOPIC_PATTERN.test(message.content)
+    || context.stays?.some((stay) => stay.name && message.content.toLowerCase().includes(stay.name.toLowerCase()))
+    || context.experiences?.some((experience) => experience.name && message.content.toLowerCase().includes(experience.name.toLowerCase()))
+    || context.flights?.some((flight) => flight.airline && message.content.toLowerCase().includes(flight.airline.toLowerCase()))
+  );
+  if (hasOptions && linkOrNavigationFollowUp && recentResultReference) return true;
+
+  const refersToPriorTripDiscussion = /\b(?:it|that|this|they|them|those|these|the first|the second|the other|same one|why|how about|what about|tell me more|and then|yes|yeah|but|so|link|url|show me|take me|open it)\b/i.test(normalized);
   const priorTripQuestion = history.some((message) => message.role === "user" && TRIP_TOPIC_PATTERN.test(message.content));
   return refersToPriorTripDiscussion && priorTripQuestion;
 }
@@ -211,6 +234,85 @@ export function buildTripAssistantLocalFallback(question: string, context: TripA
   }
   lines.push("This is a classification of the loaded listing text, not an independent confirmation. Before booking, ask the host whether the property entrance opens directly onto the beach and confirm the exact route.");
   return lines.join("\n\n");
+}
+
+export function getTripAssistantResultAnchor(kind: TripAssistantResultAction["kind"], id: string): string {
+  const normalized = id.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+  return `trip-${kind}-${normalized || "result"}`;
+}
+
+export function getTripAssistantStayAnchor(id: string): string {
+  return getTripAssistantResultAnchor("stay", id);
+}
+
+function isSafeExternalUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildTripAssistantResultActions(
+  question: string,
+  history: TripAssistantMessage[],
+  context: TripAssistantContext,
+  answer = "",
+): TripAssistantResultAction[] {
+  const referenceText = [...history.slice(-8).map((message) => message.content), question, answer].join("\n").toLocaleLowerCase();
+  const matches: TripAssistantResultAction[] = [];
+
+  for (const stay of context.stays ?? []) {
+    if (!stay.id || !stay.name || stay.name.length < 5 || !referenceText.includes(stay.name.toLocaleLowerCase())) continue;
+    matches.push({
+      kind: "stay", label: stay.name, anchor: getTripAssistantStayAnchor(stay.id),
+      externalUrl: isSafeExternalUrl(stay.externalUrl),
+      externalUrlLabel: stay.externalUrlLabel || "Open property listing",
+    });
+  }
+
+  for (const flight of context.flights ?? []) {
+    if (!flight.id || !flight.airline) continue;
+    const carrierMentioned = referenceText.includes(flight.airline.toLocaleLowerCase());
+    const timeMentioned = flight.departure && referenceText.includes(flight.departure.toLocaleLowerCase());
+    const routeMentioned = flight.from && flight.to && referenceText.includes(flight.from.toLocaleLowerCase()) && referenceText.includes(flight.to.toLocaleLowerCase());
+    if (!carrierMentioned || (!timeMentioned && !routeMentioned)) continue;
+    matches.push({
+      kind: "flight",
+      label: `${flight.airline} · ${flight.from} → ${flight.to} · ${flight.departure}`,
+      anchor: getTripAssistantResultAnchor("flight", flight.id),
+    });
+  }
+
+  for (const experience of context.experiences ?? []) {
+    if (!experience.id || !experience.name || experience.name.length < 5 || !referenceText.includes(experience.name.toLocaleLowerCase())) continue;
+    matches.push({
+      kind: experience.kind, label: experience.name,
+      anchor: getTripAssistantResultAnchor(experience.kind, experience.id),
+      externalUrl: isSafeExternalUrl(experience.externalUrl),
+      externalUrlLabel: experience.externalUrlLabel || (experience.kind === "restaurant" ? "Open place details" : "Open activity listing"),
+    });
+  }
+
+  // If a beach-specific answer uses a shorthand instead of repeating full property
+  // names, attach actions only to listings with explicit beach evidence in the snapshot.
+  if (!matches.length && /\b(?:beach|beachfront|beach front|beach access)\b/i.test(question + " " + referenceText)) {
+    for (const stay of context.stays ?? []) {
+      if (!stay.id || !stay.name) continue;
+      const evidence = beachEvidence(stay);
+      if (!evidence.frontMatch && !evidence.accessMatch && !evidence.genericAccessMatch && !evidence.distance) continue;
+      matches.push({ kind: "stay", label: stay.name, anchor: getTripAssistantStayAnchor(stay.id), externalUrl: isSafeExternalUrl(stay.externalUrl), externalUrlLabel: stay.externalUrlLabel || "Open property listing" });
+    }
+  }
+
+  const unique = new Set<string>();
+  return matches.filter((action) => {
+    if (unique.has(action.anchor)) return false;
+    unique.add(action.anchor);
+    return true;
+  }).slice(0, 8);
 }
 
 function completionText(value: unknown): string {
@@ -310,9 +412,14 @@ export function sanitizeTripAssistantContext(value: unknown): TripAssistantConte
   const text = (input: unknown, max = 180): string => typeof input === "string" ? input.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "";
   const number = (input: unknown): number | null => typeof input === "number" && Number.isFinite(input) ? input : null;
   const list = (input: unknown, maxItems = 12): string[] => Array.isArray(input) ? input.slice(0, maxItems).map((item) => text(item, 60)).filter(Boolean) : [];
+  const safeUrl = (input: unknown): string | undefined => {
+    if (typeof input !== "string" || !input.trim()) return undefined;
+    try { const parsed = new URL(input); return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : undefined; }
+    catch { return undefined; }
+  };
   const flights = Array.isArray(root.flights) ? root.flights.slice(0, 8).map((item) => {
     const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
-    return { airline: text(row.airline, 100), from: text(row.from, 120), to: text(row.to, 120), departure: text(row.departure, 60), arrival: text(row.arrival, 60), price: number(row.price), stops: Math.max(0, Math.min(4, Math.floor(number(row.stops) ?? 0))) };
+    return { id: text(row.id, 180), airline: text(row.airline, 100), from: text(row.from, 120), to: text(row.to, 120), departure: text(row.departure, 60), arrival: text(row.arrival, 60), price: number(row.price), stops: Math.max(0, Math.min(4, Math.floor(number(row.stops) ?? 0))) };
   }) : [];
   const stays = Array.isArray(root.stays) ? root.stays.slice(0, 14).map((item) => {
     const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
@@ -325,7 +432,9 @@ export function sanitizeTripAssistantContext(value: unknown): TripAssistantConte
       return { name: text(nearby.name, 120), category: text(nearby.category, 80), transportations };
     }) : [];
     return {
-      name: text(row.name, 160), source: text(row.source, 60), propertyType: text(row.propertyType, 100), spaceType: text(row.spaceType, 50),
+      id: text(row.id, 180), name: text(row.name, 160),
+      externalUrl: safeUrl(row.externalUrl), externalUrlLabel: text(row.externalUrlLabel, 80),
+      source: text(row.source, 60), propertyType: text(row.propertyType, 100), spaceType: text(row.spaceType, 50),
       amenities: list(row.amenities), description: text(row.description, 650), address: text(row.address, 120),
       essentialInfo: list(row.essentialInfo, 10), excludedAmenities: list(row.excludedAmenities, 10), nearbyPlaces,
       totalPrice: number(row.totalPrice), nightlyPrice: number(row.nightlyPrice), rating: number(row.rating), reviews: number(row.reviews)
@@ -334,7 +443,7 @@ export function sanitizeTripAssistantContext(value: unknown): TripAssistantConte
   const experiences = Array.isArray(root.experiences) ? root.experiences.slice(0, 16).map((item) => {
     const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
     const kind: "activity" | "restaurant" = row.kind === "restaurant" ? "restaurant" : "activity";
-    return { kind, name: text(row.name, 160), category: text(row.category, 100), address: text(row.address, 160), rating: number(row.rating), price: text(row.price, 40) };
+    return { id: text(row.id, 180), kind, name: text(row.name, 160), externalUrl: safeUrl(row.externalUrl), externalUrlLabel: text(row.externalUrlLabel, 80), category: text(row.category, 100), address: text(row.address, 160), rating: number(row.rating), price: text(row.price, 40) };
   }) : [];
   const preferences = root.preferences && typeof root.preferences === "object" ? root.preferences as Record<string, unknown> : {};
   const selected = root.selected && typeof root.selected === "object" ? root.selected as Record<string, unknown> : {};

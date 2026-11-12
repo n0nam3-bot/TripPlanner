@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { LoaderCircle, MessageCircle, Minus, Send, Sparkles, X } from "lucide-react";
-import type { TripAssistantContext, TripAssistantMessage } from "@/lib/ai/trip-assistant";
+import type { TripAssistantContext, TripAssistantMessage, TripAssistantResultAction } from "@/lib/ai/trip-assistant";
 
 type Props = {
   context: TripAssistantContext;
@@ -11,7 +11,7 @@ type Props = {
   geminiAvailable: boolean;
   openRouterAvailable: boolean;
 };
-type ChatMessage = TripAssistantMessage & { id: string; provider?: string; cached?: boolean; welcome?: boolean };
+type ChatMessage = TripAssistantMessage & { id: string; provider?: string; cached?: boolean; welcome?: boolean; actions?: TripAssistantResultAction[] };
 
 const quickQuestions = [
   "Which stay best matches my must-have features?",
@@ -68,6 +68,14 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
         id: messageId(), role: "assistant", content: payload.answer as string,
         provider: typeof payload.provider === "string" ? payload.provider : undefined,
         cached: payload.cached === true,
+        actions: Array.isArray(payload.actions) ? payload.actions.flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const action = item as Record<string, unknown>;
+          const kind = action.kind;
+          if ((kind !== "stay" && kind !== "flight" && kind !== "activity" && kind !== "restaurant") || typeof action.label !== "string" || typeof action.anchor !== "string") return [];
+          const externalUrl = typeof action.externalUrl === "string" && /^https?:\/\//i.test(action.externalUrl) ? action.externalUrl : undefined;
+          return [{ kind, label: action.label, anchor: action.anchor, externalUrl, externalUrlLabel: typeof action.externalUrlLabel === "string" ? action.externalUrlLabel : "Open property listing" }];
+        }) : undefined,
       }]);
     } catch (caught) {
       setMessages((current) => [...current, {
@@ -91,6 +99,23 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
     }
   }
 
+  function jumpToResult(anchor: string) {
+    const target = document.getElementById(anchor);
+    if (!target) {
+      setMessages((current) => [...current, {
+        id: messageId(), role: "assistant", content: "I couldn't find that result card in the current results. Reopen the destination's stay results and try again.",
+      }]);
+      return;
+    }
+    setOpen(false);
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+    target.classList.remove("trip-ai-result-highlight");
+    void target.offsetWidth;
+    target.classList.add("trip-ai-result-highlight");
+    window.setTimeout(() => target.classList.remove("trip-ai-result-highlight"), 3000);
+  }
+
   return <div className="trip-ai-dock">
     {open && <section className="trip-ai-panel" role="dialog" aria-label="Tripfinder travel assistant" aria-modal="false">
       <header className="trip-ai-chat-header">
@@ -103,6 +128,15 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
         {messages.map((message) => <div className={`trip-ai-chat-row ${message.role === "user" ? "is-user" : "is-assistant"}`} key={message.id}>
           <div className="trip-ai-chat-bubble">
             <p>{message.content}</p>
+            {message.actions && message.actions.length > 0 && <div className="trip-ai-result-actions">
+              {message.actions.map((action) => <div className="trip-ai-result-action" key={action.anchor}>
+                <strong>{action.label}</strong>
+                <div>
+                  <button type="button" onClick={() => jumpToResult(action.anchor)}>View in results</button>
+                  {action.externalUrl && <a href={action.externalUrl} target="_blank" rel="noreferrer">{action.externalUrlLabel || "Open listing"}</a>}
+                </div>
+              </div>)}
+            </div>}
             {message.provider && <small>{message.provider}{message.cached ? " · saved answer" : message.provider === "Tripfinder local check" ? " · based on loaded result fields" : " · AI-assisted"}</small>}
           </div>
         </div>)}

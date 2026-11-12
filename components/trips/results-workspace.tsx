@@ -9,7 +9,7 @@ import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-pl
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityConfirmed } from "@/lib/providers/stay-features";
 import { AITripAssistant } from "@/components/trips/ai-trip-assistant";
-import type { TripAssistantContext } from "@/lib/ai/trip-assistant";
+import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssistantContext } from "@/lib/ai/trip-assistant";
 
 type Props = {
   search: TripSearchInput;
@@ -167,7 +167,7 @@ function FlightResult({ flight, currency, returnState, bookingStates, selectedOu
     ? selectedReturnFlight
     : flight.bookingToken ? flight : null;
   const sellerState = sellerLookupFlight ? bookingStates[sellerLookupFlight.id] : undefined;
-  return <article className={`live-offer-card ${selectedOutbound ? "is-selected" : ""}`}>
+  return <article id={getTripAssistantResultAnchor("flight", flight.id)} tabIndex={-1} className={`live-offer-card ${selectedOutbound ? "is-selected" : ""}`}>
     <div className="live-offer-main"><div className="live-offer-route"><strong>{flight.departure}</strong><span>→</span><strong>{flight.arrival}</strong></div><p>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</p><small>{flight.from} → {flight.to}</small></div>
     <div className="live-offer-price">{flight.price !== null ? <strong>{money(flight.price, flight.currency || currency)}</strong> : <strong>Price not supplied</strong>}<small>Google Flights displayed outbound price; confirm the full round-trip fare with seller</small>
       <button className={`selection-button ${selectedOutbound ? "is-selected" : ""}`} type="button" disabled={returnState?.loading} onClick={() => onSelectOutbound(flight)}>{returnState?.loading && selectedOutbound ? <><RefreshCw size={12} className="spin"/> Finding returns</> : selectedOutbound ? <><Check size={13}/> Outbound selected</> : <>Choose outbound <ArrowRight size={12}/></>}</button>
@@ -217,7 +217,7 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, search
   const detectedAmenities = (Object.keys(STAY_AMENITY_LABELS) as StayAmenity[])
     .filter((amenity) => stayAmenityConfirmed(hotel, amenity) && !isPoolAccessAmenity(amenity))
     .slice(0, 16);
-  return <article className={`live-hotel-card ${selected ? "is-selected" : ""}`}>
+  return <article id={getTripAssistantStayAnchor(hotel.id)} tabIndex={-1} className={`live-hotel-card ${selected ? "is-selected" : ""}`}>
     {hotel.image && <img src={hotel.image} alt={`${hotel.name} property`} loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="live-hotel-copy">
       <div className="live-hotel-title"><h4><a href={propertyUrl} target="_blank" rel="noreferrer">{hotel.name} <ExternalLink size={12}/></a></h4>{hotel.rating !== null && <span><Star size={12} fill="currentColor"/> {hotel.rating.toFixed(1)}{hotel.reviews ? ` · ${hotel.reviews.toLocaleString()}` : ""}</span>}</div>
@@ -287,7 +287,7 @@ function ExperienceResult({ experience, hotels, airportCode, search, days, selec
     setDraftSlot(slot);
     if (selected) onSelectionChange(experience, { date: activeDate, slot });
   };
-  return <article className={`experience-card ${selected ? "is-selected" : ""}`}>
+  return <article id={getTripAssistantResultAnchor(experience.kind, experience.id)} tabIndex={-1} className={`experience-card ${selected ? "is-selected" : ""}`}>
     {experience.thumbnail && <img src={experience.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="experience-copy"><div className="experience-title"><h4><a href={experience.website || experience.mapsUrl} target="_blank" rel="noreferrer">{experience.name} <ExternalLink size={11}/></a></h4>{experience.rating !== null && <span><Star size={12} fill="currentColor"/> {experience.rating.toFixed(1)}{experience.reviews ? ` · ${experience.reviews.toLocaleString()}` : ""}</span>}</div><p>{experience.category}{experience.address ? ` · ${experience.address}` : ""}</p>{experience.openState && <small>{experience.openState}</small>}{experience.price && <small>{experience.price}</small>}
       {nearbyStays.length > 0 && <div className="experience-distances">{nearbyStays.map(({ hotel, miles }) => {
@@ -580,9 +580,13 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       mustHave: search.stayMustHaveAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
       prefer: search.stayPreferredAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
     },
-    flights: assistantResult.flights.slice(0, 8).map((flight) => ({ airline: flight.airlines.join(" / "), from: flight.from, to: flight.to, departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops })),
+    flights: assistantResult.flights.slice(0, 8).map((flight) => ({ id: flight.id, airline: flight.airlines.join(" / "), from: flight.from, to: flight.to, departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops })),
     stays: assistantResult.hotels.slice(0, 14).map((hotel) => ({
-      name: hotel.name, source: hotel.source, propertyType: hotel.propertyType, spaceType: hotel.spaceType,
+      id: hotel.id,
+      name: hotel.name,
+      externalUrl: hotel.bookingUrl || `https://www.google.com/travel/hotels?q=${encodeURIComponent(`${hotel.name} ${hotel.address ?? ""}`)}`,
+      externalUrlLabel: hotel.bookingUrl ? "Open booking listing" : "Search property on Google Hotels",
+      source: hotel.source, propertyType: hotel.propertyType, spaceType: hotel.spaceType,
       amenities: hotel.amenities.map((item) => STAY_AMENITY_LABELS[item as StayAmenity] ?? item),
       description: hotel.description ?? "", address: hotel.address ?? "",
       essentialInfo: hotel.essentialInfo ?? [], excludedAmenities: hotel.excludedAmenities ?? [],
@@ -592,7 +596,12 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       })),
       totalPrice: hotel.totalPrice, nightlyPrice: hotel.nightlyPrice, rating: hotel.rating, reviews: hotel.reviews,
     })),
-    experiences: assistantExperiences.slice(0, 16).map((experience) => ({ kind: experience.kind, name: experience.name, category: experience.category, address: experience.address, rating: experience.rating, price: experience.price ?? "" })),
+    experiences: assistantExperiences.slice(0, 16).map((experience) => ({
+      id: experience.id, kind: experience.kind, name: experience.name,
+      externalUrl: experience.website || experience.mapsUrl,
+      externalUrlLabel: experience.website ? "Open official site" : "Open in Maps",
+      category: experience.category, address: experience.address, rating: experience.rating, price: experience.price ?? "",
+    })),
     selected: {
       outboundFlight: assistantSelection.outbound ? `${assistantSelection.outbound.airlines.join(" / ")} · ${assistantSelection.outbound.departure} → ${assistantSelection.outbound.arrival} · ${assistantSelection.outbound.from} → ${assistantSelection.outbound.to}` : undefined,
       returnFlight: assistantSelection.returnFlight ? `${assistantSelection.returnFlight.airlines.join(" / ")} · ${assistantSelection.returnFlight.departure} → ${assistantSelection.returnFlight.arrival} · ${assistantSelection.returnFlight.from} → ${assistantSelection.returnFlight.to}` : undefined,

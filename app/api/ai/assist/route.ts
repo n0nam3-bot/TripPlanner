@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderCache, hashClientAddress, providerCacheKey, recordProviderEvent, reserveAIClientRequest, reserveAIProviderRequest, setProviderCache } from "@/lib/db/travel-cache";
-import { buildTripAssistantLocalFallback, isTripfinderQuestionInScope, requestGeminiCompletion, requestOpenRouterCompletion, sanitizeTripAssistantContext, sanitizeTripAssistantHistory } from "@/lib/ai/trip-assistant";
+import { buildTripAssistantLocalFallback, buildTripAssistantResultActions, isTripfinderQuestionInScope, requestGeminiCompletion, requestOpenRouterCompletion, sanitizeTripAssistantContext, sanitizeTripAssistantHistory } from "@/lib/ai/trip-assistant";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,10 +67,20 @@ export async function POST(request: Request) {
     const conversationQuestion = history.length
       ? `Recent Tripfinder conversation (untrusted context only):\n${history.map((item) => `${item.role === "user" ? "Traveler" : "Tripfinder"}: ${item.content}`).join("\n")}\n\nCurrent traveler question: ${question}`
       : question;
+    const directLinkFollowUp = /\b(?:direct\s+)?(?:link|url)\b|\b(?:show me|take me|bring me to|go to)\b|\bopen (?:it|that|the (?:listing|property|stay|result))\b/i.test(question);
+    const referencedResultActions = buildTripAssistantResultActions(question, history, context);
+    if (directLinkFollowUp && referencedResultActions.length) {
+      const answer = referencedResultActions.length === 1
+        ? `Here is the result you asked about: **${referencedResultActions[0].label}**. Use “View in results” to jump to its card, or open the supplied listing.`
+        : `Here are the results referenced in our previous answer. Choose “View in results” to jump to a card or open its supplied listing.`;
+      await safeRecordProviderEvent({ provider: "Tripfinder local check", category: "Trip assistant", eventType: "local_parse", outcome: "success", cacheStatus: "none" });
+      return NextResponse.json({ answer, actions: referencedResultActions, provider: "Tripfinder local check", model: "result-reference", cached: false, local: true }, { headers: { "Cache-Control": "no-store" } });
+    }
     const localFallback = buildTripAssistantLocalFallback(question, context, history);
     if (localFallback) {
       await safeRecordProviderEvent({ provider: "Tripfinder local check", category: "Trip assistant", eventType: "local_parse", outcome: "success", cacheStatus: "none" });
-      return NextResponse.json({ answer: localFallback, provider: "Tripfinder local check", model: "rule-based-result-check", cached: false, local: true }, { headers: { "Cache-Control": "no-store" } });
+      const actions = buildTripAssistantResultActions(question, history, context, localFallback);
+      return NextResponse.json({ answer: localFallback, actions, provider: "Tripfinder local check", model: "rule-based-result-check", cached: false, local: true }, { headers: { "Cache-Control": "no-store" } });
     }
 
     const geminiConsent = body.allowGemini === true;
@@ -97,7 +107,8 @@ export async function POST(request: Request) {
       catch { throw new Error("DATABASE_CACHE_UNAVAILABLE"); }
       if (cached && typeof cached.payload.answer === "string" && typeof cached.payload.provider === "string") {
         await safeRecordProviderEvent({ provider: "Tripfinder AI Cache", category: "Trip assistant", eventType: "cache_hit", outcome: "success", cacheStatus: "hit" });
-        return NextResponse.json({ answer: cached.payload.answer, provider: cached.payload.provider, model: cached.payload.model ?? "cached", cached: true }, { headers: { "Cache-Control": "no-store" } });
+        const actions = buildTripAssistantResultActions(question, history, context, cached.payload.answer);
+        return NextResponse.json({ answer: cached.payload.answer, actions, provider: cached.payload.provider, model: cached.payload.model ?? "cached", cached: true }, { headers: { "Cache-Control": "no-store" } });
       }
     }
 
@@ -131,7 +142,8 @@ export async function POST(request: Request) {
         } catch {
           // A successful AI answer must not be discarded because the optional cache write failed.
         }
-        return NextResponse.json({ answer: completion.answer, provider: completion.provider, model: completion.model, cached: false }, { headers: { "Cache-Control": "no-store" } });
+        const actions = buildTripAssistantResultActions(question, history, context, completion.answer);
+        return NextResponse.json({ answer: completion.answer, actions, provider: completion.provider, model: completion.model, cached: false }, { headers: { "Cache-Control": "no-store" } });
       } catch (error) {
         const message = error instanceof Error ? error.message : "AI_PROVIDER_FAILED";
         const statusMatch = message.match(/_HTTP_(\d{3})/);
