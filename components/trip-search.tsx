@@ -1,12 +1,13 @@
 "use client";
 
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, Sparkles, Users, Wallet } from "lucide-react";
 import type { TripComponent, StayAmenity, StaySpaceType, StayType } from "@/lib/trip-planner/types";
 import type { SearchPreferenceDraft } from "@/lib/ai/search-preferences";
 import { getDestinationGateways, getDestinationRegionScope, getLocationSuggestions, type LocationSuggestion } from "@/lib/trip-planner/location-suggestions";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
+import { LAYOVER_COUNTRY_OPTIONS } from "@/lib/trip-planner/flight-routing";
 
 const dateAfter = (days: number) => {
   const d = new Date();
@@ -42,9 +43,9 @@ function LocationField({
         />
         {airportCode && <small className="location-code">{field === "origin" ? "Departure airport" : "Arrival airport"} · {airportCode}</small>}
       </span>
-      {open && suggestions.length > 0 && <div className="location-suggestions" role="listbox" aria-label={`${label} suggestions`}>
+      {open && <div className="location-suggestions" role="listbox" aria-label={`${label} suggestions`}>
         <div className="suggestion-heading">{field === "origin" ? "Matching departure points" : "Matching destinations"}</div>
-        {suggestions.map((suggestion, index) => {
+        {suggestions.length === 0 ? <div className="location-no-suggestions" role="status">No saved match. Keep typing, or enter a three-letter IATA airport code. Your text stays editable.</div> : suggestions.map((suggestion, index) => {
           const group = suggestion.kind === "region" ? "Countries and states" : suggestion.kind === "airport" ? "Airports" : suggestion.kind === "attraction" ? "Attractions and places" : suggestion.kind === "area" ? "Nearby cities and areas" : "Cities and gateways";
           const previous = suggestions[index - 1];
           const previousGroup = previous ? (previous.kind === "region" ? "Countries and states" : previous.kind === "airport" ? "Airports" : previous.kind === "attraction" ? "Attractions and places" : previous.kind === "area" ? "Nearby cities and areas" : "Cities and gateways") : "";
@@ -127,6 +128,10 @@ export function TripSearch() {
   const [flexibleDays, setFlexibleDays] = useState("0");
   const [cabin, setCabin] = useState("economy");
   const [stops, setStops] = useState("any");
+  const [preferredLayoverCountries, setPreferredLayoverCountries] = useState<string[]>([]);
+  const [avoidLayoverCountries, setAvoidLayoverCountries] = useState<string[]>([]);
+  const [preferredLayoverCountryDraft, setPreferredLayoverCountryDraft] = useState("");
+  const [avoidLayoverCountryDraft, setAvoidLayoverCountryDraft] = useState("");
   const [hotelRating, setHotelRating] = useState("0");
   const [freeCancellation, setFreeCancellation] = useState(false);
   const [temperatureMin, setTemperatureMin] = useState("");
@@ -145,6 +150,45 @@ export function TripSearch() {
   const [preferenceParseError, setPreferenceParseError] = useState("");
   const [preferenceDraft, setPreferenceDraft] = useState<SearchPreferenceDraft | null>(null);
   const [preferenceParseSource, setPreferenceParseSource] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // Keep the complete form draft in this tab session so Edit search / browser
+  // Back and refresh do not throw away criteria or natural-language parsing.
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem("tripfinder:search-draft:v2");
+      if (raw) {
+        const draft = JSON.parse(raw) as Record<string, unknown>;
+        const text = (key: string, setter: (value: string) => void) => { if (typeof draft[key] === "string") setter(draft[key] as string); };
+        const bool = (key: string, setter: (value: boolean) => void) => { if (typeof draft[key] === "boolean") setter(draft[key] as boolean); };
+        const strings = (key: string, setter: (value: string[]) => void) => { if (Array.isArray(draft[key])) setter((draft[key] as unknown[]).filter((item): item is string => typeof item === "string")); };
+        text("origin", setOrigin); text("originAirportCode", setOriginAirportCode); text("destination", setDestination);
+        text("destinationAirportCode", setDestinationAirportCode); text("destinationArea", setDestinationArea); text("depart", setDepart); text("returnDate", setReturnDate);
+        text("adults", setAdults); text("childrenAges", setChildrenAges); text("rooms", setRooms); text("budget", setBudget); text("budgetMode", setBudgetMode);
+        text("currency", setCurrency); text("style", setStyle); text("flexibleDays", setFlexibleDays); text("cabin", setCabin); text("stops", setStops);
+        text("hotelRating", setHotelRating); text("temperatureMin", setTemperatureMin); text("temperatureMax", setTemperatureMax); text("temperatureUnit", (value) => { if (value === "F" || value === "C") setTemperatureUnit(value); });
+        text("plainLanguageDescription", setPlainLanguageDescription); text("preferenceParseSource", setPreferenceParseSource);
+        bool("freeCancellation", setFreeCancellation); bool("allowGeminiPreferenceParsing", setAllowGeminiPreferenceParsing);
+        strings("components", (value) => setComponents(value.filter((item): item is TripComponent => ["flights", "stays", "activities"].includes(item))));
+        strings("stayTypes", (value) => setStayTypes(value.filter((item): item is StayType => ["hotels", "vacation_rentals"].includes(item))));
+        strings("stayMustHaveAmenities", (value) => setStayMustHaveAmenities(value as StayAmenity[]));
+        strings("stayPreferredAmenities", (value) => setStayPreferredAmenities(value as StayAmenity[]));
+        strings("preferredLayoverCountries", setPreferredLayoverCountries); strings("avoidLayoverCountries", setAvoidLayoverCountries);
+        text("staySpaceType", (value) => { if (["any", "entire_place", "private_room", "shared_room"].includes(value)) setStaySpaceType(value as StaySpaceType); });
+        if (draft.preferenceDraft && typeof draft.preferenceDraft === "object") setPreferenceDraft(draft.preferenceDraft as SearchPreferenceDraft);
+      }
+    } catch { /* Ignore an unavailable or malformed tab draft. */ }
+    setDraftRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftRestored) return;
+    try {
+      window.sessionStorage.setItem("tripfinder:search-draft:v2", JSON.stringify({
+        origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries,
+      }));
+    } catch { /* Storage can be disabled or full; the form remains usable. */ }
+  }, [draftRestored, origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries]);
 
   function toggleComponent(value: TripComponent) {
     setComponents((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
@@ -327,6 +371,7 @@ export function TripSearch() {
       destination: selectedDestination, destinationAirportCode: destinationAirportCode || resolveAirportCode(selectedDestination) || "",
       depart, return: returnDate, adults, childrenAges: ages.join(","), rooms, budget, budgetMode, currency, style,
       flexibleDays: "0", cabin, stops, hotelRating, freeCancellation: String(freeCancellation),
+      preferLayovers: preferredLayoverCountries.join(","), avoidLayovers: avoidLayoverCountries.join(","),
       components: components.join(","), stayTypes: stayTypes.join(","), staySpaceType,
       stayMust: stayMustHaveAmenities.join(","), stayPrefer: stayPreferredAmenities.join(","),
       temperatureMin: temperatureMin.trim(), temperatureMax: temperatureMax.trim(), temperatureUnit,
@@ -419,8 +464,8 @@ export function TripSearch() {
         {components.includes("flights") && <LocationField field="origin" label="Leaving from" value={origin} airportCode={originAirportCode} placeholder="City or airport" onChange={(value) => { setOrigin(value); setOriginAirportCode(resolveAirportCode(value) || ""); }} onSelect={(item) => { setOrigin(item.value); setOriginAirportCode(item.airportCode); }}/ >}
         <LocationField field="destination" label="Going to" value={destination} airportCode={components.includes("flights") ? destinationAirportCode : ""} placeholder="Country, state, city or area" includeAttractions={components.includes("activities")} includeAirports={components.includes("flights")} onChange={(value) => { setDestination(value); setDestinationArea(""); setDestinationAirportCode(""); }} onSelect={(item) => { setDestination(item.value); setDestinationArea(""); setDestinationAirportCode(item.airportCode); }}/>
         {destinationScope && <LocationField field="destination" label={`City or area in ${destinationScope}`} value={destinationArea} airportCode="" placeholder="Choose or type a city, town, resort or nearby area" scope={destinationScope} onChange={(value) => { setDestinationArea(value); setDestinationAirportCode(""); }} onSelect={(item) => { setDestinationArea(item.value); if (item.airportCode) setDestinationAirportCode(item.airportCode); }}/ >}
-        {components.includes("flights") && destinationGateways.length > 0 && <label className="search-field gateway-field"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">Arrival airport</span><select value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value)} aria-label="Choose arrival airport"><option value="">Choose a gateway</option>{destinationAirportCode && !destinationGateways.some((gateway) => gateway.code === destinationAirportCode) && <option value={destinationAirportCode}>Selected nearby airport · {destinationAirportCode}</option>}{destinationGateways.map((gateway) => <option value={gateway.code} key={gateway.code}>{gateway.label}</option>)}</select></span><ChevronDown className="select-chevron" size={14}/></label>}
-        {components.includes("flights") && (destinationArea || destination).trim().toLowerCase() !== "anywhere" && destinationGateways.length === 0 && !destinationAirportCode && !resolveAirportCode(destinationArea || destination) && <label className="search-field gateway-field"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">Arrival airport code</span><input value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3))} placeholder="3-letter IATA code" maxLength={3} autoCapitalize="characters" aria-label="Arrival airport three-letter IATA code"/><small className="location-code">Enter the airport code serving your selected country or area.</small></span></label>}
+        {components.includes("flights") && destinationGateways.length > 0 && <label className="search-field gateway-field"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">Suggested arrival airports</span><select value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value)} aria-label="Choose suggested arrival airport"><option value="">Choose a gateway</option>{destinationAirportCode && !destinationGateways.some((gateway) => gateway.code === destinationAirportCode) && <option value={destinationAirportCode}>Custom airport · {destinationAirportCode}</option>}{destinationGateways.map((gateway) => <option value={gateway.code} key={gateway.code}>{gateway.label}</option>)}</select></span><ChevronDown className="select-chevron" size={14}/></label>}
+        {components.includes("flights") && (destinationArea || destination).trim().toLowerCase() !== "anywhere" && <label className="search-field gateway-field airport-code-entry"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">{destinationGateways.length ? "Or enter a different arrival airport" : "Arrival airport code"}</span><input value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3))} placeholder="3-letter IATA code (e.g. TIA)" maxLength={3} autoCapitalize="characters" spellCheck={false} aria-label="Arrival airport three-letter IATA code"/><small className="location-code">You can type or edit the three-letter airport code here. This field remains visible after typing.</small></span></label>}
 
         <label className="search-field"><span className="field-icon"><CalendarDays size={17}/></span><span className="field-copy"><span className="field-label">{components.includes("flights") ? "Depart" : "Check in / start"}</span><input type="date" value={depart} min={dateAfter(0)} onChange={(e) => setDepart(e.target.value)} aria-label="Departure or check-in date"/></span></label>
         <label className="search-field"><span className="field-icon"><CalendarDays size={17}/></span><span className="field-copy"><span className="field-label">{components.includes("flights") ? "Return" : "Check out / end"}</span><input type="date" value={returnDate} min={depart || dateAfter(0)} onChange={(e) => setReturnDate(e.target.value)} aria-label="Return or check-out date"/></span></label>
@@ -453,6 +498,14 @@ export function TripSearch() {
           <label>Budget applies to <select value={budgetMode} onChange={(e) => setBudgetMode(e.target.value)}><option value="total">Entire trip / all travelers</option><option value="per_person">Per traveler</option></select></label>
           <label>Currency <select value={currency} onChange={(e) => setCurrency(e.target.value)}><option value="USD">USD · US Dollar</option><option value="CAD">CAD · Canadian Dollar</option><option value="EUR">EUR · Euro</option><option value="GBP">GBP · British Pound</option></select></label>
           {components.includes("flights") && <><label>Cabin <select value={cabin} onChange={(e) => setCabin(e.target.value)}><option value="economy">Economy</option><option value="premium_economy">Premium economy</option><option value="business">Business</option><option value="first">First class</option></select></label><label>Flight stops <select value={stops} onChange={(e) => setStops(e.target.value)}><option value="any">Any</option><option value="nonstop">Nonstop only</option><option value="one_stop">Up to 1 stop</option><option value="two_stops">Up to 2 stops</option></select></label></>}
+          {components.includes("flights") && <div className="layover-preferences">
+            <div className="layover-preferences-heading"><strong>Connection preferences</strong><small>Choose countries the traveler prefers to connect through or wants to avoid. These settings check airport stopovers only—not aircraft overflight airspace or live security conditions.</small></div>
+            <div className="layover-preference-row"><label>Prefer a connection through <select value={preferredLayoverCountryDraft} onChange={(event) => setPreferredLayoverCountryDraft(event.target.value)}><option value="">Choose a country</option>{LAYOVER_COUNTRY_OPTIONS.filter((country) => !preferredLayoverCountries.includes(country)).map((country) => <option value={country} key={country}>{country}</option>)}</select></label><button type="button" className="layover-add-button" disabled={!preferredLayoverCountryDraft} onClick={() => { setPreferredLayoverCountries((current) => current.includes(preferredLayoverCountryDraft) ? current : [...current, preferredLayoverCountryDraft]); setAvoidLayoverCountries((current) => current.filter((item) => item !== preferredLayoverCountryDraft)); setPreferredLayoverCountryDraft(""); }}>Add preference</button></div>
+            {preferredLayoverCountries.length > 0 && <div className="layover-country-chips" aria-label="Preferred connection countries">{preferredLayoverCountries.map((country) => <button type="button" key={country} onClick={() => setPreferredLayoverCountries((current) => current.filter((item) => item !== country))}>{country} <span aria-hidden="true">×</span><span className="sr-only">Remove preferred country</span></button>)}</div>}
+            <div className="layover-preference-row"><label>Avoid connections through <select value={avoidLayoverCountryDraft} onChange={(event) => setAvoidLayoverCountryDraft(event.target.value)}><option value="">Choose a country to avoid</option>{LAYOVER_COUNTRY_OPTIONS.filter((country) => !avoidLayoverCountries.includes(country)).map((country) => <option value={country} key={country}>{country}</option>)}</select></label><button type="button" className="layover-add-button" disabled={!avoidLayoverCountryDraft} onClick={() => { setAvoidLayoverCountries((current) => current.includes(avoidLayoverCountryDraft) ? current : [...current, avoidLayoverCountryDraft]); setPreferredLayoverCountries((current) => current.filter((item) => item !== avoidLayoverCountryDraft)); setAvoidLayoverCountryDraft(""); }}>Add to avoid list</button></div>
+            {avoidLayoverCountries.length > 0 && <div className="layover-country-chips is-avoid" aria-label="Countries to avoid">{avoidLayoverCountries.map((country) => <button type="button" key={country} onClick={() => setAvoidLayoverCountries((current) => current.filter((item) => item !== country))}>{country} <span aria-hidden="true">×</span><span className="sr-only">Remove avoided country</span></button>)}</div>}
+            <small className="layover-preferences-footnote">Preferred countries rank matching routes higher. Avoided countries remove routes through those countries. If a stop airport country cannot be verified, that route is withheld rather than guessed. Filters apply only to routes returned by the flight provider; they do not assess overflight airspace or replace official travel advisories. A country cannot be both preferred and avoided.</small>
+          </div>}
           {components.includes("stays") && <><label>Minimum hotel rating <select value={hotelRating} onChange={(e) => setHotelRating(e.target.value)}><option value="0">No preference</option><option value="3">3-star or higher</option><option value="4">4-star or higher</option><option value="5">5-star</option></select></label><label className="advanced-checkbox"><input type="checkbox" checked={freeCancellation} onChange={(e) => setFreeCancellation(e.target.checked)}/> Prefer free cancellation</label></>}
         </div>
       </details>

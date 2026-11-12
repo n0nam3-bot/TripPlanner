@@ -1,5 +1,6 @@
 import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordProviderEvent, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
+import { airportCountry } from "@/lib/trip-planner/flight-routing";
 import { isBookingComConfigured, searchBookingComAccommodations } from "@/lib/providers/booking-com";
 import { filterAndRankStays, googleAmenityFilterIds, inferStaySpaceType } from "@/lib/providers/stay-features";
 import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationRegionScope, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
@@ -19,7 +20,7 @@ export type LiveFlight = {
   arrival: string;
   durationMinutes: number | null;
   stops: number;
-  segments: Array<{ airline: string; flightNumber: string; from: string; to: string; departure: string; arrival: string; durationMinutes: number }>;
+  segments: Array<{ airline: string; flightNumber: string; from: string; to: string; fromAirportCode: string; toAirportCode: string; departure: string; arrival: string; durationMinutes: number }>;
   /** Used to select the return leg for a round-trip search. */
   departureToken?: string;
   /** Used to retrieve sellers after the return leg has been selected. */
@@ -400,6 +401,8 @@ function normalizeFlight(item: unknown, index: number, currency: string): LiveFl
       flightNumber: str(segment.flight_number, ""),
       from: `${str(dep.name, str(dep.id, "Unknown airport"))} (${str(dep.id, "—")})`,
       to: `${str(arrv.name, str(arrv.id, "Unknown airport"))} (${str(arrv.id, "—")})`,
+      fromAirportCode: str(dep.id, "").toUpperCase(),
+      toAirportCode: str(arrv.id, "").toUpperCase(),
       departure: str(dep.time, "Time not listed"),
       arrival: str(arrv.time, "Time not listed"),
       durationMinutes: num(segment.duration) ?? 0,
@@ -720,6 +723,37 @@ function normalizeFlights(data: JsonObject, currency: string): LiveFlight[] {
   return source.map((item, index) => normalizeFlight(item, index, currency)).filter((item): item is LiveFlight => Boolean(item)).slice(0, 16);
 }
 
+function applyLayoverPreferences(flights: LiveFlight[], input: TripSearchInput): { flights: LiveFlight[]; warnings: string[] } {
+  const normalize = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const preferred = new Set(input.preferredLayoverCountries.map(normalize));
+  const avoided = new Set(input.avoidLayoverCountries.map(normalize));
+  if (!preferred.size && !avoided.size) return { flights, warnings: [] };
+
+  let removedForAvoid = 0;
+  let removedAsUnverified = 0;
+  const ranked = flights.map((flight) => {
+    // The final arrival airport is not a layover. A connection is the arrival
+    // airport of every segment except the final segment.
+    const connectionCodes = flight.segments.slice(0, -1).map((segment) => segment.toAirportCode);
+    const connectionCountries = connectionCodes.map((code) => airportCountry(code));
+    const hasUnverifiedConnection = connectionCodes.some((code, index) => !code || !connectionCountries[index]);
+    const hasAvoidedCountry = connectionCountries.some((country) => country && avoided.has(normalize(country)));
+    if (hasAvoidedCountry) removedForAvoid += 1;
+    else if (avoided.size > 0 && hasUnverifiedConnection) removedAsUnverified += 1;
+    const preferredMatches = connectionCountries.filter((country) => country && preferred.has(normalize(country))).length;
+    return { flight, excluded: hasAvoidedCountry || (avoided.size > 0 && hasUnverifiedConnection), preferredMatches };
+  });
+  const kept = ranked.filter((entry) => !entry.excluded).sort((a, b) => b.preferredMatches - a.preferredMatches).map((entry) => entry.flight);
+  const warnings: string[] = ["Connection preferences are checked only against stopover airports included in the returned flight options. They do not assess overflight airspace or replace official travel advisories, and the provider may not return every possible route."];
+  if (removedForAvoid) warnings.push(`${removedForAvoid} flight option${removedForAvoid === 1 ? " was" : "s were"} removed because a connection airport is in a country on the avoid list.`);
+  if (removedAsUnverified) warnings.push(`${removedAsUnverified} flight option${removedAsUnverified === 1 ? " was" : "s were"} withheld because Tripfinder could not verify the country for at least one connection airport. This avoids presenting an unverified route when you selected countries to avoid.`);
+  if (preferred.size && kept.some((flight) => flight.stops > 0) && !kept.some((flight) => flight.segments.slice(0, -1).some((segment) => {
+    const country = airportCountry(segment.toAirportCode);
+    return country ? preferred.has(normalize(country)) : false;
+  }))) warnings.push("No returned connection matched the preferred country. Other eligible routes are still shown; try another date or stop limit to compare more options.");
+  return { flights: kept, warnings };
+}
+
 function makeHotelParams(input: TripSearchInput, destinationName: string, airportCode: string, stayType: StayType): Record<string, string> {
   const spaceLabel = input.staySpaceType === "entire_place" ? "entire place" : input.staySpaceType === "private_room" ? "private room" : input.staySpaceType === "shared_room" ? "shared room" : "";
   const stayQuery = stayType === "vacation_rentals"
@@ -1015,8 +1049,11 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     if (key === "flights") {
       const metadata = obj(outcome.value.data.search_metadata);
       providerSearchLinks.flights = safeHttpUrl(metadata.google_flights_url);
-      flights = normalizeFlights(outcome.value.data, input.currency);
-      if (!flights.length) warnings.push("Google Flights returned no outbound options for this route and date combination. Try a different departure airport or open the route directly in Google Flights.");
+      const normalizedFlights = normalizeFlights(outcome.value.data, input.currency);
+      const layoverFilter = applyLayoverPreferences(normalizedFlights, input);
+      flights = layoverFilter.flights;
+      warnings.push(...layoverFilter.warnings);
+      if (!flights.length) warnings.push(normalizedFlights.length ? "No flight options remain after applying the selected connection-country preferences. Remove an avoid-country or broaden the stopover preferences to see more routes." : "Google Flights returned no outbound options for this route and date combination. Try a different departure airport or open the route directly in Google Flights.");
     } else if (key === "hotels" || key === "vacation_rentals") {
       const properties = arr(outcome.value.data.properties);
       const stayType: StayType = key === "vacation_rentals" ? "vacation_rentals" : "hotels";
@@ -1143,13 +1180,15 @@ export async function searchReturnFlights(input: TripSearchInput, destinationAir
   if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
   const params = { ...makeFlightParams(input, originCode, destinationAirportCode), departure_token: departureToken };
   const result = await querySerpApi(params, clientUsageKey);
-  const flights = normalizeFlights(result.data, input.currency);
+  const normalizedFlights = normalizeFlights(result.data, input.currency);
+  const layoverFilter = applyLayoverPreferences(normalizedFlights, input);
+  const flights = layoverFilter.flights;
   return {
     flights,
     checkedAt: new Date().toISOString(),
     dataAsOf: result.fetchedAt,
     servedFromCache: result.fromCache,
-    warnings: flights.length ? [] : ["No return flight options were returned for this outbound selection. Try another outbound option or check the airline directly."],
+    warnings: [...layoverFilter.warnings, ...(flights.length ? [] : [normalizedFlights.length ? "No return flights remain after applying the selected connection-country preferences." : "No return flight options were returned for this outbound selection. Try another outbound option or check the airline directly."])],
   };
 }
 

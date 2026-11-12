@@ -59,6 +59,8 @@ export type TripSearchInput = {
   flexibleDays: number;
   cabinClass: CabinClass;
   stops: StopPreference;
+  preferredLayoverCountries: string[];
+  avoidLayoverCountries: string[];
   minimumHotelRating: 0 | 3 | 4 | 5;
   freeCancellation: boolean;
   temperatureMin: number | null;

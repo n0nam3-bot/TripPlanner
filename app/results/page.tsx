@@ -74,6 +74,8 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
           {search.components.includes("stays") && search.stayMustHaveAmenities.length > 0 && <span>Must have: {search.stayMustHaveAmenities.map((item) => item.replaceAll("_", " ")).join(", ")}</span>}
           {search.components.includes("stays") && search.stayPreferredAmenities.length > 0 && <span>Prefer: {search.stayPreferredAmenities.map((item) => item.replaceAll("_", " ")).join(", ")}</span>}
           {search.components.includes("flights") && <span>{search.cabinClass.replaceAll("_", " ")}</span>}
+          {search.components.includes("flights") && search.preferredLayoverCountries.length > 0 && <span>Prefer connections: {search.preferredLayoverCountries.join(", ")}</span>}
+          {search.components.includes("flights") && search.avoidLayoverCountries.length > 0 && <span>Avoid connections: {search.avoidLayoverCountries.join(", ")}</span>}
         </div>
       </section>
       <section className="results-content shell">

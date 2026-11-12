@@ -1,4 +1,5 @@
 import type { CabinClass, StopPreference, StayAmenity, StaySpaceType, StayType, TripComponent, TripSearchInput, TripStyle } from "./types";
+import { LAYOVER_COUNTRY_OPTIONS } from "./flight-routing";
 
 const styles = new Set<TripStyle>(["any", "beach", "city", "food", "nature", "romantic", "family", "adventure", "culture"]);
 const cabins = new Set<CabinClass>(["economy", "premium_economy", "business", "first"]);
@@ -50,6 +51,9 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   const flexibleDays = Number(read(params, "flexibleDays", "0"));
   const cabinClass = read(params, "cabin", "economy") as CabinClass;
   const stopsValue = read(params, "stops", "any") as StopPreference;
+  const layoverCountrySet = new Set<string>(LAYOVER_COUNTRY_OPTIONS);
+  const preferredLayoverCountries = [...new Set(read(params, "preferLayovers", "").split(",").map((item) => item.trim()).filter((item) => layoverCountrySet.has(item)))].slice(0, 8);
+  const avoidLayoverCountries = [...new Set(read(params, "avoidLayovers", "").split(",").map((item) => item.trim()).filter((item) => layoverCountrySet.has(item)))].slice(0, 12);
   const ratingValue = Number(read(params, "hotelRating", "0"));
   const temperatureMinRaw = params.get("temperatureMin")?.trim() ?? "";
   const temperatureMaxRaw = params.get("temperatureMax")?.trim() ?? "";
@@ -91,7 +95,7 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
     errors,
     input: {
       origin, originAirportCode, destination, destinationAirportCode, components, stayTypes: effectiveStayTypes, staySpaceType: staySpaceTypeValue, stayMustHaveAmenities: stayMustHaveAmenities.filter((item) => !stayPreferredAmenities.includes(item)), stayPreferredAmenities: stayPreferredAmenities.filter((item) => !stayMustHaveAmenities.includes(item)), departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
-      currency, style: styleValue, flexible: flexibleDays > 0, flexibleDays, cabinClass, stops: stopsValue,
+      currency, style: styleValue, flexible: flexibleDays > 0, flexibleDays, cabinClass, stops: stopsValue, preferredLayoverCountries, avoidLayoverCountries,
       minimumHotelRating: ratingValue as 0 | 3 | 4 | 5, freeCancellation: read(params, "freeCancellation", "false") === "true",
       temperatureMin, temperatureMax, temperatureUnit,
     },
@@ -105,7 +109,7 @@ export function validateTripSearchInput(value: unknown): { input?: TripSearchInp
   const mapping: Record<string, string> = {
     origin: "origin", originAirportCode: "originAirportCode", destination: "destination", destinationAirportCode: "destinationAirportCode", components: "components", stayTypes: "stayTypes", staySpaceType: "staySpaceType", stayMustHaveAmenities: "stayMust", stayPreferredAmenities: "stayPrefer", departureDate: "depart", returnDate: "return", adults: "adults",
     rooms: "rooms", budget: "budget", budgetMode: "budgetMode", currency: "currency", style: "style", flexibleDays: "flexibleDays",
-    cabinClass: "cabin", stops: "stops", minimumHotelRating: "hotelRating", freeCancellation: "freeCancellation",
+    cabinClass: "cabin", stops: "stops", preferredLayoverCountries: "preferLayovers", avoidLayoverCountries: "avoidLayovers", minimumHotelRating: "hotelRating", freeCancellation: "freeCancellation",
     temperatureMin: "temperatureMin", temperatureMax: "temperatureMax", temperatureUnit: "temperatureUnit",
   };
   for (const [source, target] of Object.entries(mapping)) {

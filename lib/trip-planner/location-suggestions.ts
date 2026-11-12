@@ -339,6 +339,12 @@ const COUNTRY_NAMES = [
 ];
 
 const DESTINATION_LOCATIONS: LocationSuggestion[] = [
+  { value: "Tirana, Albania", label: "Tirana", detail: "Albania · Tirana International Airport · TIA", kind: "city", airportCode: "TIA", country: "Albania" },
+  { value: "Durrës, Albania", label: "Durrës", detail: "Albania · coastal city · Tirana Airport (TIA)", kind: "city", airportCode: "TIA", country: "Albania" },
+  { value: "Sarandë, Albania", label: "Sarandë", detail: "Albanian Riviera · Tirana Airport (TIA)", kind: "area", airportCode: "TIA", country: "Albania" },
+  { value: "Vlorë, Albania", label: "Vlorë", detail: "Albanian Riviera · Tirana Airport (TIA)", kind: "city", airportCode: "TIA", country: "Albania" },
+  { value: "Shkodër, Albania", label: "Shkodër", detail: "Northern Albania · Tirana Airport (TIA)", kind: "city", airportCode: "TIA", country: "Albania" },
+  { value: "Berat, Albania", label: "Berat", detail: "Historic city · Tirana Airport (TIA)", kind: "city", airportCode: "TIA", country: "Albania" },
   { value: "Lisbon, Portugal", label: "Lisbon", detail: "Portugal · Humberto Delgado Airport", kind: "city", airportCode: "LIS", country: "Portugal" },
   { value: "Cancún, Mexico", label: "Cancún", detail: "Mexico · Cancún International Airport", kind: "city", airportCode: "CUN", country: "Mexico" },
   { value: "Mexico City, Mexico", label: "Mexico City", detail: "Mexico · Mexico City International Airport", kind: "city", airportCode: "MEX", country: "Mexico" },
@@ -562,6 +568,30 @@ export type DestinationAreaGeo = {
 
 const DESTINATION_AREA_GEOS: Array<{ aliases: string[]; geo: DestinationAreaGeo }> = [
   {
+    aliases: ["tirana", "tirane"],
+    geo: { latitude: 41.3275, longitude: 19.8187, activityRadiusMiles: 18, restaurantRadiusMiles: 10, hotelRadiusMiles: 18, addressAliases: ["tirana", "tirane"] },
+  },
+  {
+    aliases: ["durres", "durrës"],
+    geo: { latitude: 41.3246, longitude: 19.4565, activityRadiusMiles: 18, restaurantRadiusMiles: 10, hotelRadiusMiles: 18, addressAliases: ["durres", "durrës"] },
+  },
+  {
+    aliases: ["sarande", "sarandë"],
+    geo: { latitude: 39.8756, longitude: 20.0053, activityRadiusMiles: 22, restaurantRadiusMiles: 12, hotelRadiusMiles: 22, addressAliases: ["sarande", "sarandë"] },
+  },
+  {
+    aliases: ["vlore", "vlorë"],
+    geo: { latitude: 40.4661, longitude: 19.4914, activityRadiusMiles: 20, restaurantRadiusMiles: 12, hotelRadiusMiles: 20, addressAliases: ["vlore", "vlorë"] },
+  },
+  {
+    aliases: ["shkoder", "shkodër"],
+    geo: { latitude: 42.0683, longitude: 19.5126, activityRadiusMiles: 18, restaurantRadiusMiles: 10, hotelRadiusMiles: 18, addressAliases: ["shkoder", "shkodër"] },
+  },
+  {
+    aliases: ["berat"],
+    geo: { latitude: 40.7058, longitude: 19.9522, activityRadiusMiles: 15, restaurantRadiusMiles: 8, hotelRadiusMiles: 15, addressAliases: ["berat"] },
+  },
+  {
     aliases: ["pocono mountains", "poconos", "pocono region", "pocono", "stroudsburg", "east stroudsburg", "mount pocono", "tannersville", "jim thorpe", "lake harmony", "hawley", "milford", "tobyhanna", "long pond", "blakeslee", "swiftwater", "bushkill", "scranton"],
     geo: {
       latitude: 41.05,
@@ -606,6 +636,7 @@ export function getDestinationAreaGeo(value: string): DestinationAreaGeo | undef
 export type DestinationGateway = { code: string; label: string; city: string };
 
 const REGION_GATEWAYS: Record<string, DestinationGateway[]> = {
+  albania: [{ code: "TIA", city: "Tirana", label: "Tirana International · TIA" }],
   "dominican republic": [
     { code: "PUJ", city: "Punta Cana", label: "Punta Cana · PUJ" },
     { code: "SDQ", city: "Santo Domingo", label: "Santo Domingo · SDQ" },
@@ -663,6 +694,17 @@ const ORIGIN_AIRPORTS: LocationSuggestion[] = [
   { value: "Chicago O’Hare (ORD)", label: "Chicago O’Hare", detail: "Chicago, Illinois · ORD", kind: "airport", airportCode: "ORD", country: "United States" },
   { value: "Los Angeles International (LAX)", label: "Los Angeles International", detail: "Los Angeles, California · LAX", kind: "airport", airportCode: "LAX", country: "United States" },
   { value: "San Francisco International (SFO)", label: "San Francisco International", detail: "San Francisco, California · SFO", kind: "airport", airportCode: "SFO", country: "United States" },
+  { value: "Tirana International Airport (TIA)", label: "Tirana International Airport", detail: "Tirana, Albania · TIA", kind: "airport", airportCode: "TIA", country: "Albania" },
+  { value: "London Heathrow Airport (LHR)", label: "London Heathrow", detail: "London, United Kingdom · LHR", kind: "airport", airportCode: "LHR", country: "United Kingdom" },
+  { value: "London Gatwick Airport (LGW)", label: "London Gatwick", detail: "London, United Kingdom · LGW", kind: "airport", airportCode: "LGW", country: "United Kingdom" },
+  { value: "Paris Charles de Gaulle Airport (CDG)", label: "Paris Charles de Gaulle", detail: "Paris, France · CDG", kind: "airport", airportCode: "CDG", country: "France" },
+  { value: "Amsterdam Schiphol Airport (AMS)", label: "Amsterdam Schiphol", detail: "Amsterdam, Netherlands · AMS", kind: "airport", airportCode: "AMS", country: "Netherlands" },
+  { value: "Frankfurt Airport (FRA)", label: "Frankfurt Airport", detail: "Frankfurt, Germany · FRA", kind: "airport", airportCode: "FRA", country: "Germany" },
+  { value: "Istanbul Airport (IST)", label: "Istanbul Airport", detail: "Istanbul, Turkey · IST", kind: "airport", airportCode: "IST", country: "Turkey" },
+  { value: "Dubai International Airport (DXB)", label: "Dubai International", detail: "Dubai, United Arab Emirates · DXB", kind: "airport", airportCode: "DXB", country: "United Arab Emirates" },
+  { value: "Hamad International Airport (DOH)", label: "Hamad International", detail: "Doha, Qatar · DOH", kind: "airport", airportCode: "DOH", country: "Qatar" },
+  { value: "Singapore Changi Airport (SIN)", label: "Singapore Changi", detail: "Singapore · SIN", kind: "airport", airportCode: "SIN", country: "Singapore" },
+  { value: "Tokyo Haneda Airport (HND)", label: "Tokyo Haneda", detail: "Tokyo, Japan · HND", kind: "airport", airportCode: "HND", country: "Japan" },
 ];
 
 function norm(value: string): string {
@@ -698,6 +740,7 @@ export function getUSStateAddressAliases(value: string): string[] {
 }
 
 const AIRPORT_NAMES: Record<string, string> = {
+  TIA: "Tirana International Airport",
   PUJ: "Punta Cana International Airport", SDQ: "Las Américas International Airport",
   POP: "Gregorio Luperón International Airport", STI: "Cibao International Airport",
   LRM: "La Romana International Airport", AZS: "Samaná El Catey International Airport", CUN: "Cancún International Airport",
@@ -731,11 +774,12 @@ export function getLocationSuggestions(
   }
 
   const stateQuery = getUSStateRegion(query);
-  const matchingRegions = DESTINATION_REGIONS.filter((item) =>
+  const isIataCodeQuery = /^[A-Z]{3}$/i.test(query.trim());
+  const matchingRegions = isIataCodeQuery ? [] : DESTINATION_REGIONS.filter((item) =>
     (stateQuery && norm(item.label) === norm(stateQuery.name)) ||
     (q.length >= 2 && [item.value, item.label, item.detail].some((value) => norm(value).includes(q)))
   );
-  const airportSuggestions: LocationSuggestion[] = includeAirports
+  const regionalAirportSuggestions: LocationSuggestion[] = includeAirports
     ? matchingRegions.flatMap((region) => getDestinationGateways(region.value).map((gateway) => ({
       // Keep the country-wide search area while storing the selected gateway
       // airport separately for flight lookup.
@@ -747,6 +791,30 @@ export function getLocationSuggestions(
       country: region.value,
     })))
     : [];
+  const directAirportSuggestions: LocationSuggestion[] = includeAirports && q.length >= 2
+    ? [
+      ...Object.entries(REGION_GATEWAYS).flatMap(([regionName, gateways]) => gateways
+        .filter((gateway) => isIataCodeQuery
+          ? gateway.code.toUpperCase() === query.trim().toUpperCase()
+          : [gateway.city, gateway.label, AIRPORT_NAMES[gateway.code] ?? ""].some((value) => norm(value).includes(q)))
+        .map((gateway) => {
+          const canonicalRegion = DESTINATION_REGIONS.find((region) => norm(region.value) === regionName)?.value ?? regionName;
+          return {
+            value: canonicalRegion,
+            label: AIRPORT_NAMES[gateway.code] ?? `${gateway.city} Airport`,
+            detail: `${gateway.city} · ${gateway.code} · ${canonicalRegion}`,
+            kind: "airport" as const,
+            airportCode: gateway.code,
+            country: canonicalRegion,
+          };
+        })),
+      ...ORIGIN_AIRPORTS.filter((airport) => isIataCodeQuery
+        ? airport.airportCode.toUpperCase() === query.trim().toUpperCase()
+        : [airport.label, airport.value, airport.detail].some((value) => norm(value).includes(q)))
+        .map((airport) => ({ ...airport, value: airport.country || airport.value, kind: "airport" as const })),
+    ]
+    : [];
+  const airportSuggestions = [...new Map([...regionalAirportSuggestions, ...directAirportSuggestions].map((item) => [item.airportCode, item])).values()];
 
   const allSource = [...DESTINATION_REGIONS, ...airportSuggestions, ...DESTINATION_LOCATIONS, ...US_CITY_AREAS, ...(includeAttractions ? DESTINATION_ATTRACTIONS : [])];
   const scope = norm(regionScope);
@@ -757,11 +825,11 @@ export function getLocationSuggestions(
       || item.detail.split(/[·,]/).some((part) => norm(part) === scope)
     ))
     : allSource;
-  if (q.length < 2) return source.slice(0, 20);
+  if (q.length < 2) return source.slice(0, includeAirports ? 28 : 20);
   const matching = source.filter((item) =>
     (stateQuery && item.kind === "region" && norm(item.label) === norm(stateQuery.name)) ||
     (stateQuery && item.kind !== "region" && norm(item.value).includes(norm(stateQuery.name))) ||
-    [item.value, item.label, item.detail, item.airportCode].some((value) => norm(value).includes(q))
+    (isIataCodeQuery ? norm(item.airportCode) === q : [item.value, item.label, item.detail, item.airportCode].some((value) => norm(value).includes(q)))
   );
   return matching.sort((a, b) => {
     const rank = (item: LocationSuggestion) => item.kind === "region" ? 0 : item.kind === "airport" ? 1 : item.kind === "city" ? 2 : item.kind === "area" ? 3 : 4;
@@ -796,6 +864,7 @@ export function countryForDestination(value: string): string | undefined {
 }
 
 export const AIRPORT_COORDINATES: Record<string, { latitude: number; longitude: number; name: string }> = {
+  TIA: { latitude: 41.4147, longitude: 19.7206, name: "Tirana International Airport" },
   CUN: { latitude: 21.0365, longitude: -86.8771, name: "Cancún International Airport" },
   PUJ: { latitude: 18.5674, longitude: -68.3634, name: "Punta Cana International Airport" },
   SDQ: { latitude: 18.4297, longitude: -69.6689, name: "Las Américas International Airport" },

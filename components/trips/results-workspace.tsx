@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
 import type { StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
 import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
+import { destinationTimezoneNotice, flightLayoverDuration, formatFlightTimeInDestination } from "@/lib/trip-planner/flight-routing";
 import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityConfirmed } from "@/lib/providers/stay-features";
 import { AITripAssistant } from "@/components/trips/ai-trip-assistant";
 import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssistantContext } from "@/lib/ai/trip-assistant";
@@ -56,6 +57,26 @@ const formatTime = (value?: string) => {
   const minutes = match[2];
   return `${hours % 12 || 12}:${minutes} ${hours >= 12 ? "PM" : "AM"}`;
 };
+
+function FlightLegDetails({ flight, destinationAirportCode }: { flight: LiveFlight; destinationAirportCode: string }) {
+  if (!flight.segments?.length) return null;
+  return <div className="flight-leg-details">
+    <strong className="flight-leg-details-title">Flight-by-flight itinerary</strong>
+    {flight.segments.map((segment, index) => {
+      const next = flight.segments[index + 1];
+      const layover = next ? flightLayoverDuration(segment.arrival, next.departure, segment.toAirportCode) : null;
+      return <div className="flight-leg" key={`${flight.id}-segment-${index}`}>
+        <div className="flight-leg-heading"><strong>Leg {index + 1}{segment.flightNumber ? ` · ${segment.airline} ${segment.flightNumber}` : ` · ${segment.airline}`}</strong><span>{duration(segment.durationMinutes)}</span></div>
+        <div className="flight-leg-route">
+          <div className="flight-leg-endpoint"><small>DEPARTS</small><strong>{segment.from}</strong><span>{formatFlightTimeInDestination(segment.departure, segment.fromAirportCode, destinationAirportCode)}</span></div>
+          <ArrowRight size={16} aria-hidden="true"/>
+          <div className="flight-leg-endpoint"><small>ARRIVES</small><strong>{segment.to}</strong><span>{formatFlightTimeInDestination(segment.arrival, segment.toAirportCode, destinationAirportCode)}</span></div>
+        </div>
+        {next && <div className="flight-layover-note"><Clock3 size={13}/><span><strong>Connection at {segment.to}</strong>{` · Next flight departs ${formatFlightTimeInDestination(next.departure, next.fromAirportCode, destinationAirportCode)}${layover ? ` · ${layover} layover` : ""}`}</span></div>}
+      </div>;
+    })}
+  </div>;
+}
 
 function haversineMiles(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const rad = (value: number) => value * Math.PI / 180;
@@ -136,11 +157,12 @@ function BookingOptions({ state, currency, selectedOption, onSelectSeller }: {
   </div>;
 }
 
-function ReturnOptions({ state, onSelectReturn, selectedReturnId, currency }: {
+function ReturnOptions({ state, onSelectReturn, selectedReturnId, currency, destinationAirportCode }: {
   state?: ReturnState;
   onSelectReturn: (flight: LiveFlight) => void;
   selectedReturnId?: string;
   currency: string;
+  destinationAirportCode: string;
 }) {
   if (!state) return null;
   return <div className="return-options-panel">
@@ -150,18 +172,20 @@ function ReturnOptions({ state, onSelectReturn, selectedReturnId, currency }: {
     {state.error && <p className="provider-inline-error">{state.error}</p>}
     {state.result?.warnings.map((warning) => <p className="provider-warning" key={warning}>{warning}</p>)}
     {state.result?.flights.map((flight) => <div id={getTripAssistantResultAnchor("flight", flight.id)} tabIndex={-1} className={`return-flight-option ${selectedReturnId === flight.id ? "is-selected" : ""}`} key={flight.id}>
-      <div className="return-flight-copy"><strong>{flight.departure} <span>→</span> {flight.arrival}</strong><small>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</small><small>{flight.from} → {flight.to}</small></div>
+      <div className="return-flight-copy"><strong>{formatFlightTimeInDestination(flight.departure, flight.segments[0]?.fromAirportCode, destinationAirportCode)} <span>→</span> {formatFlightTimeInDestination(flight.arrival, flight.segments[flight.segments.length - 1]?.toAirportCode, destinationAirportCode)}</strong><small>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</small><small>{flight.from} → {flight.to}</small></div>
       <div className="return-flight-action">{flight.price !== null && <strong>{money(flight.price, flight.currency || currency)}</strong>}
         <button type="button" className={`selection-button ${selectedReturnId === flight.id ? "is-selected" : ""}`} onClick={() => onSelectReturn(flight)}>{selectedReturnId === flight.id ? <><Check size={13}/> Return selected · Remove</> : "Select return"}</button>
       </div>
+      <FlightLegDetails flight={flight} destinationAirportCode={destinationAirportCode}/>
     </div>)}
     {state.result && state.result.flights.length === 0 && <p className="empty-inline">No return options matched this outbound selection.</p>}
   </div>;
 }
 
-function FlightResult({ flight, currency, returnState, bookingStates, selectedOutbound, selectedReturnFlight, selectedSeller, onSelectOutbound, onSelectReturn, onLoadBookingOptions, onSelectSeller }: {
+function FlightResult({ flight, currency, destinationAirportCode, returnState, bookingStates, selectedOutbound, selectedReturnFlight, selectedSeller, onSelectOutbound, onSelectReturn, onLoadBookingOptions, onSelectSeller }: {
   flight: LiveFlight;
   currency: string;
+  destinationAirportCode: string;
   returnState?: ReturnState;
   bookingStates: Record<string, BookingState>;
   selectedOutbound: boolean;
@@ -179,15 +203,16 @@ function FlightResult({ flight, currency, returnState, bookingStates, selectedOu
     : flight.bookingToken ? flight : null;
   const sellerState = sellerLookupFlight ? bookingStates[sellerLookupFlight.id] : undefined;
   return <article id={getTripAssistantResultAnchor("flight", flight.id)} tabIndex={-1} className={`live-offer-card ${selectedOutbound ? "is-selected" : ""}`}>
-    <div className="live-offer-main"><div className="live-offer-route"><strong>{flight.departure}</strong><span>→</span><strong>{flight.arrival}</strong></div><p>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</p><small>{flight.from} → {flight.to}</small></div>
+    <div className="live-offer-main"><div className="live-offer-route"><strong>{formatFlightTimeInDestination(flight.departure, flight.segments[0]?.fromAirportCode, destinationAirportCode)}</strong><span>→</span><strong>{formatFlightTimeInDestination(flight.arrival, flight.segments[flight.segments.length - 1]?.toAirportCode, destinationAirportCode)}</strong></div><p>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</p><small>{flight.from} → {flight.to}</small></div>
     <div className="live-offer-price">{flight.price !== null ? <strong>{money(flight.price, flight.currency || currency)}</strong> : <strong>Price not supplied</strong>}<small>Google Flights displayed outbound price; confirm the full round-trip fare with seller</small>
       <button className={`selection-button ${selectedOutbound ? "is-selected" : ""}`} type="button" disabled={returnState?.loading} onClick={() => onSelectOutbound(flight)}>{returnState?.loading && selectedOutbound ? <><RefreshCw size={12} className="spin"/> Finding returns</> : selectedOutbound ? <><Check size={13}/> Outbound selected</> : <>Choose outbound <ArrowRight size={12}/></>}</button>
       {selectedOutbound && selectedReturnFlight && sellerLookupFlight && <button className="text-action" type="button" onClick={() => onLoadBookingOptions(sellerLookupFlight)} disabled={sellerState?.loading}>{sellerState?.loading ? "Loading sellers…" : "Compare round-trip sellers"} <ArrowUpRight size={12}/></button>}
       {selectedOutbound && !selectedReturnFlight && <small className="seller-compare-hint">Select a return flight to compare sellers for the complete trip.</small>}
       {selectedOutbound && selectedReturnFlight && !sellerLookupFlight && <small className="seller-compare-hint">Seller booking links were not supplied for this return option. Use the exact Google Flights search above.</small>}
     </div>
+    <FlightLegDetails flight={flight} destinationAirportCode={destinationAirportCode}/>
     {selectedOutbound && sellerLookupFlight && <BookingOptions state={sellerState} currency={currency} selectedOption={selectedSeller?.flightId === sellerLookupFlight.id ? selectedSeller.option : null} onSelectSeller={(option) => onSelectSeller(sellerLookupFlight, option)}/>}
-    {selectedOutbound && <ReturnOptions state={returnState} onSelectReturn={onSelectReturn} selectedReturnId={selectedReturnFlight?.id} currency={currency}/>}
+    {selectedOutbound && <ReturnOptions state={returnState} onSelectReturn={onSelectReturn} selectedReturnId={selectedReturnFlight?.id} currency={currency} destinationAirportCode={destinationAirportCode}/>}
   </article>;
 }
 
@@ -334,12 +359,13 @@ function experienceBookingUrl(experience: LiveExperience): string {
   return experience.mapsUrl;
 }
 
-function SelectedTripSummary({ selection, experiences, currency, nights, search }: {
+function SelectedTripSummary({ selection, experiences, currency, nights, search, destinationAirportCode }: {
   selection: DestinationSelection;
   experiences: LiveExperience[];
   currency: string;
   nights: number;
   search: TripSearchInput;
+  destinationAirportCode: string;
 }) {
   const selectedExperiences = experiences.filter((experience) => Boolean(selection.experiences[experience.id]));
   const activities = selectedExperiences.filter((item) => item.kind === "activity");
@@ -360,11 +386,11 @@ function SelectedTripSummary({ selection, experiences, currency, nights, search 
       {(selection.outbound || selection.returnFlight) && <article className="trip-selection-card">
         <div className="trip-selection-card-heading"><span className="trip-selection-card-icon"><Plane size={15}/></span><div><strong>Flights</strong><small>{selection.returnFlight ? "Outbound and return selected" : "Outbound selected · return pending"}</small></div></div>
         {selection.outbound && <div className="trip-selection-line">
-          <div><b>Outbound · {selection.outbound.from} → {selection.outbound.to}</b><span>{dateShort(search.departureDate)} · {selection.outbound.departure}–{selection.outbound.arrival}</span>{selection.outbound.price !== null && <small>{money(selection.outbound.price, selection.outbound.currency || currency)} displayed outbound fare</small>}</div>
+          <div><b>Outbound · {selection.outbound.from} → {selection.outbound.to}</b><span>{formatFlightTimeInDestination(selection.outbound.departure, selection.outbound.segments[0]?.fromAirportCode, destinationAirportCode)} – {formatFlightTimeInDestination(selection.outbound.arrival, selection.outbound.segments[selection.outbound.segments.length - 1]?.toAirportCode, destinationAirportCode)}</span>{selection.outbound.price !== null && <small>{money(selection.outbound.price, selection.outbound.currency || currency)} displayed outbound fare</small>}</div>
           <a className="trip-selection-view-link" href={`#${getTripAssistantResultAnchor("flight", selection.outbound.id)}`}>View result <ArrowUpRight size={12}/></a>
         </div>}
         {selection.returnFlight && <div className="trip-selection-line">
-          <div><b>Return · {selection.returnFlight.from} → {selection.returnFlight.to}</b><span>{dateShort(search.returnDate)} · {selection.returnFlight.departure}–{selection.returnFlight.arrival}</span>{selection.returnFlight.price !== null && <small>{money(selection.returnFlight.price, selection.returnFlight.currency || currency)} displayed return fare</small>}</div>
+          <div><b>Return · {selection.returnFlight.from} → {selection.returnFlight.to}</b><span>{formatFlightTimeInDestination(selection.returnFlight.departure, selection.returnFlight.segments[0]?.fromAirportCode, destinationAirportCode)} – {formatFlightTimeInDestination(selection.returnFlight.arrival, selection.returnFlight.segments[selection.returnFlight.segments.length - 1]?.toAirportCode, destinationAirportCode)}</span>{selection.returnFlight.price !== null && <small>{money(selection.returnFlight.price, selection.returnFlight.currency || currency)} displayed return fare</small>}</div>
           <a className="trip-selection-view-link" href={`#${getTripAssistantResultAnchor("flight", selection.returnFlight.id)}`}>View result <ArrowUpRight size={12}/></a>
         </div>}
         {selection.flightSeller && <div className="trip-selection-inline-note">Seller offer: {selection.flightSeller.option.seller} · {selection.flightSeller.option.price !== null ? money(selection.flightSeller.option.price, selection.flightSeller.option.currency || currency) : "Price not supplied"} <BookingContinue option={selection.flightSeller.option}/></div>}
@@ -481,11 +507,12 @@ function selectedExperiencesForDay(date: string, selection: DestinationSelection
     .sort((a, b) => slotOrder.indexOf(a.plan.slot) - slotOrder.indexOf(b.plan.slot) || (a.plan.time || "99:99").localeCompare(b.plan.time || "99:99") || a.experience.name.localeCompare(b.experience.name));
 }
 
-function TravelTimeline({ search, selection, nights, currency, onUpdateStayTime }: {
+function TravelTimeline({ search, selection, nights, currency, destinationAirportCode, onUpdateStayTime }: {
   search: TripSearchInput;
   selection: DestinationSelection;
   nights: number;
   currency: string;
+  destinationAirportCode: string;
   onUpdateStayTime: (field: "checkInTime" | "checkOutTime", value: string) => void;
 }) {
   const hasFlights = search.components.includes("flights");
@@ -498,7 +525,7 @@ function TravelTimeline({ search, selection, nights, currency, onUpdateStayTime 
         <div className="itinerary-travel-date"><span>Outbound flight</span><strong>{dateShort(search.departureDate)}</strong></div>
         <div className="itinerary-travel-copy">
           <strong>{selection.outbound ? `${selection.outbound.from} → ${selection.outbound.to}` : "Select your outbound flight"}</strong>
-          <p>{selection.outbound ? `${selection.outbound.airlines.join(" · ")} · Depart ${selection.outbound.departure} · Arrive ${selection.outbound.arrival}. Times are local to each airport.` : "No flight selected yet. Your selected flight and its displayed departure/arrival times will appear here."}</p>
+          <p>{selection.outbound ? `${selection.outbound.airlines.join(" · ")} · Depart ${formatFlightTimeInDestination(selection.outbound.departure, selection.outbound.segments[0]?.fromAirportCode, destinationAirportCode)} · Arrive ${formatFlightTimeInDestination(selection.outbound.arrival, selection.outbound.segments[selection.outbound.segments.length - 1]?.toAirportCode, destinationAirportCode)}.` : "No flight selected yet. Your selected flight and its displayed departure/arrival times will appear here."}</p>
           {selection.outbound && <a className="itinerary-timeline-link" href={`#${getTripAssistantResultAnchor("flight", selection.outbound.id)}`}>View selected flight <ArrowUpRight size={12}/></a>}
         </div>
         <small>{selection.outbound ? "Selected result" : "Needs selection"}</small>
@@ -530,12 +557,12 @@ function TravelTimeline({ search, selection, nights, currency, onUpdateStayTime 
       <div className="itinerary-travel-date"><span>Return flight</span><strong>{dateShort(search.returnDate)}</strong></div>
       <div className="itinerary-travel-copy">
         <strong>{selection.returnFlight ? `${selection.returnFlight.from} → ${selection.returnFlight.to}` : "Select your return flight"}</strong>
-        <p>{selection.returnFlight ? `${selection.returnFlight.airlines.join(" · ")} · Depart ${selection.returnFlight.departure} · Arrive ${selection.returnFlight.arrival}. Times are local to each airport.` : "No return flight selected yet. Select a return leg to add its actual departure and arrival times."}</p>
+        <p>{selection.returnFlight ? `${selection.returnFlight.airlines.join(" · ")} · Depart ${formatFlightTimeInDestination(selection.returnFlight.departure, selection.returnFlight.segments[0]?.fromAirportCode, destinationAirportCode)} · Arrive ${formatFlightTimeInDestination(selection.returnFlight.arrival, selection.returnFlight.segments[selection.returnFlight.segments.length - 1]?.toAirportCode, destinationAirportCode)}.` : "No return flight selected yet. Select a return leg to add its actual departure and arrival times."}</p>
         {selection.returnFlight && <a className="itinerary-timeline-link" href={`#${getTripAssistantResultAnchor("flight", selection.returnFlight.id)}`}>View selected return <ArrowUpRight size={12}/></a>}
       </div>
       <small>{selection.returnFlight ? "Selected result" : "Needs selection"}</small>
     </article>}
-    {hasStays && <p className="itinerary-travel-note">Flight times are taken from the selected provider result and shown as local airport times. Property check-in and check-out times are not returned in the current stay feed; enter them from your booking confirmation. Adding a time here does not create a reservation.</p>}
+    {hasFlights && <p className="itinerary-travel-note">{destinationTimezoneNotice(search.destination, destinationAirportCode, search.departureDate)} All converted flight times use the destination timezone, including the outbound departure and return journey. Property check-in and check-out times are not returned in the current stay feed; enter them from your booking confirmation. Adding a time here does not create a reservation.</p>}
   </div>;
 }
 
@@ -712,8 +739,23 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       tripStyle: search.style,
       mustHave: search.stayMustHaveAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
       prefer: search.stayPreferredAmenities.map((item) => STAY_AMENITY_LABELS[item] ?? item),
+      preferredLayoverCountries: search.preferredLayoverCountries,
+      avoidedLayoverCountries: search.avoidLayoverCountries,
     },
-    flights: assistantResult.flights.slice(0, 8).map((flight) => ({ id: flight.id, airline: flight.airlines.join(" / "), from: flight.from, to: flight.to, departure: flight.departure, arrival: flight.arrival, price: flight.price, stops: flight.stops })),
+    flights: assistantResult.flights.slice(0, 8).map((flight) => {
+      const targetAirport = search.destinationAirportCode || assistantRecommendation.destination.airportCode;
+      return {
+        id: flight.id, airline: flight.airlines.join(" / "), from: flight.from, to: flight.to,
+        departure: formatFlightTimeInDestination(flight.departure, flight.segments[0]?.fromAirportCode, targetAirport),
+        arrival: formatFlightTimeInDestination(flight.arrival, flight.segments[flight.segments.length - 1]?.toAirportCode, targetAirport),
+        price: flight.price, stops: flight.stops,
+        segments: flight.segments.map((segment) => ({
+          airline: segment.airline, flightNumber: segment.flightNumber, from: segment.from, to: segment.to,
+          departure: formatFlightTimeInDestination(segment.departure, segment.fromAirportCode, targetAirport),
+          arrival: formatFlightTimeInDestination(segment.arrival, segment.toAirportCode, targetAirport),
+        })),
+      };
+    }),
     stays: assistantStayRows.map((hotel) => ({
       id: hotel.id,
       name: hotel.name,
@@ -738,8 +780,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       latitude: experience.latitude, longitude: experience.longitude,
     })),
     selected: {
-      outboundFlight: assistantSelection.outbound ? `${assistantSelection.outbound.airlines.join(" / ")} · ${assistantSelection.outbound.departure} → ${assistantSelection.outbound.arrival} · ${assistantSelection.outbound.from} → ${assistantSelection.outbound.to}` : undefined,
-      returnFlight: assistantSelection.returnFlight ? `${assistantSelection.returnFlight.airlines.join(" / ")} · ${assistantSelection.returnFlight.departure} → ${assistantSelection.returnFlight.arrival} · ${assistantSelection.returnFlight.from} → ${assistantSelection.returnFlight.to}` : undefined,
+      outboundFlight: assistantSelection.outbound ? `${assistantSelection.outbound.airlines.join(" / ")} · ${formatFlightTimeInDestination(assistantSelection.outbound.departure, assistantSelection.outbound.segments[0]?.fromAirportCode, search.destinationAirportCode || assistantRecommendation.destination.airportCode)} → ${formatFlightTimeInDestination(assistantSelection.outbound.arrival, assistantSelection.outbound.segments[assistantSelection.outbound.segments.length - 1]?.toAirportCode, search.destinationAirportCode || assistantRecommendation.destination.airportCode)} · ${assistantSelection.outbound.from} → ${assistantSelection.outbound.to}` : undefined,
+      returnFlight: assistantSelection.returnFlight ? `${assistantSelection.returnFlight.airlines.join(" / ")} · ${formatFlightTimeInDestination(assistantSelection.returnFlight.departure, assistantSelection.returnFlight.segments[0]?.fromAirportCode, search.destinationAirportCode || assistantRecommendation.destination.airportCode)} → ${formatFlightTimeInDestination(assistantSelection.returnFlight.arrival, assistantSelection.returnFlight.segments[assistantSelection.returnFlight.segments.length - 1]?.toAirportCode, search.destinationAirportCode || assistantRecommendation.destination.airportCode)} · ${assistantSelection.returnFlight.from} → ${assistantSelection.returnFlight.to}` : undefined,
       stay: assistantSelection.hotel?.name,
       stayId: assistantSelection.hotel?.id,
       schedule: Object.entries(assistantSelection.experiences).flatMap(([experienceId, plan]) => {
@@ -812,23 +854,26 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               {state.result.warnings.map((warning) => <p className="provider-warning" key={warning}>{warning}</p>)}
               {state.result.cacheSummary?.length > 0 && <div className="cache-freshness-list" aria-label="Search result freshness">{state.result.cacheSummary.map((entry) => <span className={`cache-freshness cache-${entry.status}`} key={entry.key}><strong>{entry.label}</strong>{entry.status === "live" ? "Live" : entry.status === "cached" ? "Cached" : "Saved fallback"} · {cacheAgeLabel(entry.fetchedAt)}</span>)}</div>}
 
-              {search.components.includes("flights") && <section className="live-result-group"><h5><Plane size={16}/> Flights <span>{state.result.flights.length} outbound options</span></h5>
-                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
-              </section>}
+              {search.components.includes("flights") && <details className="live-result-group" open>
+                <summary className="live-result-group-summary"><Plane size={17}/><strong>Flights</strong><span>{state.result.flights.length} outbound options{selection.outbound ? " · 1 selected" : ""}{selection.returnFlight ? " + return selected" : ""}</span><ChevronDown size={16} className="group-chevron"/></summary>
+                <p className="flight-timezone-note">{destinationTimezoneNotice(destinationLabel, airportCode, search.departureDate)}</p>
+                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} destinationAirportCode={airportCode} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
+              </details>}
 
-              {search.components.includes("stays") && <section className="live-result-group"><h5><Hotel size={16}/> Places to stay <span>{state.result.hotels.length} properties</span></h5>
+              {search.components.includes("stays") && <details className="live-result-group" open>
+                <summary className="live-result-group-summary"><Hotel size={17}/><strong>Places to stay</strong><span>{state.result.hotels.length} properties{selection.hotel ? " · 1 selected" : ""}</span><ChevronDown size={16} className="group-chevron"/></summary>
                 {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} nights={nights} search={search} bookingState={hotelBookingStates[hotel.id]} selected={selection.hotel?.id === hotel.id} onSelect={(selected) => selectHotel(destination.id, selected)} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
-              </section>}
+              </details>}
 
               {search.components.includes("activities") && <>
-                <section className="live-result-group"><h5><Activity size={16}/> Activities & attractions <span>{activityExperiences.length} options</span></h5>
+                <details className="live-result-group" open><summary className="live-result-group-summary"><Activity size={17}/><strong>Activities & attractions</strong><span>{activityExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "activity")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
                   {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
-                </section>
-                <section className="live-result-group"><h5><Users size={16}/> Restaurants & dining <span>{restaurantExperiences.length} options</span></h5>
+                </details>
+                <details className="live-result-group" open><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
                   {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
-                </section>
+                </details>
               </>}
-              <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} search={search}/>
+              <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} search={search} destinationAirportCode={airportCode}/>
               <TripCostLedger selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} people={people} budget={totalBudget} flightRequested={search.components.includes("flights")} stayRequested={search.components.includes("stays")} activitiesRequested={search.components.includes("activities")}/>
               <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>
@@ -840,7 +885,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 <p>{hasActivityPlanning ? "Only activities and restaurants you add are scheduled here." : "Selected flight and accommodation details only. No activities or meals are generated."}</p>
               </div>
 
-              {(search.components.includes("flights") || search.components.includes("stays")) && <TravelTimeline search={search} selection={selection} nights={nights} currency={search.currency} onUpdateStayTime={(field, value) => updateSelection(destination.id, (current) => ({ ...current, [field]: value || undefined }))}/>}
+              {(search.components.includes("flights") || search.components.includes("stays")) && <TravelTimeline search={search} selection={selection} nights={nights} currency={search.currency} destinationAirportCode={airportCode} onUpdateStayTime={(field, value) => updateSelection(destination.id, (current) => ({ ...current, [field]: value || undefined }))}/>}
 
               {hasActivityPlanning && <section className="itinerary-selected-schedule">
                 <h5>Activities and dining you selected</h5>

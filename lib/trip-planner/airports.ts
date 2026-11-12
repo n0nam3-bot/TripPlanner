@@ -7,7 +7,7 @@ const CITY_CODES: Record<string, string> = {
   lax: "LAX", "san francisco": "SFO", seattle: "SEA", denver: "DEN", dallas: "DFW", houston: "IAH", phoenix: "PHX",
   charlotte: "CLT", detroit: "DTW", minneapolis: "MSP", "san diego": "SAN", austin: "AUS", nashville: "BNA",
   toronto: "YTO", montreal: "YUL", vancouver: "YVR", london: "LON", paris: "PAR", rome: "ROM", tokyo: "TYO",
-  "las vegas": "LAS", "san juan": "SJU", cancun: "CUN", "mexico city": "MEX", "las terrenas": "AZS", samana: "AZS",
+  "las vegas": "LAS", "san juan": "SJU", cancun: "CUN", "mexico city": "MEX", "las terrenas": "AZS", samana: "AZS", albania: "TIA", tirana: "TIA", "tirana albania": "TIA", "tirana international airport": "TIA", durres: "TIA", "durres albania": "TIA", sarande: "TIA", "sarande albania": "TIA", vlore: "TIA", "vlore albania": "TIA", shkoder: "TIA", "shkoder albania": "TIA", berat: "TIA", "berat albania": "TIA", "london heathrow": "LHR", heathrow: "LHR", "paris charles de gaulle": "CDG", amsterdam: "AMS", frankfurt: "FRA", istanbul: "IST", dubai: "DXB", doha: "DOH", singapore: "SIN",
 };
 
 export function resolveAirportCode(input: string): string | null {
