@@ -35,13 +35,19 @@ function messageId(): string {
 }
 
 export function AITripAssistant({ context, configured, databaseAvailable, geminiAvailable, openRouterAvailable, onSetStartingPoint }: Props) {
-  const [open, setOpen] = useState(true);
+  // Start minimized in the server-rendered markup so phones never open a full-screen chat by default.
+  // Preserve the expanded desktop workspace after hydration on wider screens.
+  const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [draft, setDraft] = useState("");
   const [allowGemini, setAllowGemini] = useState(false);
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasConversation = messages.length > 1;
+
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 641px)").matches) setOpen(true);
+  }, []);
 
   useEffect(() => {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

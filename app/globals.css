@@ -2106,3 +2106,151 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
   .proximity-origin-form input { flex-basis:100%; }
   .proximity-origin-panel > small { grid-column:1; }
 }
+
+
+/* Desktop readability pass: keep compact metadata legible without changing the mobile scale. */
+@media (min-width: 761px) {
+  .search-card-top .eyebrow { font-size: 11px; }
+  .field-label { font-size: 10px; }
+  .search-field input, .search-field select { font-size: 14px; }
+  .search-field input[type="date"] { font-size: 13px; }
+  .preference-select, .flexible-toggle { font-size: 11px; }
+  .preference-select select { font-size: 12px; }
+  .search-footnote { font-size: 10px; }
+  .component-option-copy strong { font-size: 15px; }
+  .component-option-copy small { font-size: 12px; }
+  .landing-note { font-size: 12px; }
+  .results-filter-line { font-size: 13px; }
+  .results-filter-line > span:not(.results-filter-note) { font-size: 12px; }
+  .results-filter-line > .results-filter-note { font-size: 12px; }
+  .results-section-heading p { font-size: 14px; }
+  .results-truth-note { font-size: 14px; line-height: 1.6; }
+  .planner-country { font-size: 12px; }
+  .planner-highlights span { font-size: 12px; }
+  .live-result-heading p { font-size: 13px; line-height: 1.5; }
+  .live-result-heading > small { font-size: 10px; }
+  .provider-warning { font-size: 11px; }
+  .cache-freshness { font-size: 11px; }
+  .live-result-group-summary > span { font-size: 12px; }
+  .live-hotel-copy > p { font-size: 13px; line-height: 1.55; }
+  .live-hotel-tags span { font-size: 11px; }
+  .live-hotel-price > small { font-size: 11px; }
+  .live-hotel-price a { font-size: 13px; }
+  .experience-title h4 { font-size: 16px; line-height: 1.35; }
+  .experience-copy p, .experience-copy > small, .experience-distances span { font-size: 13px; line-height: 1.55; }
+  .experience-actions .text-action { font-size: 12px; }
+  .experience-schedule-field { font-size: 11px; }
+  .experience-schedule-field select, .experience-schedule-field input { font-size: 13px; }
+  .route-lookup button, .route-lookup small { font-size: 12px; }
+  .proximity-origin-copy > div strong { font-size: 13px; }
+  .proximity-origin-copy > div span { font-size: 11px; }
+  .proximity-origin-copy p { font-size: 13px; }
+  .proximity-origin-form input { font-size: 13px; }
+  .proximity-origin-form button { font-size: 12px; }
+  .proximity-origin-panel > small { font-size: 10px; }
+  .results-left-sidebar .results-section-rail-link { font-size: 10px; }
+  .results-left-sidebar .results-section-rail-heading span,
+  .results-left-sidebar .results-section-rail-heading small { font-size: 10px; }
+  .results-trip-overview-heading span { font-size: 10px; }
+  .results-trip-overview-heading small { font-size: 9px; }
+  .results-trip-overview-item > small { font-size: 9px; }
+  .results-trip-overview-item > strong { font-size: 12px; }
+  .results-trip-overview-item > span { font-size: 10px; }
+  .results-overview-save-primary { font-size: 10px; }
+  .results-overview-share-actions > button,
+  .results-overview-share-actions > a { font-size: 10px; }
+  .results-overview-save-message { font-size: 10px; }
+  .trip-budget-readiness-summary,
+  .trip-budget-readiness-disclosure,
+  .trip-budget-readiness-details { font-size: 12px; }
+  .planner-method-note p { font-size: 12px; }
+}
+
+/* Mobile: retain the horizontal swipe overview, but make it a compact utility strip. */
+@media (max-width: 640px) {
+  .results-left-sidebar {
+    top: 4px;
+    gap: 5px;
+    margin-bottom: 8px;
+  }
+  .results-trip-overview {
+    padding: 6px 8px;
+    border-radius: 9px;
+  }
+  .results-trip-overview-heading {
+    padding: 0 1px 4px;
+  }
+  .results-trip-overview-heading span { font-size: 9px; }
+  .results-trip-overview-heading small { font-size: 9px; }
+  .results-trip-overview-list {
+    gap: 4px;
+    padding: 5px 0 1px;
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .results-trip-overview-list::-webkit-scrollbar { display: none; }
+  .results-trip-overview-item {
+    flex: 0 0 auto;
+    min-width: 98px;
+    max-width: 145px;
+    padding: 2px 7px;
+    scroll-snap-align: start;
+  }
+  .results-trip-overview-item > small { font-size: 8px; letter-spacing: .65px; }
+  .results-trip-overview-item > strong {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 11px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .results-trip-overview-item > span {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 8px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .results-trip-overview-save-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 5px;
+    width: auto;
+    margin: 0;
+    padding: 0 0 0 7px;
+    border-top: 0;
+    border-left: 1px solid #e9eee8;
+    scroll-snap-align: start;
+  }
+  .results-overview-save-primary,
+  .results-overview-share-actions > button,
+  .results-overview-share-actions > a {
+    min-height: 29px;
+    padding: 4px 7px;
+    font-size: 9px;
+    white-space: nowrap;
+  }
+  .results-overview-share-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .results-overview-save-message { flex: 0 0 100%; font-size: 9px; }
+  .results-left-sidebar .results-section-rail {
+    padding: 5px;
+    border-radius: 9px;
+  }
+  .results-left-sidebar .results-section-rail-list { gap: 4px; }
+  .results-left-sidebar .results-section-rail-link {
+    min-height: 32px;
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+  .results-left-sidebar .results-section-rail-toggle { min-height: 32px; }
+}

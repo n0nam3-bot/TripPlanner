@@ -117,7 +117,8 @@ test("results layout places the compact search snapshot above the fixed section 
   const css = fs.readFileSync(path.join(root, "app/globals.css"), "utf8");
   assert.match(source, /className="results-left-sidebar"[\s\S]*?ResultsTripOverview[\s\S]*?ResultsSectionNavigation/);
   assert.match(source, /className="results-trip-overview"/);
-  assert.match(assistant, /const \[open, setOpen\] = useState\(true\)/);
+  assert.match(assistant, /const \[open, setOpen\] = useState\(false\)/);
+  assert.match(assistant, /matchMedia\("\(min-width: 641px\)"\)\.matches\) setOpen\(true\)/);
   assert.match(assistant, /is-expanded.*is-minimized/);
   assert.match(css, /\.trip-ai-dock\.is-expanded\s*\{[^}]*position:\s*fixed/s);
   assert.match(css, /\.results-content-with-rail:has\(\.trip-ai-dock\.is-expanded\)/);
