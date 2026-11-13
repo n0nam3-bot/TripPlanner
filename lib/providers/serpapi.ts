@@ -78,7 +78,14 @@ export type LiveExperience = {
   openingHours?: string;
 };
 
-export type HotelBookingOption = { seller: string; price: number | null; currency: string; url?: string; terms: string[] };
+export type HotelBookingOption = { seller: string; price: number | null; priceBasis: "stay" | "night" | "unknown"; currency: string; url?: string; terms: string[] };
+export type SupplierOfferLookup<T> = {
+  offers: T[];
+  checkedAt: string;
+  dataAsOf: string;
+  servedFromCache: boolean;
+  stale: boolean;
+};
 
 export type SearchCacheSummary = { key: string; label: string; status: "live" | "cached" | "stale"; fetchedAt: string };
 
@@ -275,6 +282,10 @@ type ProviderCachePolicy = { ttlSeconds: number; staleMaxAgeSeconds: number };
 export function getProviderCachePolicy(params: Record<string, string>): ProviderCachePolicy {
   const engine = params.engine ?? "";
   if (engine === "google_flights_calendar") return { ttlSeconds: 3600, staleMaxAgeSeconds: 12 * 3600 };
+  // Seller-token lookups contain volatile offer prices; keep them much fresher
+  // than broad discovery results. Explicit rechecks bypass the cache entirely.
+  if (engine === "google_flights" && params.booking_token) return { ttlSeconds: 5 * 60, staleMaxAgeSeconds: 6 * 3600 };
+  if (engine === "google_hotels" && params.property_token) return { ttlSeconds: 10 * 60, staleMaxAgeSeconds: 12 * 3600 };
   if (engine === "google_flights") {
     const days = daysUntilProviderDate(params.outbound_date);
     if (days !== null && days <= 7) return { ttlSeconds: 900, staleMaxAgeSeconds: 6 * 3600 };
@@ -1123,7 +1134,12 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   };
 }
 
-export async function getHotelBookingOptions(propertyToken: string, input: TripSearchInput, clientUsageKey = "shared"): Promise<HotelBookingOption[]> {
+export async function getHotelBookingOptions(
+  propertyToken: string,
+  input: TripSearchInput,
+  clientUsageKey = "shared",
+  forceRefresh = false,
+): Promise<SupplierOfferLookup<HotelBookingOption>> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   if (!propertyToken || propertyToken.length > 12000) throw new Error("INVALID_PROPERTY_TOKEN");
   const params: Record<string, string> = {
@@ -1133,18 +1149,29 @@ export async function getHotelBookingOptions(propertyToken: string, input: TripS
     currency: input.currency, gl: "us", hl: "en",
   };
   if (input.childrenAges.length) params.children_ages = input.childrenAges.join(",");
-  const result = await querySerpApi(params, clientUsageKey);
+  const result = await querySerpApi(params, clientUsageKey, forceRefresh);
   const candidates = [...arr(result.data.ads), ...arr(result.data.prices)];
   const offers = candidates.map((entry) => {
     const offer = obj(entry);
     const rate = obj(offer.rate_per_night);
     const total = obj(offer.total_rate);
-    const price = num(total.extracted_after_taxes_fees) ?? num(total.extracted_lowest) ?? num(offer.extracted_price) ?? num(rate.extracted_after_taxes_fees) ?? num(rate.extracted_lowest) ?? num(offer.price);
+    const stayPrice = num(total.extracted_after_taxes_fees) ?? num(total.extracted_display_price) ?? num(total.extracted_lowest);
+    const nightPrice = num(rate.extracted_after_taxes_fees) ?? num(rate.extracted_display_price) ?? num(rate.extracted_lowest);
+    const unclassifiedPrice = num(offer.extracted_price) ?? num(offer.price);
+    const price = stayPrice ?? nightPrice ?? unclassifiedPrice;
+    const priceBasis: HotelBookingOption["priceBasis"] = stayPrice !== null ? "stay" : nightPrice !== null ? "night" : "unknown";
     const link = safeHttpUrl(offer.link) ?? safeHttpUrl(offer.url);
     const terms = [...arr(offer.extensions), ...arr(offer.terms)].filter((value): value is string => typeof value === "string").slice(0, 5);
-    return { seller: str(offer.name, str(offer.source, str(offer.provider, "Booking provider"))), price, currency: str(offer.currency, input.currency), url: link, terms };
+    return { seller: str(offer.name, str(offer.source, str(offer.provider, "Booking provider"))), price, priceBasis, currency: str(offer.currency, input.currency), url: link, terms };
   }).filter((offer) => Boolean(offer.url) || offer.price !== null);
-  return [...new Map(offers.map((offer) => [`${offer.seller}:${offer.url ?? offer.price}`, offer])).values()].slice(0, 12);
+  const uniqueOffers = [...new Map(offers.map((offer) => [`${offer.seller}:${offer.url ?? offer.price}:${offer.priceBasis}`, offer])).values()].slice(0, 12);
+  return {
+    offers: uniqueOffers,
+    checkedAt: new Date().toISOString(),
+    dataAsOf: result.fetchedAt,
+    servedFromCache: result.fromCache,
+    stale: Boolean(result.isStale),
+  };
 }
 
 export type DrivingRouteResult = { distance: string; duration: string; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string; mapImageDataUrl?: string; directions?: string[]; mapWarning?: string };
@@ -1269,7 +1296,8 @@ export async function getFlightBookingOptions(
   input: TripSearchInput,
   destinationAirportCode: string,
   clientUsageKey = "shared",
-): Promise<FlightBookingOption[]> {
+  forceRefresh = false,
+): Promise<SupplierOfferLookup<FlightBookingOption>> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   if (!bookingToken || bookingToken.length > 12000) throw new Error("INVALID_BOOKING_TOKEN");
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
@@ -1280,8 +1308,8 @@ export async function getFlightBookingOptions(
   // the selected booking token. SerpApi currently validates outbound_date even
   // for some booking-token requests, so keep both original dates in the query.
   const params = makeFlightBookingParams(input, originCode, destinationAirportCode, bookingToken);
-  const response = await querySerpApi(params, clientUsageKey);
-  return arr(response.data.booking_options).map((item) => {
+  const response = await querySerpApi(params, clientUsageKey, forceRefresh);
+  const offers = arr(response.data.booking_options).map((item) => {
     const option = obj(item);
     const together = obj(option.together);
     const departing = obj(option.departing);
@@ -1325,4 +1353,11 @@ export async function getFlightBookingOptions(
       fareTerms: arr(together.extensions).filter((entry): entry is string => typeof entry === "string").slice(0, 6),
     };
   }).filter((item) => item.url).slice(0, 10);
+  return {
+    offers,
+    checkedAt: new Date().toISOString(),
+    dataAsOf: response.fetchedAt,
+    servedFromCache: response.fromCache,
+    stale: Boolean(response.isStale),
+  };
 }

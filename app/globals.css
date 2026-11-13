@@ -1968,3 +1968,8 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
   .site-header .brand-mark svg { width: 18px; height: 18px; }
   .site-header .brand-name { font-size: 18px; }
 }
+
+/* Supplier rate freshness is deliberately compact and visually subordinate to offer rows. */
+.supplier-freshness-note { display: block; margin: 7px 0 8px; color: #718075; font-size: 10px; line-height: 1.5; font-weight: 400; }
+.hotel-booking-options > .supplier-freshness-note { margin: 6px 0 8px; }
+.booking-options-list > .supplier-freshness-note { color: #718075; font-size: 10px; }

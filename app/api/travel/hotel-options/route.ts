@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     const validated = validateTripSearchInput(body.search);
     if (!validated.input) return NextResponse.json({ error: "Original trip dates and traveler details are required." }, { status: 400 });
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
-    const offers = await getHotelBookingOptions(propertyToken, validated.input, hashClientAddress(address));
-    return NextResponse.json({ offers, checkedAt: new Date().toISOString() }, { headers: { "Cache-Control": "no-store" } });
+    const result = await getHotelBookingOptions(propertyToken, validated.input, hashClientAddress(address), body.forceRefresh === true);
+    return NextResponse.json({ offers: result.offers, checkedAt: result.checkedAt, dataAsOf: result.dataAsOf, servedFromCache: result.servedFromCache, stale: result.stale }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to retrieve property rates.";
     const rateLimited = ["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_CLIENT_RATE_LIMITED"].includes(message);

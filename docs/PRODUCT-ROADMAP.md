@@ -64,8 +64,12 @@
 - [x] Add a budget-completeness readiness assessment: blank estimates stay unpriced, explicit $0 estimates are recorded as user-entered, and hard limits remain advisory while any requested component is a provider quote or lacks an all-in total.
 - [x] Expand local airport autocomplete and city/country gateway coverage across major international passenger airports; resolve airport names, aliases and IATA codes locally; expand metro selections into physical airports for exact and flexible searches while bounding the origin/destination matrix to four combinations for provider responsiveness. Selecting an individual airport remains available for exact control.
 - [x] Add a no-API-credit regression suite for parser examples, inclusive date/duration handling, outbound/return/seller token stages, connection-country filtering, airport-local time zones/DST, round-trip price basis, currency-safe cost totals, room/guest validation, and Google booking redirect URL validation.
+- [x] Add user-triggered supplier-offer revalidation for exact flight seller tokens and selected property tokens. Explicit rechecks bypass Tripfinder's cache, keep SerpApi quota protections, and expose lookup time, provider-data time, cache state and stale-fallback state.
+- [x] Shorten the cache lifetime for volatile flight seller options (5 minutes) and property rate options (10 minutes), while retaining bounded stale fallback and explicit refresh controls.
+- [x] Preserve hotel offer price basis (total stay, per night, or unknown) rather than presenting an unclassified provider amount as a stay total.
+- [ ] Verify supplier-declared inventory/availability and complete passenger/room basis with approved supplier responses; a refreshed quote is not a booking hold or a checkout guarantee.
 
-**Next Release 4 focus:** complete hard budget enforcement only after providers expose comparable all-in totals for the requested components; until then, keep the completeness gate advisory. Then proceed to supplier-data quality, price/availability revalidation and search-outcome monitoring. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
+**Next Release 4 focus:** improve supplier-data quality and availability confirmation using approved supplier responses. Keep hard budget enforcement advisory until each requested cost component has comparable, current, all-in totals. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
 
 
 ## Release 5 — persistence and trip workspace

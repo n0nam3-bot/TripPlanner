@@ -28,8 +28,9 @@ type Props = {
 };
 type SearchState = { loading: boolean; error: string; result: LiveTravelSearchResult | null };
 type ReturnState = { loading: boolean; error: string; result: ReturnFlightSearchResult | null };
-type BookingState = { loading: boolean; error: string; options: FlightBookingOption[] | null };
-type HotelBookingState = { loading: boolean; error: string; options: HotelBookingOption[] | null };
+type SupplierLookupState = { checkedAt?: string; dataAsOf?: string; servedFromCache?: boolean; stale?: boolean };
+type BookingState = { loading: boolean; error: string; options: FlightBookingOption[] | null } & SupplierLookupState;
+type HotelBookingState = { loading: boolean; error: string; options: HotelBookingOption[] | null } & SupplierLookupState;
 type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null };
 type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attribution?: string };
 type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string; source?: string; mapImageDataUrl?: string; mapWarning?: string; directions?: string[]; startAddress?: string; endAddress?: string };
@@ -104,6 +105,14 @@ function resultSourceLabel(result: LiveTravelSearchResult): string {
   if (summary.some((entry) => entry.status === "cached")) return "mixed cached and live provider data";
   return "new provider search";
 }
+function supplierFreshnessLabel(state?: SupplierLookupState): string {
+  if (!state?.checkedAt) return "Supplier check time not supplied";
+  const checked = cacheAgeLabel(state.checkedAt);
+  const sourceAge = state.dataAsOf ? cacheAgeLabel(state.dataAsOf) : "time unknown";
+  if (state.stale) return `Lookup attempted ${checked} · using saved fallback data from ${sourceAge}`;
+  if (state.servedFromCache) return `Lookup served ${checked} · cached provider data from ${sourceAge}`;
+  return `Provider response checked ${checked} · data received ${sourceAge}`;
+}
 function directionsUrl(origin: string, destination: string): string {
   const url = new URL("https://www.google.com/maps/dir/");
   url.searchParams.set("api", "1"); url.searchParams.set("origin", origin); url.searchParams.set("destination", destination); url.searchParams.set("travelmode", "driving");
@@ -143,17 +152,19 @@ function BookingOptions({ state, currency, selectedOption, onSelectSeller }: {
   onSelectSeller: (option: FlightBookingOption) => void;
 }) {
   if (!state) return null;
-  if (state.loading) return <p className="inline-loading"><RefreshCw size={13} className="spin"/> Loading airline and seller offers…</p>;
-  if (state.error) return <p className="provider-inline-error">{state.error}</p>;
-  if (!state.options) return null;
+  if (state.loading && !state.options) return <p className="inline-loading"><RefreshCw size={13} className="spin"/> Loading airline and seller offers…</p>;
+  if (!state.options) return state.error ? <p className="provider-inline-error">{state.error}</p> : null;
   return <div className="booking-options-list">
+    {state.loading && <p className="inline-loading"><RefreshCw size={12} className="spin"/> Rechecking seller prices…</p>}
+    {state.error && <p className="provider-inline-error">The refresh did not complete. Previously retrieved offers remain visible: {state.error}</p>}
+    <small className="supplier-freshness-note">{supplierFreshnessLabel(state)}. Seller prices are snapshots, not a booking hold; confirm passenger basis, baggage, taxes, fees and availability at checkout.</small>
     {state.options.length ? state.options.map((option, index) => {
       const selected = Boolean(selectedOption && bookingOptionKey(selectedOption) === bookingOptionKey(option));
       return <div className={`booking-option-row ${selected ? "is-selected" : ""}`} key={`${option.seller}-${index}`}>
         <span className="booking-option-description"><strong>{option.seller}</strong><small>{option.type}{(option.fareTerms.length > 0 || option.baggage.length > 0) ? ` · ${[...option.fareTerms, ...option.baggage].join(" · ")}` : ""}</small>
           {option.separateTickets
             ? <small className="booking-separate-ticket-breakdown">Separate tickets{option.departingPrice !== null && option.departingPrice !== undefined ? ` · Outbound ${money(option.departingPrice, option.currency || currency)}${option.departingSeller ? ` (${option.departingSeller})` : ""}` : ""}{option.returningPrice !== null && option.returningPrice !== undefined ? ` · Return ${money(option.returningPrice, option.currency || currency)}${option.returningSeller ? ` (${option.returningSeller})` : ""}` : ""}{option.price !== null ? ` · Total ${money(option.price, option.currency || currency)}` : " · Confirm both leg prices with seller"}</small>
-            : <small className="booking-combined-ticket-note">Seller offer for the selected round-trip itinerary; confirm the ticketing and final passenger total at checkout.</small>}
+            : <small className="booking-combined-ticket-note">Seller offer for the selected round-trip itinerary; confirm ticketing and final passenger total at checkout.</small>}
         </span>
         <b>{option.price !== null ? money(option.price, option.currency || currency) : "See seller"}</b>
         <button type="button" className="booking-select-button" onClick={() => onSelectSeller(option)}>{selected ? <><Check size={11}/> Selected</> : "Select seller"}</button>
@@ -197,7 +208,7 @@ function FlightResult({ flight, currency, returnState, bookingStates, selectedOu
   selectedSeller?: SelectedFlightSeller | null;
   onSelectOutbound: (flight: LiveFlight) => void;
   onSelectReturn: (flight: LiveFlight) => void;
-  onLoadBookingOptions: (flight: LiveFlight) => void;
+  onLoadBookingOptions: (flight: LiveFlight, forceRefresh?: boolean) => void;
   onSelectSeller: (flight: LiveFlight, option: FlightBookingOption) => void;
 }) {
   // Round-trip booking options normally become available on the selected
@@ -210,7 +221,7 @@ function FlightResult({ flight, currency, returnState, bookingStates, selectedOu
     <div className="live-offer-main"><div className="live-offer-route"><strong>{formatFlightTimeAtAirport(flight.departure, flight.segments[0]?.fromAirportCode)}</strong><span>→</span><strong>{formatFlightTimeAtAirport(flight.arrival, flight.segments[flight.segments.length - 1]?.toAirportCode)}</strong></div><p>{flight.airlines.join(" · ")} · {flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops > 1 ? "s" : ""}`} · {duration(flight.durationMinutes)}</p><small>{flight.from} → {flight.to}</small></div>
     <div className="live-offer-price">{flight.price !== null ? <strong>{money(flight.price, flight.currency || currency)}</strong> : <strong>Price not supplied</strong>}<small>Indicative price from the initial round-trip search. It is not a confirmed combined outbound + return seller fare.</small>
       <button className={`selection-button ${selectedOutbound ? "is-selected" : ""}`} type="button" disabled={returnState?.loading} onClick={() => onSelectOutbound(flight)}>{returnState?.loading && selectedOutbound ? <><RefreshCw size={12} className="spin"/> Finding returns</> : selectedOutbound ? <><Check size={13}/> Outbound selected</> : <>Choose outbound <ArrowRight size={12}/></>}</button>
-      {selectedOutbound && selectedReturnFlight && sellerLookupFlight && <button className="text-action" type="button" onClick={() => onLoadBookingOptions(sellerLookupFlight)} disabled={sellerState?.loading}>{sellerState?.loading ? "Loading sellers…" : "Compare round-trip sellers"} <ArrowUpRight size={12}/></button>}
+      {selectedOutbound && selectedReturnFlight && sellerLookupFlight && <button className="text-action" type="button" onClick={() => onLoadBookingOptions(sellerLookupFlight, Boolean(sellerState?.options))} disabled={sellerState?.loading}>{sellerState?.loading ? (sellerState?.options ? "Rechecking prices…" : "Loading sellers…") : sellerState?.options ? "Recheck seller prices" : "Compare round-trip sellers"} <ArrowUpRight size={12}/></button>}
       {selectedOutbound && !selectedReturnFlight && <small className="seller-compare-hint">Select a return flight to compare sellers for the complete trip.</small>}
       {selectedOutbound && selectedReturnFlight && !sellerLookupFlight && <small className="seller-compare-hint">Seller booking links were not supplied for this return option. Use the exact Google Flights search above.</small>}
     </div>
@@ -268,7 +279,7 @@ function RouteLookup({ origin, destination, label, originCoordinates, destinatio
 
 function HotelResult({ hotel, currency, airportCode, experiences, nights, search, bookingState, selected, onSelect, onLoadBookingOptions }: {
   hotel: LiveHotel; currency: string; airportCode: string; experiences: LiveExperience[]; nights: number; search: TripSearchInput;
-  bookingState?: HotelBookingState; selected: boolean; onSelect: (hotel: LiveHotel) => void; onLoadBookingOptions: (hotel: LiveHotel) => void;
+  bookingState?: HotelBookingState; selected: boolean; onSelect: (hotel: LiveHotel) => void; onLoadBookingOptions: (hotel: LiveHotel, forceRefresh?: boolean) => void;
 }) {
   const airport = hotel.latitude !== null && hotel.longitude !== null
     ? nearestKnownAirport(hotel.latitude, hotel.longitude, airportCode) : null;
@@ -298,7 +309,7 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, search
         {detectedAmenities.filter((amenity) => !search.stayMustHaveAmenities.includes(amenity) && !search.stayPreferredAmenities.includes(amenity)).map((amenity) => <span key={`detected-${amenity}`}>{STAY_AMENITY_LABELS[amenity]} · listed</span>)}
         {hotel.amenities.filter((amenity) => !/\bpool\b/i.test(amenity) && !(Object.values(STAY_AMENITY_LABELS) as string[]).includes(amenity)).slice(0, 10).map((amenity) => <span key={amenity}>{amenity}</span>)}
       </div>
-      {hotel.providerOffers.some((offer) => offer.url) && <div className="hotel-provider-links"><strong>Available booking sites</strong>{hotel.providerOffers.filter((offer) => offer.url).slice(0, 4).map((offer, index) => <div className="hotel-provider-offer" key={`${offer.seller}-${index}`}><span><b>{offer.seller}</b><small>{offer.price !== null ? `${money(offer.price, offer.currency || currency)}${offer.priceBasis === "stay" ? " total stay" : offer.priceBasis === "night" ? " per night" : ""}` : "Price not supplied"}</small></span><a href={offer.url} target="_blank" rel="noreferrer">Open seller <ExternalLink size={11}/></a></div>)}</div>}
+      {hotel.providerOffers.some((offer) => offer.url) && <div className="hotel-provider-links"><strong>Available booking sites</strong>{hotel.providerOffers.filter((offer) => offer.url).slice(0, 4).map((offer, index) => <div className="hotel-provider-offer" key={`${offer.seller}-${index}`}><span><b>{offer.seller}</b><small>{offer.price !== null ? `${money(offer.price, offer.currency || currency)}${offer.priceBasis === "stay" ? " total stay" : offer.priceBasis === "night" ? " per night" : " · price basis not supplied"}` : "Price not supplied"}</small></span><a href={offer.url} target="_blank" rel="noreferrer">Open seller <ExternalLink size={11}/></a></div>)}</div>}
       {(airportDistance !== null || nearestActivities.length > 0 || hotel.nearbyPlaces.length > 0) && <div className="hotel-proximity">
         {airportDistance !== null && airport && <span>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportDistance)} straight-line</span>}
         {airport && <RouteLookup origin={hotelOrigin} destination={airport.name} label="Check drive to airport" originCoordinates={hotel.latitude !== null && hotel.longitude !== null ? { latitude: hotel.latitude, longitude: hotel.longitude } : undefined} destinationCoordinates={{ latitude: airport.latitude, longitude: airport.longitude }}/>}
@@ -306,14 +317,14 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, search
         {nearestActivities.map(({ item, miles }) => <div className="hotel-activity-distance" key={item.id}>{item.name}: {distanceLabel(miles)} straight-line <RouteLookup origin={hotelOrigin} destination={item.address || `${item.latitude},${item.longitude}`} label="Driving time" originCoordinates={{ latitude: hotel.latitude!, longitude: hotel.longitude! }} destinationCoordinates={{ latitude: item.latitude!, longitude: item.longitude! }}/></div>)}
       </div>}
       {bookingState?.loading && <p className="inline-loading"><RefreshCw size={12} className="spin"/> Retrieving property booking options…</p>}
-      {bookingState?.error && <p className="provider-inline-error">{bookingState.error}</p>}
-      {bookingState?.options && <div className="hotel-booking-options">{bookingState.options.length ? bookingState.options.map((option, index) => <div className="hotel-booking-option" key={`${option.seller}-${index}`}><span><strong>{option.seller}</strong>{option.terms.length > 0 && <small>{option.terms.join(" · ")}</small>}</span><b>{option.price !== null ? money(option.price, option.currency || currency) : "See provider"}</b>{option.url && <a href={option.url} target="_blank" rel="noreferrer">Open seller <ArrowUpRight size={11}/></a>}</div>) : <p>No separate seller offers were returned. The property link remains available above.</p>}</div>}
+      {bookingState?.error && !bookingState.options && <p className="provider-inline-error">{bookingState.error}</p>}
+      {bookingState?.options && <div className="hotel-booking-options">{bookingState.error && <p className="provider-inline-error">The refresh did not complete. Previously retrieved rates remain visible: {bookingState.error}</p>}<small className="supplier-freshness-note">{supplierFreshnessLabel(bookingState)}. Rates are not a booking hold; confirm room availability, guest allocation, taxes and fees at checkout.</small>{bookingState.options.length ? bookingState.options.map((option, index) => <div className="hotel-booking-option" key={`${option.seller}-${index}`}><span><strong>{option.seller}</strong>{option.terms.length > 0 && <small>{option.terms.join(" · ")}</small>}</span><b>{option.price !== null ? `${money(option.price, option.currency || currency)}${option.priceBasis === "stay" ? " · total stay" : option.priceBasis === "night" ? " · per night" : " · basis not supplied"}` : "See provider"}</b>{option.url && <a href={option.url} target="_blank" rel="noreferrer">Open seller <ArrowUpRight size={11}/></a>}</div>) : <p>No separate seller offers were returned. The property link remains available above.</p>}</div>}
     </div>
     <div className="live-hotel-price">
       {hotel.totalPrice !== null ? <strong>{money(hotel.totalPrice, hotel.currency || currency)}</strong> : hotel.nightlyPrice !== null ? <><strong>{money(hotel.nightlyPrice * nights, hotel.currency || currency)}</strong><small>Estimated {nights}-night total before taxes and fees</small><small>{money(hotel.nightlyPrice, hotel.currency || currency)} per night</small></> : <strong>Price unavailable</strong>}
       {hotel.totalPrice !== null && <small>Provider-displayed total for {nights} nights</small>}
       <button type="button" className={`selection-button ${selected ? "is-selected" : ""}`} onClick={() => onSelect(hotel)}>{selected ? <><Check size={13}/> Stay selected · Remove</> : "Select this stay"}</button>
-      {hotel.propertyToken && <button type="button" className="text-action" onClick={() => onLoadBookingOptions(hotel)} disabled={bookingState?.loading}>{bookingState?.loading ? "Loading rates…" : bookingState?.options ? "Refresh rates" : "Compare rates"} <ArrowUpRight size={12}/></button>}
+      {hotel.propertyToken && <button type="button" className="text-action" onClick={() => onLoadBookingOptions(hotel, Boolean(bookingState?.options))} disabled={bookingState?.loading}>{bookingState?.loading ? (bookingState?.options ? "Rechecking rates…" : "Loading rates…") : bookingState?.options ? "Recheck current rates" : "Compare rates"} <ArrowUpRight size={12}/></button>}
       <a className="hotel-primary-link" href={propertyUrl} target="_blank" rel="noreferrer">{hotel.bookingUrlLabel} <ExternalLink size={12}/></a>
     </div>
   </article>;
@@ -927,29 +938,39 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     }
   }
 
-  async function loadBookingOptions(flight: LiveFlight, destinationAirportCode: string) {
+  async function loadBookingOptions(destinationId: string, flight: LiveFlight, destinationAirportCode: string, forceRefresh = false) {
     if (!flight.bookingToken) return;
-    setBookingStates((current) => ({ ...current, [flight.id]: { loading: true, error: "", options: current[flight.id]?.options ?? null } }));
+    setBookingStates((current) => ({ ...current, [flight.id]: { ...current[flight.id], loading: true, error: "", options: current[flight.id]?.options ?? null } }));
     try {
-      const response = await fetch("/api/travel/booking-options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bookingToken: flight.bookingToken, search, destinationAirportCode }) });
+      const response = await fetch("/api/travel/booking-options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bookingToken: flight.bookingToken, search, destinationAirportCode, forceRefresh }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Could not retrieve seller links.");
-      setBookingStates((current) => ({ ...current, [flight.id]: { loading: false, error: "", options: Array.isArray(data.options) ? data.options as FlightBookingOption[] : [] } }));
+      const refreshedOptions = Array.isArray(data.options) ? data.options as FlightBookingOption[] : [];
+      setBookingStates((current) => ({ ...current, [flight.id]: { loading: false, error: "", options: refreshedOptions, checkedAt: typeof data.checkedAt === "string" ? data.checkedAt : undefined, dataAsOf: typeof data.dataAsOf === "string" ? data.dataAsOf : undefined, servedFromCache: data.servedFromCache === true, stale: data.stale === true } }));
+      // A seller selection must not silently retain an old quote after its
+      // refreshed token lookup changes or removes that exact offer.
+      setSelections((current) => {
+        const selection = current[destinationId];
+        if (!selection?.flightSeller || selection.flightSeller.flightId !== flight.id) return current;
+        const matchingOffer = refreshedOptions.find((offer) => bookingOptionKey(offer) === bookingOptionKey(selection.flightSeller!.option));
+        if (matchingOffer) return { ...current, [destinationId]: { ...selection, flightSeller: { flightId: flight.id, option: matchingOffer } } };
+        return { ...current, [destinationId]: { ...selection, flightSeller: null } };
+      });
     } catch (error) {
-      setBookingStates((current) => ({ ...current, [flight.id]: { loading: false, error: error instanceof Error ? error.message : "Seller lookup failed.", options: current[flight.id]?.options ?? null } }));
+      setBookingStates((current) => ({ ...current, [flight.id]: { ...current[flight.id], loading: false, error: error instanceof Error ? error.message : "Seller lookup failed.", options: current[flight.id]?.options ?? null } }));
     }
   }
 
-  async function loadHotelOptions(hotel: LiveHotel) {
+  async function loadHotelOptions(hotel: LiveHotel, forceRefresh = false) {
     if (!hotel.propertyToken) return;
-    setHotelBookingStates((current) => ({ ...current, [hotel.id]: { loading: true, error: "", options: current[hotel.id]?.options ?? null } }));
+    setHotelBookingStates((current) => ({ ...current, [hotel.id]: { ...current[hotel.id], loading: true, error: "", options: current[hotel.id]?.options ?? null } }));
     try {
-      const response = await fetch("/api/travel/hotel-options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ propertyToken: hotel.propertyToken, search }) });
+      const response = await fetch("/api/travel/hotel-options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ propertyToken: hotel.propertyToken, search, forceRefresh }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Could not retrieve property booking options.");
-      setHotelBookingStates((current) => ({ ...current, [hotel.id]: { loading: false, error: "", options: Array.isArray(data.offers) ? data.offers as HotelBookingOption[] : [] } }));
+      setHotelBookingStates((current) => ({ ...current, [hotel.id]: { loading: false, error: "", options: Array.isArray(data.offers) ? data.offers as HotelBookingOption[] : [], checkedAt: typeof data.checkedAt === "string" ? data.checkedAt : undefined, dataAsOf: typeof data.dataAsOf === "string" ? data.dataAsOf : undefined, servedFromCache: data.servedFromCache === true, stale: data.stale === true } }));
     } catch (error) {
-      setHotelBookingStates((current) => ({ ...current, [hotel.id]: { loading: false, error: error instanceof Error ? error.message : "Hotel booking lookup failed.", options: current[hotel.id]?.options ?? null } }));
+      setHotelBookingStates((current) => ({ ...current, [hotel.id]: { ...current[hotel.id], loading: false, error: error instanceof Error ? error.message : "Hotel booking lookup failed.", options: current[hotel.id]?.options ?? null } }));
     }
   }
 
@@ -1184,7 +1205,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 <p className="flight-timezone-note">{destinationTimezoneNotice(destinationLabel, airportCode, search.departureDate)}</p>
                 <FlexibleFlightDatePanel search={search} destinationAirportCode={airportCode} hasSelections={Boolean(selection.outbound || selection.returnFlight || selection.hotel || Object.keys(selection.experiences).length)}/>
                 <p className="flight-roundtrip-note">Tripfinder sends one round-trip search with both dates. Google Flights returns outbound choices first; selecting one uses its departure token to retrieve matching return choices. The initial result price is indicative, not a confirmed combined fare. After choosing both legs, compare seller offers: they identify whether the booking is one combined ticket or separate outbound and return tickets, and show each leg's price when the provider supplies it.</p>
-                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
+                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected, forceRefresh) => loadBookingOptions(destination.id, selected, airportCode, forceRefresh)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
               </details>}
 
               {search.components.includes("stays") && <details id={`trip-section-${destination.id}-stays`} data-section-key="stays" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>

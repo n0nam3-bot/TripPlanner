@@ -18,8 +18,8 @@ export async function POST(request: Request) {
     const destinationAirportCode = typeof body.destinationAirportCode === "string" ? body.destinationAirportCode.toUpperCase() : "";
     if (!/^[A-Z]{3}$/.test(destinationAirportCode)) return NextResponse.json({ error: "A valid destination airport code is required." }, { status: 400 });
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
-    const options = await getFlightBookingOptions(body.bookingToken, validated.input, destinationAirportCode, hashClientAddress(address));
-    return NextResponse.json({ options, checkedAt: new Date().toISOString() }, { headers: { "Cache-Control": "no-store" } });
+    const result = await getFlightBookingOptions(body.bookingToken, validated.input, destinationAirportCode, hashClientAddress(address), body.forceRefresh === true);
+    return NextResponse.json({ options: result.offers, checkedAt: result.checkedAt, dataAsOf: result.dataAsOf, servedFromCache: result.servedFromCache, stale: result.stale }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to retrieve booking options.";
     const status = ["SERPAPI_NOT_CONFIGURED", "DATABASE_NOT_CONFIGURED", "DATABASE_UNAVAILABLE", "SERPAPI_QUOTA_CHECK_FAILED"].includes(message) ? 503 : message === "INVALID_BOOKING_TOKEN" ? 400 : ["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_CLIENT_RATE_LIMITED"].includes(message) ? 429 : 502;
