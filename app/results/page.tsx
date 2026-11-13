@@ -50,7 +50,8 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
   const dateLabel = `${dateFormat.format(new Date(`${search.departureDate}T12:00:00Z`))} – ${dateFormat.format(new Date(`${search.returnDate}T12:00:00Z`))}`;
 
   const requested = search.components.map((item) => item === "flights" ? "Flights" : item === "stays" ? (search.stayTypes.length > 1 ? "Hotels and rentals" : search.stayTypes[0] === "vacation_rentals" ? "Rentals" : "Hotels") : "Activities");
-  const heading = search.destination.toLowerCase() === "anywhere" ? "Destinations worth comparing" : `Travel options for ${search.destination}`;
+  const destinationLabel = search.destinationArea ? `${search.destinationArea}, ${search.destination}` : search.destination;
+  const heading = search.destination.toLowerCase() === "anywhere" ? "Destinations worth comparing" : `Travel options for ${destinationLabel}`;
 
   return (
     <main className="results-page">
@@ -62,13 +63,14 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
         </div>
         <div className="search-summary">
           {search.components.includes("flights") && <div><Plane size={16}/><span><small>FROM</small><strong>{search.origin}</strong></span></div>}
-          <div><MapPin size={16}/><span><small>DESTINATION</small><strong>{search.destination}</strong></span></div>
+          <div><MapPin size={16}/><span><small>DESTINATION</small><strong>{destinationLabel}</strong></span></div>
           <div><CalendarDays size={16}/><span><small>DATES</small><strong>{dateLabel}</strong></span></div>
           <div><Users size={16}/><span><small>TRAVELERS</small><strong>{travelerLabel}</strong></span></div>
           <div><Wallet size={16}/><span><small>BUDGET</small><strong>{budgetLabel}</strong></span></div>
         </div>
         <div className="results-filter-line">
           <span>{requested.join(" + ")}</span>
+          {search.destinationArea && <span>Area: {search.destinationArea}</span>}
           {search.components.includes("stays") && <span>{search.rooms} room{search.rooms === 1 ? "" : "s"}</span>}
           {search.components.includes("stays") && search.staySpaceType !== "any" && <span>{search.staySpaceType === "entire_place" ? "Entire place" : search.staySpaceType === "private_room" ? "Private room" : "Shared room"}</span>}
           {search.components.includes("stays") && search.stayMustHaveAmenities.length > 0 && <span>Must have: {search.stayMustHaveAmenities.map((item) => item.replaceAll("_", " ")).join(", ")}</span>}
@@ -76,6 +78,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
           {search.components.includes("flights") && <span>{search.cabinClass.replaceAll("_", " ")}</span>}
           {search.components.includes("flights") && search.preferredLayoverCountries.length > 0 && <span>Prefer connections: {search.preferredLayoverCountries.join(", ")}</span>}
           {search.components.includes("flights") && search.avoidLayoverCountries.length > 0 && <span>Avoid connections: {search.avoidLayoverCountries.join(", ")}</span>}
+          {search.planningNotes.map((note, index) => <span key={`planning-note-${index}`}>Planning note: {note}</span>)}
         </div>
       </section>
       <section className="results-content shell">

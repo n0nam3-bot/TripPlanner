@@ -289,9 +289,10 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, search
   </article>;
 }
 
-function ExperienceResult({ experience, hotels, airportCode, search, days, selected, onSelectionChange }: {
+function ExperienceResult({ experience, hotels, selectedHotel, airportCode, search, days, selected, onSelectionChange }: {
   experience: LiveExperience;
   hotels: LiveHotel[];
+  selectedHotel?: LiveHotel | null;
   airportCode: string;
   search: TripSearchInput;
   days: Array<{ date: string; label: string }>;
@@ -308,6 +309,10 @@ function ExperienceResult({ experience, hotels, airportCode, search, days, selec
   const nearbyStays = experience.latitude !== null && experience.longitude !== null
     ? hotels.filter((hotel) => hotel.latitude !== null && hotel.longitude !== null).map((hotel) => ({ hotel, miles: haversineMiles(experience.latitude!, experience.longitude!, hotel.latitude!, hotel.longitude!) })).sort((a, b) => a.miles - b.miles).slice(0, 2)
     : [];
+  const selectedStayLocation = selectedHotel?.address || (selectedHotel && selectedHotel.latitude !== null && selectedHotel.longitude !== null ? `${selectedHotel.latitude},${selectedHotel.longitude}` : "");
+  const selectedStayMiles = selectedHotel && selectedHotel.latitude !== null && selectedHotel.longitude !== null && experience.latitude !== null && experience.longitude !== null
+    ? haversineMiles(selectedHotel.latitude, selectedHotel.longitude, experience.latitude, experience.longitude)
+    : null;
   const airport = experience.latitude !== null && experience.longitude !== null
     ? nearestKnownAirport(experience.latitude, experience.longitude, airportCode) : null;
   const airportMiles = airport?.miles ?? null;
@@ -332,10 +337,12 @@ function ExperienceResult({ experience, hotels, airportCode, search, days, selec
   return <article id={getTripAssistantResultAnchor(experience.kind, experience.id)} tabIndex={-1} className={`experience-card ${selected ? "is-selected" : ""}`}>
     {experience.thumbnail && <img src={experience.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="experience-copy"><div className="experience-title"><h4><a href={experience.website || experience.mapsUrl} target="_blank" rel="noreferrer">{experience.name} <ExternalLink size={11}/></a></h4>{experience.rating !== null && <span><Star size={12} fill="currentColor"/> {experience.rating.toFixed(1)}{experience.reviews ? ` · ${experience.reviews.toLocaleString()}` : ""}</span>}</div><p>{experience.category}{experience.address ? ` · ${experience.address}` : ""}</p>{experience.openState && <small>{experience.openState}</small>}{experience.price && <small>{experience.price}</small>}
-      {nearbyStays.length > 0 && <div className="experience-distances">{nearbyStays.map(({ hotel, miles }) => {
-        const hotelLocation = hotel.address || (hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : hotel.name);
-        return <span key={hotel.id}>{distanceLabel(miles)} from {hotel.name} (straight-line) <RouteLookup origin={hotelLocation} destination={activityLocation} label="Drive from hotel"/></span>;
-      })}</div>}
+      {isRestaurant && selectedHotel && selectedStayLocation
+        ? <div className="experience-distances"><span>{selectedStayMiles !== null ? `${distanceLabel(selectedStayMiles)} straight-line from selected stay · ` : "From selected stay · "}<RouteLookup origin={selectedStayLocation} destination={activityLocation} label="Check drive time from selected stay"/></span></div>
+        : nearbyStays.length > 0 && <div className="experience-distances">{nearbyStays.map(({ hotel, miles }) => {
+          const hotelLocation = hotel.address || (hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : hotel.name);
+          return <span key={hotel.id}>{distanceLabel(miles)} from {hotel.name} (straight-line) <RouteLookup origin={hotelLocation} destination={activityLocation} label="Drive from hotel"/></span>;
+        })}</div>}
       {airport && airportMiles !== null && <div className="experience-distances"><span>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportMiles)} straight-line <RouteLookup origin={airport.name} destination={activityLocation} label="Check drive from airport"/></span></div>}
     </div>
     <div className="experience-actions">
@@ -465,7 +472,7 @@ function TripCostLedger({ selection, experiences, currency, nights, people, budg
     catch { return `${code} ${amount.toFixed(2)}`; }
   };
   const invalidEstimate = (value: string) => Boolean(value.trim()) && parseCostEstimate(value) === null;
-  const selectedCount = Number(Boolean(selection.outbound)) + Number(Boolean(selection.hotel)) + selectedExperiences.length;
+  const selectedCount = Number(Boolean(selection.outbound)) + Number(Boolean(selection.returnFlight)) + Number(Boolean(selection.flightSeller)) + Number(Boolean(selection.hotel)) + selectedExperiences.length;
   if (!selectedCount) return null;
 
   return <section className="trip-cost-ledger" aria-labelledby="trip-cost-ledger-title">
@@ -486,14 +493,22 @@ function TripCostLedger({ selection, experiences, currency, nights, people, budg
       <label><span>Contingency allowance (%)</span><input type="number" min="0" max="50" step="1" value={contingencyPercent} onChange={(event) => setContingencyPercent(event.target.value)}/><small>Applied only to priced stay totals and estimates entered above.</small>{invalidContingency && <small className="trip-cost-input-error">Use a percentage from 0 to 50.</small>}</label>
     </div>
     <div className="trip-cost-ledger-total">
-      <div><span>Priced subtotal</span><strong>{format(ledger.pricedSubtotal, currency)}</strong></div>
+      <div><span>Priced subtotal (provider stay totals + entered estimates)</span><strong>{format(ledger.pricedSubtotal, currency)}</strong></div>
+      {ledger.referenceOnlyTotal > 0 && <div><span>Reference-only display prices · excluded from subtotal</span><strong>{format(ledger.referenceOnlyTotal, currency)}</strong></div>}
       <div><span>Contingency</span><strong>{format(ledger.contingencyAmount, currency)}</strong></div>
-      <div className="trip-cost-ledger-grand"><span>Known / entered planning amount</span><strong>{format(ledger.planningTotal, currency)}</strong></div>
-      <p>{ledger.remainingBeforeUnpriced >= 0
-        ? `${format(ledger.remainingBeforeUnpriced, currency)} of your ${format(budget, currency)} budget remains against the priced items shown. This is not a complete trip total.`
-        : `Priced items and entered estimates exceed your ${format(budget, currency)} budget by ${format(Math.abs(ledger.remainingBeforeUnpriced), currency)}, before any unpriced categories.`}</p>
+      <div><span>Priced / entered planning amount</span><strong>{format(ledger.planningTotal, currency)}</strong></div>
+      {ledger.referenceOnlyTotal > 0 && <div className="trip-cost-ledger-grand"><span>Displayed amount incl. reference prices · not a confirmed total</span><strong>{format(ledger.displayedTotalIncludingReferences, currency)}</strong></div>}
+      <p>{ledger.referenceOnlyTotal > 0
+        ? ledger.displayedTotalIncludingReferences > budget
+          ? `Priced/entered items plus separate provider display prices amount to ${format(ledger.displayedTotalIncludingReferences, currency)}, which is ${format(ledger.displayedTotalIncludingReferences - budget, currency)} above your ${format(budget, currency)} budget. Flight references are not a confirmed combined fare, so treat this as a warning rather than a final total.`
+          : `${format(ledger.referenceOnlyTotal, currency)} in provider display prices are excluded from the priced subtotal. The displayed amount including those references is ${format(ledger.displayedTotalIncludingReferences, currency)}, but your actual budget balance cannot be confirmed until the seller provides a comparable total fare and the remaining trip costs are priced.`
+        : ledger.planningTotal === 0
+          ? `No comparable provider totals or positive group estimates have been added yet. Budget remaining cannot be calculated from unpriced items.`
+          : ledger.remainingBeforeUnpriced >= 0
+            ? `${format(ledger.remainingBeforeUnpriced, currency)} of your ${format(budget, currency)} budget remains against the priced items and entered estimates shown. This is not a complete trip total.`
+            : `Priced items and entered estimates exceed your ${format(budget, currency)} budget by ${format(Math.abs(ledger.remainingBeforeUnpriced), currency)}, before any unpriced categories.`}</p>
     </div>
-    <p className="trip-cost-ledger-disclaimer">Provider display prices are not confirmed bookings. Flight amounts are shown for reference but excluded until the seller confirms the passenger/party basis and a combined fare. Activities and restaurant price text are not converted into totals. Ground transport, activities and dining estimates are optional amounts you enter for the whole group. No currency conversion or taxes/fee assumptions are applied.</p>
+    <p className="trip-cost-ledger-disclaimer">Flight-leg and seller display prices are shown as reference amounts and excluded from the priced subtotal until a comparable fare is confirmed for the selected itinerary and passenger basis. Activities and restaurant price text are not converted into totals. Ground transport, activities and dining estimates are optional positive amounts you enter for the whole group; leaving a field blank or entering zero means no estimate has been supplied. No currency conversion or taxes/fee assumptions are applied.</p>
   </section>;
 }
 
@@ -870,7 +885,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                   {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
                 </details>
                 <details className="live-result-group" open><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
-                  {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
+                  {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">To verify the requested drive-time limit, select your preferred property above and use “Check drive time from selected stay” on each restaurant. Tripfinder checks the route only when you request it; straight-line distance is not driving time.</p>}
+                  {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
                 </details>
               </>}
               <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} search={search} destinationAirportCode={airportCode}/>

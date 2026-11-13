@@ -40,6 +40,7 @@ export type TripSearchInput = {
   origin: string;
   originAirportCode: string;
   destination: string;
+  destinationArea: string;
   destinationAirportCode: string;
   components: TripComponent[];
   stayTypes: StayType[];
@@ -66,6 +67,7 @@ export type TripSearchInput = {
   temperatureMin: number | null;
   temperatureMax: number | null;
   temperatureUnit: "F" | "C";
+  planningNotes: string[];
 };
 
 export type ItineraryActivity = {

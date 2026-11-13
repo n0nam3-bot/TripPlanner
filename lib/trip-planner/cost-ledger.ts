@@ -39,6 +39,8 @@ export type CostLedgerInput = {
 export type CostLedgerResult = {
   rows: CostLedgerRow[];
   pricedSubtotal: number;
+  referenceOnlyTotal: number;
+  displayedTotalIncludingReferences: number;
   contingencyAmount: number;
   planningTotal: number;
   unpricedCategories: string[];
@@ -56,6 +58,10 @@ export function parseCostEstimate(value: string): number | null {
 
 function isValidAmount(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 99_999_999;
+}
+
+function isPositiveAmount(value: number | null | undefined): value is number {
+  return isValidAmount(value) && value > 0;
 }
 
 function cleanText(value: string | undefined): string {
@@ -77,33 +83,48 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
 
   if (input.flightRequested) {
     if (input.flightSeller && isValidAmount(input.flightSeller.price)) {
-      const separateTickets = /separate tickets?/i.test(input.flightSeller.type);
       addReference({
-        id: "flight",
+        id: "flight-seller",
         label: "Flight · selected seller offer",
         amount: input.flightSeller.price,
         currency: input.flightSeller.currency || input.currency,
         status: "reference_only",
         includedInSubtotal: false,
-        detail: separateTickets
-          ? `${cleanText(input.flightSeller.seller)} · separate tickets; this is not one combined round-trip fare.`
-          : `${cleanText(input.flightSeller.seller)} · seller-displayed fare. Passenger/party basis and final taxes must be verified before this can be added to a trip total.`,
-      });
-    } else if (input.outbound && isValidAmount(input.outbound.price)) {
-      addReference({
-        id: "flight",
-        label: "Flight · outbound display price",
-        amount: input.outbound.price,
-        currency: input.outbound.currency || input.currency,
-        status: "reference_only",
-        includedInSubtotal: false,
-        detail: input.returnFlight
-          ? "Outbound leg only. No combined round-trip seller total has been selected, so this amount is excluded from the planning subtotal."
-          : "Outbound leg only; return fare has not been selected. Excluded from the planning subtotal.",
+        detail: /separate tickets?/i.test(input.flightSeller.type)
+          ? `${cleanText(input.flightSeller.seller)} · separate tickets; verify the combined itinerary and passenger basis before treating this as a complete fare.`
+          : `${cleanText(input.flightSeller.seller)} · seller-displayed fare for the selected itinerary. Verify the passenger/party basis, taxes and fees at checkout; kept as a reference price rather than a confirmed booking cost.`,
       });
     } else {
-      rows.push({ id: "flight", label: "Flight", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "Choose a return leg and retrieve a seller offer. The outbound display price alone is not a full trip fare." });
-      unpricedCategories.push("Flight");
+      if (input.outbound && isValidAmount(input.outbound.price)) {
+        addReference({
+          id: "flight-outbound",
+          label: "Flight · outbound display price",
+          amount: input.outbound.price,
+          currency: input.outbound.currency || input.currency,
+          status: "reference_only",
+          includedInSubtotal: false,
+          detail: input.returnFlight
+            ? "Outbound-leg display price only. The outbound and return displays are listed separately; neither is included until a seller confirms one comparable round-trip fare and passenger basis."
+            : "Outbound-leg display price only. No return leg or combined round-trip seller total has been selected, so this amount is excluded from the priced subtotal.",
+        });
+      } else {
+        rows.push({ id: "flight-outbound", label: "Flight · outbound", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "Choose an outbound flight to see its provider display price." });
+        unpricedCategories.push("Outbound flight");
+      }
+      if (input.returnFlight && isValidAmount(input.returnFlight.price)) {
+        addReference({
+          id: "flight-return",
+          label: "Flight · return display price",
+          amount: input.returnFlight.price,
+          currency: input.returnFlight.currency || input.currency,
+          status: "reference_only",
+          includedInSubtotal: false,
+          detail: "Return-leg display price only. It is not combined with the outbound display price or included in the priced subtotal; a seller must confirm a comparable round-trip fare and passenger basis.",
+        });
+      } else if (input.outbound && isValidAmount(input.outbound.price)) {
+        rows.push({ id: "flight-return", label: "Flight · return", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "No return-leg price has been selected yet." });
+        unpricedCategories.push("Return flight");
+      }
     }
   }
 
@@ -140,7 +161,7 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
   if (input.activitiesRequested) {
     const selected = input.activities;
     const hints = selected.map((item) => `${item.name}${cleanText(item.price) ? ` (${cleanText(item.price)})` : ""}`).join("; ");
-    if (isValidAmount(input.manual.activities)) {
+    if (isPositiveAmount(input.manual.activities)) {
       addIncluded({ id: "activities", label: "Activities · your estimate", amount: input.manual.activities, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: "Your manually entered group estimate. Provider price text for individual activities is shown separately and is not double-counted." });
     } else if (selected.length) {
       rows.push({ id: "activities", label: "Selected activities · provider price text", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: hints || `${selected.length} selected activity${selected.length === 1 ? "" : "ies"}; no numeric amount supplied.` });
@@ -154,7 +175,7 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
   if (input.activitiesRequested) {
     const selectedDining = input.restaurants;
     const hints = selectedDining.map((item) => `${item.name}${cleanText(item.price) ? ` (${cleanText(item.price)})` : ""}`).join("; ");
-    if (isValidAmount(input.manual.dining)) {
+    if (isPositiveAmount(input.manual.dining)) {
       addIncluded({ id: "dining", label: "Food & dining · your estimate", amount: input.manual.dining, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: "Your manually entered group estimate. Restaurant price indicators are not converted into meal totals." });
     } else {
       rows.push({ id: "dining", label: "Food & dining", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: hints || (selectedDining.length ? "Selected restaurants do not provide a comparable meal total." : "No food budget entered; restaurant prices are not estimated." ) });
@@ -162,7 +183,7 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
     }
   }
 
-  if (isValidAmount(input.manual.groundTransport)) {
+  if (isPositiveAmount(input.manual.groundTransport)) {
     addIncluded({ id: "transport", label: "Ground transport · your estimate", amount: input.manual.groundTransport, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: "Your manually entered group estimate for airport transfers, local transport and other ground travel." });
   } else {
     rows.push({ id: "transport", label: "Ground transport", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "No priced transfer or rental-car selection is connected to this trip yet. Enter a group estimate to include it." });
@@ -176,9 +197,13 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
   }
 
   const planningTotal = Math.round(pricedSubtotal * 100) / 100;
+  const referenceOnlyTotal = Math.round(rows.reduce((sum, row) => row.status === "reference_only" && row.currency === input.currency && isValidAmount(row.amount) ? sum + row.amount : sum, 0) * 100) / 100;
+  const displayedTotalIncludingReferences = Math.round((planningTotal + referenceOnlyTotal) * 100) / 100;
   return {
     rows,
     pricedSubtotal: Math.round((planningTotal - contingencyAmount) * 100) / 100,
+    referenceOnlyTotal,
+    displayedTotalIncludingReferences,
     contingencyAmount: Math.round(contingencyAmount * 100) / 100,
     planningTotal,
     unpricedCategories: [...new Set(unpricedCategories)],

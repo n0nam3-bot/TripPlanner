@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, Sparkles, Users, Wallet } from "lucide-react";
+import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, RotateCcw, Sparkles, Users, Wallet } from "lucide-react";
 import type { TripComponent, StayAmenity, StaySpaceType, StayType } from "@/lib/trip-planner/types";
 import type { SearchPreferenceDraft } from "@/lib/ai/search-preferences";
 import { getDestinationGateways, getDestinationRegionScope, getLocationSuggestions, type LocationSuggestion } from "@/lib/trip-planner/location-suggestions";
@@ -150,6 +150,7 @@ export function TripSearch() {
   const [preferenceParseError, setPreferenceParseError] = useState("");
   const [preferenceDraft, setPreferenceDraft] = useState<SearchPreferenceDraft | null>(null);
   const [preferenceParseSource, setPreferenceParseSource] = useState("");
+  const [planningNotes, setPlanningNotes] = useState<string[]>([]);
   const [draftRestored, setDraftRestored] = useState(false);
 
   // Keep the complete form draft in this tab session so Edit search / browser
@@ -176,6 +177,7 @@ export function TripSearch() {
         strings("preferredLayoverCountries", setPreferredLayoverCountries); strings("avoidLayoverCountries", setAvoidLayoverCountries);
         text("staySpaceType", (value) => { if (["any", "entire_place", "private_room", "shared_room"].includes(value)) setStaySpaceType(value as StaySpaceType); });
         if (draft.preferenceDraft && typeof draft.preferenceDraft === "object") setPreferenceDraft(draft.preferenceDraft as SearchPreferenceDraft);
+        if (Array.isArray(draft.planningNotes)) setPlanningNotes(draft.planningNotes.filter((item): item is string => typeof item === "string").slice(0, 5));
       }
     } catch { /* Ignore an unavailable or malformed tab draft. */ }
     setDraftRestored(true);
@@ -185,10 +187,34 @@ export function TripSearch() {
     if (!draftRestored) return;
     try {
       window.sessionStorage.setItem("tripfinder:search-draft:v2", JSON.stringify({
-        origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries,
+        origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries, planningNotes,
       }));
     } catch { /* Storage can be disabled or full; the form remains usable. */ }
-  }, [draftRestored, origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries]);
+  }, [draftRestored, origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries, planningNotes]);
+
+  function resetSearchFields(clearDescription = true) {
+    setOrigin("New York (NYC)"); setOriginAirportCode("NYC");
+    setDestination("Anywhere"); setDestinationAirportCode(""); setDestinationArea("");
+    setDepart(dateAfter(45)); setReturnDate(dateAfter(50));
+    setAdults("2"); setChildrenAges(""); setRooms("1");
+    setBudget("2500"); setBudgetMode("total"); setCurrency("USD");
+    setStyle("any"); setFlexibleDays("0"); setCabin("economy"); setStops("any");
+    setPreferredLayoverCountries([]); setAvoidLayoverCountries([]);
+    setPreferredLayoverCountryDraft(""); setAvoidLayoverCountryDraft("");
+    setHotelRating("0"); setFreeCancellation(false);
+    setTemperatureMin(""); setTemperatureMax(""); setTemperatureUnit("F");
+    setComponents(["flights", "stays", "activities"]);
+    setStayTypes(["hotels"]); setStaySpaceType("any");
+    setStayMustHaveAmenities([]); setStayPreferredAmenities([]);
+    setPlanningNotes([]); setPreferenceDraft(null); setPreferenceParseSource("");
+    setPreferenceParseError(""); setParsingPreferences(false); setError("");
+    if (clearDescription) setPlainLanguageDescription("");
+  }
+
+  function resetSearch() {
+    try { window.sessionStorage.removeItem("tripfinder:search-draft:v2"); } catch { /* Ignore unavailable storage. */ }
+    resetSearchFields(true);
+  }
 
   function toggleComponent(value: TripComponent) {
     setComponents((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
@@ -260,6 +286,11 @@ export function TripSearch() {
   function applyParsedPreferences() {
     if (!preferenceDraft) return;
     const draft = preferenceDraft;
+    // Each interpreted description represents a new, self-contained trip request.
+    // Clear prior criteria first so old destinations, cabin classes and layover
+    // exclusions cannot leak into a different traveler's search.
+    resetSearchFields(false);
+    setPlanningNotes(draft.notes || []);
     if (draft.origin) setOrigin(draft.origin);
     if (draft.originAirportCode) setOriginAirportCode(draft.originAirportCode);
     else if (draft.origin) setOriginAirportCode(resolveAirportCode(draft.origin) || "");
@@ -318,14 +349,15 @@ export function TripSearch() {
     preferenceDraft.preferredAmenities?.length ? `Prefer: ${preferenceDraft.preferredAmenities.join(", ").replaceAll("_", " ")}` : "",
     preferenceDraft.stayTypes ? `Accommodation: ${preferenceDraft.stayTypes.join(" + ").replaceAll("_", " ")}` : "",
     preferenceDraft.tripStyle && preferenceDraft.tripStyle !== "any" ? `Trip style: ${preferenceDraft.tripStyle}` : "",
-    preferenceDraft.cabinClass ? `Cabin: ${preferenceDraft.cabinClass.replaceAll("_", " ")}` : "",
+    preferenceDraft.cabinClass ? `Cabin: ${preferenceDraft.cabinClass.replaceAll("_", " ")}` : preferenceDraft.components?.includes("flights") ? "Cabin: Economy (default)" : "",
     preferenceDraft.stops ? `Stops: ${preferenceDraft.stops.replaceAll("_", " ")}` : "",
     preferenceDraft.preferredLayoverCountries?.length ? `Preferred connections: ${preferenceDraft.preferredLayoverCountries.join(", ")}` : "",
     preferenceDraft.avoidLayoverCountries?.length ? `Avoid connections through: ${preferenceDraft.avoidLayoverCountries.join(", ")}` : "",
+    preferenceDraft.components?.includes("flights") && !preferenceDraft.preferredLayoverCountries?.length && !preferenceDraft.avoidLayoverCountries?.length ? "Connection countries: No preference (default)" : "",
     preferenceDraft.minimumHotelRating !== undefined && preferenceDraft.minimumHotelRating > 0 ? `${preferenceDraft.minimumHotelRating}-star minimum` : "",
     preferenceDraft.freeCancellation ? "Free cancellation preferred" : "",
     preferenceDraft.temperatureMin !== undefined || preferenceDraft.temperatureMax !== undefined ? `Typical daytime high: ${preferenceDraft.temperatureMin ?? "no minimum"} to ${preferenceDraft.temperatureMax ?? "no maximum"}°${preferenceDraft.temperatureUnit || temperatureUnit}` : "",
-    ...(preferenceDraft.notes || []).map((note) => `Please confirm: ${note}`),
+    ...(preferenceDraft.notes || []).map((note) => /^Restaurant proximity:/i.test(note) ? note : `Please confirm: ${note}`),
   ].filter(Boolean) : [];
 
   function changeTemperatureUnit(nextUnit: "F" | "C") {
@@ -380,13 +412,14 @@ export function TripSearch() {
     setSubmitting(true);
     const params = new URLSearchParams({
       origin: origin.trim(), originAirportCode: selectedOriginCode,
-      destination: selectedDestination, destinationAirportCode: destinationAirportCode || resolveAirportCode(selectedDestination) || "",
+      destination: selectedDestination, destinationArea: destinationArea.trim(), destinationAirportCode: destinationAirportCode || resolveAirportCode(selectedDestination) || "",
       depart, return: returnDate, adults, childrenAges: ages.join(","), rooms, budget, budgetMode, currency, style,
       flexibleDays: "0", cabin, stops, hotelRating, freeCancellation: String(freeCancellation),
       preferLayovers: preferredLayoverCountries.join(","), avoidLayovers: avoidLayoverCountries.join(","),
       components: components.join(","), stayTypes: stayTypes.join(","), staySpaceType,
       stayMust: stayMustHaveAmenities.join(","), stayPrefer: stayPreferredAmenities.join(","),
       temperatureMin: temperatureMin.trim(), temperatureMax: temperatureMax.trim(), temperatureUnit,
+      planningNotes: planningNotes.join(" | "),
     });
     router.push(`/results?${params.toString()}`);
   }
@@ -395,7 +428,7 @@ export function TripSearch() {
     <form className="search-card search-card-product" onSubmit={submit} id="plan">
       <div className="search-card-top">
         <div><span className="eyebrow">TRIP SEARCH</span><h2>What are you looking to book?</h2></div>
-        <span className="search-step-note">Choose flights, stays, activities or any combination. U.S. states can be narrowed to a city or area; flights use a separate airport gateway.</span>
+        <div className="search-card-top-actions"><span className="search-step-note">Choose flights, stays, activities or any combination. U.S. states can be narrowed to a city or area; flights use a separate airport gateway.</span><button type="button" className="search-reset-button" onClick={resetSearch}><RotateCcw size={14}/> Start over</button></div>
       </div>
 
       <div className="search-presets" aria-label="Common search combinations">

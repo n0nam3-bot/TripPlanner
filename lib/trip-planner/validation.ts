@@ -29,6 +29,7 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   const origin = read(params, "origin", "New York (NYC)");
   const originAirportCode = read(params, "originAirportCode", "NYC").toUpperCase();
   const destination = read(params, "destination", "Anywhere");
+  const destinationArea = read(params, "destinationArea", "");
   const destinationAirportCode = read(params, "destinationAirportCode", "").toUpperCase();
   const rawComponents = read(params, "components", "flights,stays,activities").split(",").filter(Boolean) as TripComponent[];
   const components = [...new Set(rawComponents.filter((item) => tripComponents.has(item)))];
@@ -61,10 +62,12 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   const temperatureMax = temperatureMaxRaw === "" ? null : Number(temperatureMaxRaw);
   const temperatureUnitValue = read(params, "temperatureUnit", "F").toUpperCase();
   const temperatureUnit = temperatureUnitValue === "C" ? "C" : "F";
+  const planningNotes = (params.get("planningNotes") || "").split("|").map((item) => item.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 5).map((item) => item.slice(0, 220));
 
   if (components.length === 0) errors.push("Choose at least one: flights, stays or things to do.");
   if (components.includes("flights") && (!origin || origin.length > 90)) errors.push("Enter a departure city or airport.");
   if (!destination || destination.length > 120) errors.push("Enter a destination or choose Anywhere.");
+  if (destinationArea.length > 120) errors.push("Keep the destination city or area under 120 characters.");
   if (components.includes("flights") && originAirportCode && !/^[A-Z]{3}$/.test(originAirportCode)) errors.push("Choose a valid departure airport.");
   if (destinationAirportCode && !/^[A-Z]{3}$/.test(destinationAirportCode)) errors.push("Choose a valid destination airport.");
   if (components.includes("stays") && effectiveStayTypes.length === 0) errors.push("Choose hotels, vacation rentals, or both.");
@@ -94,10 +97,10 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   return {
     errors,
     input: {
-      origin, originAirportCode, destination, destinationAirportCode, components, stayTypes: effectiveStayTypes, staySpaceType: staySpaceTypeValue, stayMustHaveAmenities: stayMustHaveAmenities.filter((item) => !stayPreferredAmenities.includes(item)), stayPreferredAmenities: stayPreferredAmenities.filter((item) => !stayMustHaveAmenities.includes(item)), departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
+      origin, originAirportCode, destination, destinationArea, destinationAirportCode, components, stayTypes: effectiveStayTypes, staySpaceType: staySpaceTypeValue, stayMustHaveAmenities: stayMustHaveAmenities.filter((item) => !stayPreferredAmenities.includes(item)), stayPreferredAmenities: stayPreferredAmenities.filter((item) => !stayMustHaveAmenities.includes(item)), departureDate, returnDate, adults, childrenAges, rooms, budget, budgetMode,
       currency, style: styleValue, flexible: flexibleDays > 0, flexibleDays, cabinClass, stops: stopsValue, preferredLayoverCountries, avoidLayoverCountries,
       minimumHotelRating: ratingValue as 0 | 3 | 4 | 5, freeCancellation: read(params, "freeCancellation", "false") === "true",
-      temperatureMin, temperatureMax, temperatureUnit,
+      temperatureMin, temperatureMax, temperatureUnit, planningNotes,
     },
   };
 }
@@ -107,10 +110,10 @@ export function validateTripSearchInput(value: unknown): { input?: TripSearchInp
   const record = value as Record<string, unknown>;
   const params = new URLSearchParams();
   const mapping: Record<string, string> = {
-    origin: "origin", originAirportCode: "originAirportCode", destination: "destination", destinationAirportCode: "destinationAirportCode", components: "components", stayTypes: "stayTypes", staySpaceType: "staySpaceType", stayMustHaveAmenities: "stayMust", stayPreferredAmenities: "stayPrefer", departureDate: "depart", returnDate: "return", adults: "adults",
+    origin: "origin", originAirportCode: "originAirportCode", destination: "destination", destinationArea: "destinationArea", destinationAirportCode: "destinationAirportCode", components: "components", stayTypes: "stayTypes", staySpaceType: "staySpaceType", stayMustHaveAmenities: "stayMust", stayPreferredAmenities: "stayPrefer", departureDate: "depart", returnDate: "return", adults: "adults",
     rooms: "rooms", budget: "budget", budgetMode: "budgetMode", currency: "currency", style: "style", flexibleDays: "flexibleDays",
     cabinClass: "cabin", stops: "stops", preferredLayoverCountries: "preferLayovers", avoidLayoverCountries: "avoidLayovers", minimumHotelRating: "hotelRating", freeCancellation: "freeCancellation",
-    temperatureMin: "temperatureMin", temperatureMax: "temperatureMax", temperatureUnit: "temperatureUnit",
+    temperatureMin: "temperatureMin", temperatureMax: "temperatureMax", temperatureUnit: "temperatureUnit", planningNotes: "planningNotes",
   };
   for (const [source, target] of Object.entries(mapping)) {
     const item = record[source];

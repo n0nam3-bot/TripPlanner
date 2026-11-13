@@ -173,14 +173,20 @@ function buildProviderLinks(origin: string, destination: Destination, input: Tri
 }
 
 export function buildTripRecommendations(input: TripSearchInput): TripRecommendation[] {
-  // Country/region searches must not silently resolve to the first city in
-  // that country. Keep the whole region for stays/activities-only searches;
-  // when flights are included, use the user's chosen gateway to set the base.
+  // An explicitly named city/area takes priority over the parent country.
+  // Keep its country for context and use the separately selected airport code
+  // only as the flight gateway (the airport can be outside the rental area).
+  const areaQuery = input.destinationArea.trim()
+    ? `${input.destinationArea.trim()}, ${input.destination.trim()}`
+    : input.destination.trim();
+  const hasSpecificArea = Boolean(input.destinationArea.trim());
   const isRegionSearch = getDestinationGateways(input.destination).length > 0;
-  const exact = isRegionSearch ? undefined : findDestination(input.destination);
-  const candidates = exact ? [exact] : input.destination.trim() && !["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination))
-    ? [makeCustomDestination(input.destination.trim(), input.destinationAirportCode)]
-    : [...DESTINATIONS];
+  const exact = hasSpecificArea || isRegionSearch ? undefined : findDestination(input.destination);
+  const candidates = hasSpecificArea
+    ? [makeCustomDestination(areaQuery, input.destinationAirportCode)]
+    : exact ? [exact] : input.destination.trim() && !["anywhere", "surprise me", "open to ideas"].includes(normalizeDestinationQuery(input.destination))
+      ? [makeCustomDestination(input.destination.trim(), input.destinationAirportCode)]
+      : [...DESTINATIONS];
   const hasTemperaturePreference = input.temperatureMin !== null || input.temperatureMax !== null;
   const minF = input.temperatureMin === null ? null : toFahrenheit(input.temperatureMin, input.temperatureUnit);
   const maxF = input.temperatureMax === null ? null : toFahrenheit(input.temperatureMax, input.temperatureUnit);
