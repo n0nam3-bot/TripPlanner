@@ -1232,18 +1232,22 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
       <button type="button" className="results-overview-save-primary" onClick={onSaveTrip} disabled={!databaseConfigured || savingTrip || restoringCopiedTrip} title={!databaseConfigured ? "Neon database must be configured to save trips." : restoringCopiedTrip ? "Tripfinder is still matching your copied selections to current provider results." : "Save this search and its selected itinerary."}>
         {savingTrip ? <><RefreshCw size={12} className="spin"/> Saving</> : restoringCopiedTrip ? <><RefreshCw size={12} className="spin"/> Restoring selections</> : <><Save size={12}/> {hasSavedTrip ? "Update saved trip" : "Save trip"}</>}
       </button>
-      <div className="results-overview-share-actions">
-        <button type="button" onClick={onCopyShareLink} disabled={!shareUrl} title={shareUrl ? "Copy the private share link" : "Save this trip first to create a share link."}><Copy size={11}/> Copy share link</button>
-        {shareUrl ? <a href={shareUrl} target="_blank" rel="noreferrer"><ExternalLink size={11}/> Open share link</a> : <button type="button" disabled title="Save this trip first to create a share link."><ExternalLink size={11}/> Open share link</button>}
+      <div className="results-overview-share-actions" aria-label="Saved trip sharing actions">
+        <button type="button" onClick={onCopyShareLink} disabled={!shareUrl} aria-label="Copy share link" title={shareUrl ? "Copy the private share link" : "Save this trip first to create a share link."}><Copy size={11}/> <span>Copy link</span></button>
+        {shareUrl ? <a href={shareUrl} target="_blank" rel="noreferrer" aria-label="Open share link" title="Open the read-only shared itinerary"><ExternalLink size={11}/> <span>Open link</span></a> : <button type="button" disabled aria-label="Open share link" title="Save this trip first to create a share link."><ExternalLink size={11}/> <span>Open link</span></button>}
       </div>
     </div>
     {saveMessage && <p className={`results-overview-save-message ${shareUrl ? "is-success" : "is-error"}`} role="status">{saveMessage}</p>}
     <section id="feedback" className="results-feedback-section" aria-label="Traveler feedback tools">
-      <button type="button" className="results-feedback-toggle" aria-expanded={feedbackOpen} aria-controls="results-feedback-content" onClick={() => feedbackOpen ? setFeedbackOpen(false) : void loadTripFeedback()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading} title={!hasSavedTrip ? "Save your trip first to invite feedback." : "Open the traveler feedback inbox and invitation controls."}>
-        <span>Traveler feedback</span>
-        <small>{feedbackLoading ? "Loading…" : feedbackEntries.filter((entry) => entry.status === "pending").length ? `${feedbackEntries.filter((entry) => entry.status === "pending").length} pending` : "View inbox"}</small>
-        <span className="results-feedback-toggle-chevron" aria-hidden="true">{feedbackOpen ? "−" : "+"}</span>
-      </button>
+      <div className="results-feedback-header">
+        <button type="button" className="results-feedback-toggle" aria-expanded={feedbackOpen} aria-controls="results-feedback-content" onClick={() => feedbackOpen ? setFeedbackOpen(false) : void loadTripFeedback()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading} title={!hasSavedTrip ? "Save your trip first to invite feedback." : "Expand or collapse traveler feedback controls."}>
+          <span>Traveler feedback</span>
+          <span className="results-feedback-toggle-chevron" aria-hidden="true">{feedbackOpen ? "−" : "+"}</span>
+        </button>
+        <button type="button" className="results-feedback-view" onClick={() => void loadTripFeedback()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading} title="Open and refresh the traveler feedback inbox.">
+          {feedbackLoading ? "Loading…" : "View inbox"}
+        </button>
+      </div>
       {feedbackOpen && <div id="results-feedback-content" className="results-feedback-content">
         <div className="results-feedback-tools">
           <button type="button" onClick={() => void createFeedbackInvite()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading} title="Create a separate feedback-only invitation.">
