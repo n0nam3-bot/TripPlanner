@@ -40,6 +40,28 @@ export type SavedTripDraft = {
   snapshot: SavedTripSnapshot;
 };
 
+/**
+ * Fork a public snapshot into a new editable draft. Search preferences are safe to
+ * reuse, but provider selections are deliberately cleared: a share snapshot has
+ * no supplier identity/token with which to prove that a refreshed result is the
+ * same offer. The traveler can select current results after reopening the search.
+ */
+export function buildSavedTripForkDraft(source: SavedTripDraft): SavedTripDraft {
+  const copyPrefix = "Copy of ";
+  const title = `${copyPrefix}${source.snapshot.title}`.slice(0, 140);
+  return {
+    search: source.search,
+    snapshot: {
+      version: 1,
+      title,
+      destinations: source.snapshot.destinations.map((destination) => ({
+        label: destination.label,
+        items: [],
+      })),
+    },
+  };
+}
+
 export const SAVED_TRIP_MAX_BYTES = 120 * 1024;
 const ITEM_KINDS = new Set<SavedTripItemKind>(["outbound-flight", "return-flight", "flight-fare", "stay", "stay-check-in", "stay-check-out", "activity", "restaurant"]);
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;

@@ -1,7 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { hashClientAddress } from "@/lib/db/travel-cache";
-import { serializeTripSearchInput, normalizeSavedTripSnapshot, type SavedTripDraft } from "@/lib/trip-planner/saved-trips";
+import { serializeTripSearchInput, normalizeSavedTripSnapshot, buildSavedTripForkDraft, type SavedTripDraft } from "@/lib/trip-planner/saved-trips";
 import { validateTripSearchInput } from "@/lib/trip-planner/validation";
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{40,48}$/;
@@ -142,4 +142,16 @@ export async function getSavedTripByShareToken(token: string): Promise<SavedTrip
     updatedAt: row.updated_at,
     expiresAt: row.expires_at,
   };
+}
+
+
+/** Create a fully independent owner/share record from a public read-only trip. */
+export async function forkSavedTripFromShareToken(
+  sourceShareToken: string,
+  options: { clientAddress: string },
+): Promise<{ shareToken: string; ownerToken?: string; createdAt: string; updatedAt: string; expiresAt: string }> {
+  const source = await getSavedTripByShareToken(sourceShareToken);
+  if (!source) throw new Error("SAVED_TRIP_SOURCE_NOT_FOUND");
+  const draft = buildSavedTripForkDraft({ search: source.search, snapshot: source.snapshot });
+  return saveAnonymousTripDraft(draft, options);
 }

@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { SupportTipLink } from "@/components/support-tip-link";
 import { PrintTripButton } from "@/components/trips/print-trip-button";
+import { MakeTripCopyButton } from "@/components/trips/make-trip-copy-button";
 import { getSavedTripByShareToken } from "@/lib/db/saved-trips";
 import { formatTripDestinationLabel } from "@/lib/trip-planner/destinations";
 import { sortSavedTripItemsChronologically } from "@/lib/trip-planner/saved-trips";
@@ -92,7 +93,7 @@ export default async function SharedTripPage({ params }: { params: Promise<{ tok
           </div>}
         </section>)}
       </section>
-      <div className="saved-trip-actions no-print"><Link href={openSearch} className="button button-dark">Reopen search <ArrowRight size={16}/></Link><span>Reopening restores the search criteria. Provider results and availability may have changed; selected options are shown here as a saved snapshot.</span></div>
+      <div className="saved-trip-actions no-print"><MakeTripCopyButton sourceShareToken={token} searchQuery={saved.searchQuery}/><Link href={openSearch} className="button button-outline">Reopen search <ArrowRight size={16}/></Link><span>Make your own copy creates a separate editable trip. Search preferences are copied, but saved selections are cleared until you choose from current provider results. Reopening this original link remains read-only.</span></div>
       <p className="saved-trip-expiry">This share link expires {dateLabel(saved.expiresAt.slice(0, 10))}. Saving an updated copy extends its expiry.</p>
     </section>
     <footer className="site-footer shell saved-trip-footer">

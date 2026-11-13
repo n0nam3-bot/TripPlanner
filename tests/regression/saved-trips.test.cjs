@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { normalizeSavedTripSnapshot, serializeTripSearchInput, sortSavedTripItemsChronologically, validateSavedTripDraft } = require("../../.test-build/lib/trip-planner/saved-trips.js");
+const { buildSavedTripForkDraft, normalizeSavedTripSnapshot, serializeTripSearchInput, sortSavedTripItemsChronologically, validateSavedTripDraft } = require("../../.test-build/lib/trip-planner/saved-trips.js");
 
 const root = path.resolve(__dirname, "../..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -175,4 +175,48 @@ test("Neon health and schema include anonymous saved-trip tables", () => {
     assert.ok(schema.includes(table));
     assert.ok(health.includes(table));
   }
+});
+
+
+test("safe shared-trip fork preserves validated search criteria but clears unverified provider selections", () => {
+  const normalized = normalizeSavedTripSnapshot(snapshot);
+  assert.ok(normalized);
+  const fork = buildSavedTripForkDraft({ search, snapshot: normalized });
+  assert.equal(fork.search, search);
+  assert.equal(fork.snapshot.title, "Copy of Trip to Las Terrenas, Dominican Republic");
+  assert.deepEqual(fork.snapshot.destinations.map((destination) => destination.label), ["Las Terrenas, Dominican Republic"]);
+  assert.deepEqual(fork.snapshot.destinations.map((destination) => destination.items), [[]]);
+  assert.ok(validateSavedTripDraft(fork).draft);
+});
+
+test("database fork reads a public source and creates a new record without owner-update credentials", () => {
+  const db = read("lib/db/saved-trips.ts");
+  const fork = db.slice(db.indexOf("export async function forkSavedTripFromShareToken"));
+  assert.match(fork, /getSavedTripByShareToken\(sourceShareToken\)/);
+  assert.match(fork, /buildSavedTripForkDraft/);
+  assert.match(fork, /return saveAnonymousTripDraft\(draft, options\)/);
+  assert.doesNotMatch(fork, /shareToken:\s*sourceShareToken|ownerToken:/);
+});
+
+test("shared-trip fork endpoint validates a source token and returns independent credentials", () => {
+  const route = read("app/api/trips/fork/route.ts");
+  assert.match(route, /sourceShareToken/);
+  assert.match(route, /A-Za-z0-9_-/);
+  assert.match(route, /forkSavedTripFromShareToken/);
+  assert.match(route, /status: 201/);
+  assert.match(route, /ownerToken: saved\.ownerToken/);
+  assert.match(route, /SAVED_TRIP_DAILY_LIMIT/);
+  assert.match(route, /SAVED_TRIP_SOURCE_NOT_FOUND/);
+});
+
+test("shared page offers a copy action while the original public share remains read-only", () => {
+  const page = read("app/trip/[token]/page.tsx");
+  const button = read("components/trips/make-trip-copy-button.tsx");
+  assert.match(page, /MakeTripCopyButton/);
+  assert.match(page, /Reopening this original link remains read-only/);
+  assert.match(button, /fetch\(\"\/api\/trips\/fork\"/);
+  assert.match(button, /tripfinder:saved-trip-owner:v1:/);
+  assert.match(button, /localStorage\.setItem/);
+  assert.match(button, /window\.location\.assign\(returnPath\)/);
+  assert.doesNotMatch(button, /ownerToken.*searchParams|searchParams.*ownerToken/);
 });

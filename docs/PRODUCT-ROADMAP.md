@@ -80,12 +80,12 @@
 - [x] Move Save trip, Copy share link, and Open share link controls into the frozen trip overview above left-side quick navigation; restore the existing share link from the original browser's owner record.
 - [x] Enrich public share and print views with selected-property/place photos, ratings, review counts, provider/source labels, Google Maps and official/listing links; sanitize all saved URLs and provide print-specific styling.
 - [x] Display a round-trip flight reference or seller quote once in the saved itinerary; do not repeat the provider price on both outbound and return events. Separate-ticket outbound/return amounts remain distinct only when the seller explicitly supplies them.
-- [ ] Add a safe "Make my own copy" action that forks a read-only shared trip into a new independently owned draft, issues new tokens, and restores only selections that can be matched unambiguously to refreshed provider results.
+- [x] Add a safe "Make my own copy" action that forks a read-only shared trip into a new independently owned draft with fresh share/owner tokens and reuses only validated search criteria. Provider-backed selections are deliberately cleared because a read-only snapshot does not carry supplier identifiers or booking tokens needed to prove an unambiguous match; the new editable results page loads current options for the traveler to select again.
 - [ ] Add traveler edits and feedback capture with explicit edit permissions and conflict-safe updates; public share links remain read-only in the current release.
 - [ ] Optional user accounts only if needed; the first saved-trip version does not require accounts.
 - [ ] Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
 
-**Next Release 5 focus:** safe trip duplication/forking from a read-only share link, followed by invite-only traveler feedback and suggested edits with explicit permissions, owner approval, and conflict-safe saved-trip revisions. Never let a public share token mutate the original trip; new copies receive new share/owner tokens, and supplier booking credentials remain excluded.
+**Next Release 5 focus:** invite-only traveler feedback and suggested edits with explicit permissions, owner approval, and conflict-safe saved-trip revisions. The safe copy action is complete: public share links remain read-only, each fork gets independent share/owner tokens, and unverified provider selections are not carried into a new draft. Never let a public share token mutate the original trip; supplier booking credentials remain excluded.
 
 
 ## Release 6 — supplier depth and monetization
