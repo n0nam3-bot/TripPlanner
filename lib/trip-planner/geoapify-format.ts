@@ -39,6 +39,7 @@ export type GeoapifyStaticMapRequest = {
 };
 
 export type GeoapifyCreditCaps = { dailyCap: number; clientDailyCap: number };
+export type GeoapifyReservationFailure = "cap-reached" | "gate-inconsistent";
 export type GeoapifyCreditUsageSnapshot = {
   sharedUsed: number;
   sharedCap: number;
@@ -129,6 +130,22 @@ export function resolveGeoapifyCreditCaps(input: { dailyCap?: unknown; clientDai
     dailyCap: boundedCap(input.dailyCap, 2400, 2800),
     clientDailyCap: boundedCap(input.clientDailyCap, 80, 300),
   };
+}
+
+/**
+ * Classify a failed conditional credit reservation. A failed database update is
+ * a true cap denial only when the observed usage plus this request would exceed
+ * the configured cap. Otherwise it is an internal gate/database inconsistency.
+ */
+export function classifyGeoapifyReservationFailure(
+  used: number,
+  cap: number,
+  requested: number,
+): GeoapifyReservationFailure {
+  const safeUsed = Number.isFinite(used) ? Math.max(0, used) : 0;
+  const safeCap = Number.isFinite(cap) ? Math.max(0, cap) : 0;
+  const safeRequested = Number.isFinite(requested) ? Math.max(1, requested) : 1;
+  return safeUsed + safeRequested > safeCap ? "cap-reached" : "gate-inconsistent";
 }
 
 type UnknownRecord = Record<string, unknown>;
