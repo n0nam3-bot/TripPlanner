@@ -79,3 +79,31 @@ test("results navigation has a fixed desktop rail and a compact mobile horizonta
   assert.match(css, /\.results-section-rail-list\s*\{\s*display:\s*flex;\s*gap:\s*5px;\s*overflow-x:\s*auto/s);
   assert.match(page, /results-content shell results-content-with-rail/);
 });
+
+
+test("results workspace imports flexible date types from their defining modules", () => {
+  const source = fs.readFileSync(path.join(root, "components/trips/results-workspace.tsx"), "utf8");
+  assert.match(source, /import type \{ FlexibleFlightDateSearchResult \} from "@\/lib\/providers\/serpapi";/);
+  assert.match(source, /import type \{ FlexibleFlightDateOption \} from "@\/lib\/trip-planner\/flexible-flight-dates";/);
+  assert.doesNotMatch(source, /import type \{\s*FlexibleFlightDateOption\s*,\s*FlexibleFlightDateSearchResult\s*\} from "@\/lib\/providers\/serpapi";/);
+});
+
+
+test("product roadmap uses visible checkmarks for completed work and unchecked boxes for open work", () => {
+  const roadmap = fs.readFileSync(path.join(root, "docs/PRODUCT-ROADMAP.md"), "utf8");
+  const roadmapItems = roadmap.split(/\r?\n/).filter((line) => line.startsWith("- "));
+  assert.ok(roadmapItems.length > 30, "roadmap checklist should cover all listed milestones");
+  assert.ok(roadmapItems.every((line) => line.startsWith("- [x] ") || line.startsWith("- [ ] ")), "every roadmap item must have an explicit status checkbox");
+  const release0 = roadmap.split("## Release 0")[1].split("## Release 1")[0];
+  const release1 = roadmap.split("## Release 1")[1].split("## Release 2")[0];
+  const release2 = roadmap.split("## Release 2 —")[1].split("## Release 2.5")[0];
+  const release25 = roadmap.split("## Release 2.5")[1].split("## Release 3")[0];
+  const release3 = roadmap.split("## Release 3")[1].split("## Release 4")[0];
+  for (const section of [release0, release1, release2, release25, release3]) {
+    assert.match(section, /- \[x\] /, "completed release sections must show checkmarks");
+    assert.doesNotMatch(section, /- \[ \] /, "fully implemented releases must not show open tasks");
+  }
+  assert.match(roadmap, /## Release 4[\s\S]*?- \[ \] Enforce hard budget constraints/);
+  assert.match(roadmap, /## Release 5[\s\S]*?- \[ \] Neon persistence/);
+  assert.match(roadmap, /## Release 6[\s\S]*?- \[x\] Initial Booking\.com/);
+});

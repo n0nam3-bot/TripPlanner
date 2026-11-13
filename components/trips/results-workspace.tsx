@@ -12,7 +12,8 @@ import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityCo
 import { AITripAssistant } from "@/components/trips/ai-trip-assistant";
 import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssistantContext } from "@/lib/ai/trip-assistant";
 import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-ledger";
-import type { FlexibleFlightDateOption, FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
+import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
+import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
 
 type Props = {
   search: TripSearchInput;

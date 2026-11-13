@@ -1,49 +1,52 @@
 # Tripfinder product roadmap
 
-## Release 0 — polished interface (complete)
-- Editorial-style responsive homepage and motion system.
-- Structured trip-search form.
-- Mobile-first results workspace.
-- GitHub Actions ZIP overlay importer for mobile uploads.
+**Status key:** [x] implemented in the current source; [ ] still open, awaiting credentials, or pending a separate production/operator verification.
 
-## Release 1 — planning core (implemented, needs regression tests)
-- Server-side trip input validation.
-- Curated airport/city resolver.
-- Curated destination catalog and explainable preference scoring.
-- Date-specific itinerary outline builder.
-- Direct external search links.
+
+## Release 0 — polished interface (complete)
+- [x] Editorial-style responsive homepage and motion system.
+- [x] Structured trip-search form.
+- [x] Mobile-first results workspace.
+- [x] GitHub Actions ZIP overlay importer for mobile uploads.
+
+## Release 1 — planning core (implemented; regression suite added)
+- [x] Server-side trip input validation.
+- [x] Curated airport/city resolver.
+- [x] Curated destination catalog and explainable preference scoring.
+- [x] Date-specific itinerary outline builder.
+- [x] Direct external search links.
 
 ## Release 2 — live travel search (implemented; requires user credentials)
-- SerpApi Google Flights adapter.
-- Correct round-trip token flow: outbound selection, return search, then seller options.
-- SerpApi Google Hotels adapter.
-- Neon persistent response cache.
-- Shared monthly and hourly uncached-query counters, per-connection limits, and real SerpApi Account API monthly and hourly balance checks with safety reserves.
-- Provider timestamps, source labels, partial-result warnings and no-results handling.
-- Explicit limitations for child age matching, multi-room occupancy and airport resolution.
+- [x] SerpApi Google Flights adapter.
+- [x] Correct round-trip token flow: outbound selection, return search, then seller options.
+- [x] SerpApi Google Hotels adapter.
+- [x] Neon persistent response cache.
+- [x] Shared monthly and hourly uncached-query counters, per-connection limits, and real SerpApi Account API monthly and hourly balance checks with safety reserves.
+- [x] Provider timestamps, source labels, partial-result warnings and no-results handling.
+- [x] Explicit limitations for child age matching, multi-room occupancy and airport resolution.
 
 ## Release 2.5 — operations and API monitoring (implemented; pending deployment verification)
-- Private `/admin` dashboard protected by a server-signed 12-hour HttpOnly session.
-- Persistent five-failure/15-minute admin-login lockout using hashed client identifiers.
-- Actual SerpApi account quota, app-level monthly/hourly reservations and warnings.
-- Provider request, cache-hit, failure and blocked-request telemetry by category.
-- WeatherAPI one-hour Neon cache with explicit call/cache telemetry.
-- Recent sanitized request log, response timing, provider breakdown, 24-hour trend and Neon cache health.
-- Telemetry retention cleanup after 90 days; logs omit search text, keys, booking tokens and raw addresses.
+- [x] Private `/admin` dashboard protected by a server-signed 12-hour HttpOnly session.
+- [x] Persistent five-failure/15-minute admin-login lockout using hashed client identifiers.
+- [x] Actual SerpApi account quota, app-level monthly/hourly reservations and warnings.
+- [x] Provider request, cache-hit, failure and blocked-request telemetry by category.
+- [x] WeatherAPI one-hour Neon cache with explicit call/cache telemetry.
+- [x] Recent sanitized request log, response timing, provider breakdown, 24-hour trend and Neon cache health.
+- [x] Telemetry retention cleanup after 90 days; logs omit search text, keys, booking tokens and raw addresses.
 - [x] Integrate Vercel Web Analytics for page/referrer trends and Speed Insights for field performance. Exclude `/admin` and `/api`, strip all query strings/fragments to avoid recording trip-search parameters, and sample Speed Insights at 25%. Dashboard activation and production data verification remain operator steps.
 
 ## Release 3 — AI-assisted planning and search efficiency (implemented; pending production verification)
-- Optional OpenRouter free-model router with data-collection denial and zero-data-retention endpoint requirements.
-- Optional Gemini 3.8 Flash free-tier fallback; only called after an explicit visitor opt-in because Google's unpaid service may use prompts and responses to improve its products.
-- Result-aware assistant answers questions using only already-loaded provider results; it does not trigger live travel searches or invent availability, prices, amenities or booking terms.
-- Six-hour Neon cache for identical assistant questions against the same result snapshot.
-- Separate AI provider daily/minute and per-visitor limits, isolated from SerpApi's travel-search counters.
-- AI calls, cache hits, provider errors and blocked requests appear in the existing `/admin` provider breakdown.
-- Added explicit natural-language preference parsing on the initial search form. Visitors review an allowlisted draft and apply it before any travel-provider search runs.
-- Parser supports destinations/areas, dates, travelers, rooms, budgets, trip components, hotel/rental type, entire-place/private/shared room, amenities, cabin, stops, hotel rating, cancellation and temperature preferences.
-- Model output is parsed as JSON, allowlisted server-side, and cannot write directly to URLs or invoke travel providers. Unknown or unsupported values are ignored; current form values are changed only after visitor confirmation.
-- Parser calls are cached in Neon for 24 hours, share existing AI daily/minute controls, and are logged as a separate `/admin` category without storing prompt text.
-- Gemini fallback remains opt-in per parsing request. No Vercel AI Gateway integration.
+- [x] Optional OpenRouter free-model router with data-collection denial and zero-data-retention endpoint requirements.
+- [x] Optional Gemini 3.8 Flash free-tier fallback; only called after an explicit visitor opt-in because Google's unpaid service may use prompts and responses to improve its products.
+- [x] Result-aware assistant answers questions using only already-loaded provider results; it does not trigger live travel searches or invent availability, prices, amenities or booking terms.
+- [x] Six-hour Neon cache for identical assistant questions against the same result snapshot.
+- [x] Separate AI provider daily/minute and per-visitor limits, isolated from SerpApi's travel-search counters.
+- [x] AI calls, cache hits, provider errors and blocked requests appear in the existing `/admin` provider breakdown.
+- [x] Added explicit natural-language preference parsing on the initial search form. Visitors review an allowlisted draft and apply it before any travel-provider search runs.
+- [x] Parser supports destinations/areas, dates, travelers, rooms, budgets, trip components, hotel/rental type, entire-place/private/shared room, amenities, cabin, stops, hotel rating, cancellation and temperature preferences.
+- [x] Model output is parsed as JSON, allowlisted server-side, and cannot write directly to URLs or invoke travel providers. Unknown or unsupported values are ignored; current form values are changed only after visitor confirmation.
+- [x] Parser calls are cached in Neon for 24 hours, share existing AI daily/minute controls, and are logged as a separate `/admin` category without storing prompt text.
+- [x] Gemini fallback remains opt-in per parsing request. No Vercel AI Gateway integration.
 
 ## Release 4 — verified trip assembly (in progress)
 - [x] Add an in-results trip cost ledger separating provider-displayed stay totals, reference-only flight quotes, user-entered ground transport/activity/dining estimates and a transparent contingency allowance. The displayed planning amount is explicitly partial; unknown amounts and ambiguous flight price bases are excluded.
@@ -53,28 +56,30 @@
 - [x] Add coordinate-based Geoapify driving estimates for accommodation-to-activity/restaurant/airport checks. Requests remain user-triggered, are cached for 12 hours, and disclose that the estimates exclude live traffic. Address-only lookups retain the SerpApi directions path.
 - [x] Add Geoapify credit reservations in Neon: shared daily cap, per-visitor daily cap, shared 400 ms request gate with bounded queue, 12-hour places and route cache, and `/api/health` reporting. No provider requests are made during health checks.
 - [x] Show Geoapify key status, shared and per-visitor credit usage, remaining daily app budget and low-budget warnings in `/admin`.
-- Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.
+- [ ] Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.
 - [x] Add controlled flexible-date comparisons (±1 to ±3 days) through one cached Google Flights Calendar request; preserve the same trip duration and re-run exact itineraries only after the traveler selects a date pair. Existing SerpApi shared quotas and per-client limits apply.
 - [x] Add a fixed desktop results quick-navigation rail with active-section tracking, jump controls, independent expand/collapse controls, and a compact horizontally scrollable responsive layout. Includes Flights, Places to stay, Activities & attractions, Restaurants & dining, Weather, Your plan, Cost breakdown, and Your trip schedule.
-- Improve airport autocomplete and multi-airport coverage.
+- [ ] Improve airport autocomplete and multi-airport coverage.
 - [x] Add a no-API-credit regression suite for parser examples, inclusive date/duration handling, outbound/return/seller token stages, connection-country filtering, airport-local time zones/DST, round-trip price basis, currency-safe cost totals, room/guest validation, and Google booking redirect URL validation.
 
 **Next Release 4 focus:** broader airport gateway coverage and improved airport resolution, followed by supplier-data quality and search-outcome monitoring. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
 
+
 ## Release 5 — persistence and trip workspace
-- Neon persistence for anonymous shareable trip drafts and saved searches.
-- Optional user accounts only if needed.
-- Shareable itinerary links, traveler edits and feedback capture.
-- Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
+- [ ] Neon persistence for anonymous shareable trip drafts and saved searches.
+- [ ] Optional user accounts only if needed.
+- [ ] Shareable itinerary links, traveler edits and feedback capture.
+- [ ] Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
+
 
 ## Release 6 — supplier depth and monetization
-- Initial Booking.com Demand API v3.3 accommodation adapter implemented as an optional, server-side supplier. Activation requires approved Managed Affiliate Partner access and Partner Centre credentials.
-- Booking.com adapter supports destination resolution, date/guest/room-specific accommodation search, property details/photos, redirect links, Neon caching, stale fallback and `/admin` request telemetry. Google Hotels remains a parallel fallback; Airbnb remains an external search link until authorized inventory access is available.
-- Next: configure approved sandbox credentials and `BOOKING_COM_API_BASE=https://demandapi-sandbox.booking.com/3.3`, validate accommodation types, price/redirect data and cache telemetry, then switch to production credentials and the production base URL. Confirm public display, caching and commercial data rights for each source.
-- Obtain approved live supplier access for broader airline and official package inventory.
-- Confirm public display, caching and commercial data rights for each source.
-- Add supplier price/availability revalidation.
-- Add a direct airline/NDC source (evaluate Duffel) alongside Google Flights, without removing broad Google Flights discovery.
-- Add affiliate network integrations after approval.
-- Add compliant disclosures and click/conversion reporting.
-- Add provider fallback and outbound-link health monitoring.
+- [x] Initial Booking.com Demand API v3.3 accommodation adapter implemented as an optional, server-side supplier. Activation requires approved Managed Affiliate Partner access and Partner Centre credentials.
+- [x] Booking.com adapter supports destination resolution, date/guest/room-specific accommodation search, property details/photos, redirect links, Neon caching, stale fallback and `/admin` request telemetry. Google Hotels remains a parallel fallback; Airbnb remains an external search link until authorized inventory access is available.
+- [ ] Next: configure approved sandbox credentials and `BOOKING_COM_API_BASE=https://demandapi-sandbox.booking.com/3.3`, validate accommodation types, price/redirect data and cache telemetry, then switch to production credentials and the production base URL. Confirm public display, caching and commercial data rights for each source.
+- [ ] Obtain approved live supplier access for broader airline and official package inventory.
+- [ ] Confirm public display, caching and commercial data rights for each source.
+- [ ] Add supplier price/availability revalidation.
+- [ ] Add a direct airline/NDC source (evaluate Duffel) alongside Google Flights, without removing broad Google Flights discovery.
+- [ ] Add affiliate network integrations after approval.
+- [ ] Add compliant disclosures and click/conversion reporting.
+- [ ] Add provider fallback and outbound-link health monitoring.
