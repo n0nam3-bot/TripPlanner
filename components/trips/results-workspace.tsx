@@ -555,12 +555,18 @@ function TripCostLedger({ selection, experiences, currency, nights, people, budg
             ? `${format(ledger.remainingBeforeUnpriced, currency)} of your ${format(budget, currency)} budget remains against the priced items and entered estimates shown. This is not a complete trip total.`
             : `Priced items and entered estimates exceed your ${format(budget, currency)} budget by ${format(Math.abs(ledger.remainingBeforeUnpriced), currency)}, before any unpriced categories.`}</p>
     </div>
-    <section className={`trip-budget-readiness ${ledger.budgetEnforcement.ready ? "is-complete" : "is-advisory"}`} aria-label="Budget completeness status">
-      <div className="trip-budget-readiness-heading"><strong>Budget completeness</strong><span>{ledger.budgetEnforcement.ready ? "Entered costs complete" : "Advisory only"}</span></div>
-      {ledger.budgetEnforcement.ready
-        ? <p>All requested planning categories have numeric provider totals or explicit group estimates. The amount remains a planning figure; final checkout prices can still change.</p>
-        : <><p>Hard budget enforcement is not active because one or more costs are unknown or provider-displayed rather than verified all-in prices. Tripfinder will not treat missing amounts as $0 or block choices using an incomplete total.</p><ul>{ledger.budgetEnforcement.reasons.slice(0, 5).map((reason) => <li key={reason}>{reason}</li>)}</ul></>}
-    </section>
+    <details className={`trip-budget-readiness ${ledger.budgetEnforcement.ready ? "is-complete" : "is-advisory"}`}>
+      <summary className="trip-budget-readiness-summary">
+        <span className="trip-budget-readiness-label">Budget status</span>
+        <span className="trip-budget-readiness-state">{ledger.budgetEnforcement.ready ? "Planning inputs complete" : "Some costs still need verification"}</span>
+        <span className="trip-budget-readiness-disclosure">Details</span>
+      </summary>
+      <div className="trip-budget-readiness-details">
+        {ledger.budgetEnforcement.ready
+          ? <p>Planning amounts have been entered for the requested categories. Final taxes, fees and checkout prices can still change.</p>
+          : <><p>Budget checks remain advisory until the requested costs have comparable, verified totals. Missing amounts are never treated as $0, and choices are not blocked using an incomplete total.</p><ul>{ledger.budgetEnforcement.reasons.slice(0, 5).map((reason) => <li key={reason}>{reason}</li>)}</ul></>}
+      </div>
+    </details>
     <p className="trip-cost-ledger-disclaimer">Flight-leg and seller display prices are shown as reference amounts and excluded from the priced subtotal until a comparable fare is confirmed for the selected itinerary and passenger basis. Activities and restaurant price text are not converted into totals. Ground transport, activities and dining estimates are optional group amounts entered by you; a blank field remains unpriced, while an explicit $0 is treated as your estimate. No currency conversion or taxes/fee assumptions are applied.</p>
   </section>;
 }

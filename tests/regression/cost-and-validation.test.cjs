@@ -133,3 +133,17 @@ test("budget enforcement stays advisory when flight or accommodation prices are 
   assert.match(result.budgetEnforcement.reasons.join(" "), /airfare.*display quote/i);
   assert.match(result.budgetEnforcement.reasons.join(" "), /Accommodation display totals/i);
 });
+
+
+test("budget completeness is a compact expandable inline disclosure", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const component = fs.readFileSync(path.join(__dirname, "../../components/trips/results-workspace.tsx"), "utf8");
+  const styles = fs.readFileSync(path.join(__dirname, "../../app/globals.css"), "utf8");
+  assert.match(component, /<details className=\{`trip-budget-readiness/);
+  assert.match(component, /<summary className="trip-budget-readiness-summary">/);
+  assert.match(component, /trip-budget-readiness-details/);
+  assert.doesNotMatch(component, /trip-budget-readiness-heading/);
+  assert.match(styles, /Budget completeness is supporting context, not a competing warning card/);
+  assert.match(styles, /trip-budget-readiness-summary::\-webkit-details-marker/);
+});
