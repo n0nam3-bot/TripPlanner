@@ -1,5 +1,5 @@
 /**
- * Shared airport metadata for connection preferences and destination-local
+ * Shared airport metadata for connection preferences and airport-local
  * flight-time display. Unknown airports are deliberately left unclassified;
  * the UI must not claim an avoid-country filter was fully verified for them.
  */
@@ -110,6 +110,37 @@ function formatAirportLocalFallback(value: string, sourceCode?: string): string 
   return `${day} · ${time}${sourceCode ? ` (local at ${sourceCode.toUpperCase()})` : " (airport local)"}`;
 }
 
+
+/** Format a provider flight timestamp in the local time zone of the airport
+ * where that event occurs. Google Flights returns wall-clock airport times;
+ * interpreting the value in the source airport zone avoids browser-timezone
+ * leakage and prevents a JFK departure from being mislabeled as AST.
+ */
+export function formatFlightTimeAtAirport(value: string, airportCode?: string): string {
+  const zone = airportTimeZone(airportCode);
+  if (!zone) return formatAirportLocalFallback(value, airportCode);
+  const instant = airportWallTimeToInstant(value, zone);
+  if (!instant) return formatAirportLocalFallback(value, airportCode);
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: zone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+  }).format(instant);
+}
+
+/** Absolute instant used to place a flight in a unified chronological schedule. */
+export function flightTimeSortTimestamp(value: string, airportCode?: string): number | null {
+  const zone = airportTimeZone(airportCode);
+  if (!zone) return null;
+  return airportWallTimeToInstant(value, zone)?.getTime() ?? null;
+}
+
+/** Convert a destination-local date and HH:mm planning time into an instant. */
+export function airportLocalDateTimeToTimestamp(date: string, time: string, airportCode?: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const zone = airportTimeZone(airportCode);
+  if (!zone) return null;
+  return airportWallTimeToInstant(`${date} ${time}`, zone)?.getTime() ?? null;
+}
+
 export function formatFlightTimeInDestination(value: string, sourceAirportCode: string | undefined, destinationAirportCode: string): string {
   const targetZone = airportTimeZone(destinationAirportCode);
   const sourceZone = airportTimeZone(sourceAirportCode);
@@ -125,7 +156,7 @@ export function destinationTimezoneNotice(destinationName: string, destinationAi
   const reference = new Date(`${referenceDate}T12:00:00Z`);
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "short" }).formatToParts(reference);
   const abbreviation = parts.find((part) => part.type === "timeZoneName")?.value || zone;
-  return `All flight times are shown in ${destinationName} local time. Time zone: ${zone} (${abbreviation} on ${referenceDate}). Times that cannot be converted are labeled with their source airport.`;
+  return `Flight times are shown in each airport's local time zone. The destination, ${destinationName}, uses ${zone} (${abbreviation} on ${referenceDate}); departure and connection times use the time zone of their own airports. Unmapped airport times are explicitly labeled as airport-local.`;
 }
 
 function wallTimeToMillis(value: string, airportCode?: string): number | null {

@@ -1196,6 +1196,13 @@ export type FlightBookingOption = {
   seller: string;
   price: number | null;
   currency: string;
+  /** True when the outbound and return are issued as separate tickets. */
+  separateTickets?: boolean;
+  /** Provider prices for each separately issued leg, when supplied. */
+  departingPrice?: number | null;
+  returningPrice?: number | null;
+  departingSeller?: string;
+  returningSeller?: string;
   url?: string;
   /** Exact Google booking_request payload. It must be POSTed without re-encoding. */
   postData?: string;
@@ -1278,18 +1285,29 @@ export async function getFlightBookingOptions(
     const postData = rawPostData && rawPostData.length <= 30000 ? rawPostData : undefined;
     const postUrl = googleUrl && postData && option.separate_tickets !== true ? googleUrl : undefined;
     const legOnlyBooking = !bookingRequest.url && (Object.keys(departing).length > 0 || Object.keys(returning).length > 0);
+    const separateTickets = option.separate_tickets === true || legOnlyBooking;
+    const departingPrice = num(departing.price);
+    const returningPrice = num(returning.price);
+    const separateTicketSum = separateTickets && departingPrice !== null && returningPrice !== null
+      ? departingPrice + returningPrice
+      : null;
     const seller = str(together.book_with, str(option.book_with, "Booking provider"));
     const fallbackUrl = makeGoogleFlightsFallbackUrl(input, originCode, destinationAirportCode, seller);
     return {
       seller,
-      price: num(together.price) ?? num(option.price),
+      price: num(together.price) ?? num(option.price) ?? separateTicketSum,
       currency: input.currency,
+      separateTickets,
+      departingPrice,
+      returningPrice,
+      departingSeller: str(departing.book_with) || undefined,
+      returningSeller: str(returning.book_with) || undefined,
       // Never expose Google's /travel/clk/f endpoint as a normal GET link.
       // If a POST cannot be used, send the traveler to an exact route/date search.
       url: directUrl ?? postUrl ?? fallbackUrl,
       postData: directUrl || !postUrl ? undefined : postData,
       fallbackUrl,
-      type: `${str(together.option_title, str(option.type, "Online booking"))}${option.separate_tickets === true || legOnlyBooking ? " · separate tickets" : ""}`,
+      type: `${str(together.option_title, str(option.type, "Online booking"))}${separateTickets ? " · separate tickets" : ""}`,
       baggage: arr(together.baggage_prices).filter((entry): entry is string => typeof entry === "string").slice(0, 5),
       fareTerms: arr(together.extensions).filter((entry): entry is string => typeof entry === "string").slice(0, 6),
     };

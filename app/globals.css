@@ -1597,3 +1597,19 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
 @media (max-width:620px) { .search-reset-button { min-height:34px; } }
 
 .restaurant-proximity-note { margin:10px 0 14px; padding:10px 12px; border-left:3px solid #c6d6c9; border-radius:0 8px 8px 0; background:#f5f8f5; color:#4c6255; font-size:11px; line-height:1.55; }
+
+/* Unified chronological schedule: travel, accommodation, activities and dining share one ordered list. */
+.itinerary-unified-timeline { gap: 0; }
+.itinerary-unified-item .itinerary-travel-copy { min-width: 0; }
+.itinerary-unified-item .itinerary-travel-copy > p + p { margin-top: 6px; }
+.itinerary-unified-item .itinerary-travel-copy > .flight-leg-details { margin-top: 10px; }
+.itinerary-unified-item .itinerary-travel-copy > .itinerary-timeline-link { margin-top: 8px; }
+.itinerary-unified-item .itinerary-travel-date > strong { font-variant-numeric: tabular-nums; }
+.itinerary-unified-item .itinerary-travel-copy .itinerary-selected-link { display: inline-flex; align-items: center; gap: 4px; }
+.flight-roundtrip-note { margin: 0 0 12px; padding: 9px 11px; border-left: 3px solid #b8c8b8; background: #f7f9f6; color: #637468; font-size: 10px; line-height: 1.55; }
+
+
+.booking-option-description { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.booking-separate-ticket-breakdown { color:#7a6a59 !important; font-size:8px !important; line-height:1.5; white-space:normal; }
+.booking-combined-ticket-note { color:#7a8a7e !important; font-size:8px !important; line-height:1.45; white-space:normal; }
+.trip-selection-inline-note > small { flex:1 0 100%; color:#7a6a59; font-size:9px; line-height:1.45; }

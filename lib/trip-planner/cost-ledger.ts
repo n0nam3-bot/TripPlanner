@@ -19,7 +19,16 @@ export type CostLedgerInput = {
   activitiesRequested: boolean;
   outbound: { price: number | null; currency: string } | null;
   returnFlight: { price: number | null; currency: string } | null;
-  flightSeller: { price: number | null; currency: string; seller: string; type: string } | null;
+  flightSeller: {
+    price: number | null;
+    currency: string;
+    seller: string;
+    type: string;
+    departingPrice?: number | null;
+    returningPrice?: number | null;
+    departingSeller?: string;
+    returningSeller?: string;
+  } | null;
   hotel: {
     name: string;
     totalPrice: number | null;
@@ -91,40 +100,28 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
         status: "reference_only",
         includedInSubtotal: false,
         detail: /separate tickets?/i.test(input.flightSeller.type)
-          ? `${cleanText(input.flightSeller.seller)} · separate tickets; verify the combined itinerary and passenger basis before treating this as a complete fare.`
-          : `${cleanText(input.flightSeller.seller)} · seller-displayed fare for the selected itinerary. Verify the passenger/party basis, taxes and fees at checkout; kept as a reference price rather than a confirmed booking cost.`,
+          ? `${cleanText(input.flightSeller.seller)} · separate-ticket offer for the selected outbound and return legs${isPositiveAmount(input.flightSeller.departingPrice) ? ` · outbound ${input.flightSeller.currency || input.currency} ${input.flightSeller.departingPrice.toFixed(2)}${cleanText(input.flightSeller.departingSeller) ? ` (${cleanText(input.flightSeller.departingSeller)})` : ""}` : ""}${isPositiveAmount(input.flightSeller.returningPrice) ? ` · return ${input.flightSeller.currency || input.currency} ${input.flightSeller.returningPrice.toFixed(2)}${cleanText(input.flightSeller.returningSeller) ? ` (${cleanText(input.flightSeller.returningSeller)})` : ""}` : ""}; verify passenger basis, taxes and fees before booking.`
+          : `${cleanText(input.flightSeller.seller)} · seller-displayed offer for the selected round-trip itinerary. Verify the passenger basis, taxes and fees at checkout; kept as a reference price rather than a confirmed booking cost.`,
+      });
+    } else if (input.outbound && isValidAmount(input.outbound.price)) {
+      // The primary flight query is type=1 (round trip), but its first response
+      // contains outbound choices. Treat this initial result price as an
+      // indicative reference only; do not present it as a confirmed all-in fare
+      // or add the matching return result's price as if it were another ticket.
+      addReference({
+        id: "flight-roundtrip-search",
+        label: "Flight · initial search reference price",
+        amount: input.outbound.price,
+        currency: input.outbound.currency || input.currency,
+        status: "reference_only",
+        includedInSubtotal: false,
+        detail: input.returnFlight
+          ? "Indicative price attached to this outbound option in the initial round-trip search. It is not treated as a confirmed combined outbound + return seller fare. Compare seller options after selecting the matching return; the provider identifies combined or separate tickets."
+          : "Indicative price from the initial round-trip search. Select a matching return leg and compare seller options before treating any amount as the complete fare.",
       });
     } else {
-      if (input.outbound && isValidAmount(input.outbound.price)) {
-        addReference({
-          id: "flight-outbound",
-          label: "Flight · outbound display price",
-          amount: input.outbound.price,
-          currency: input.outbound.currency || input.currency,
-          status: "reference_only",
-          includedInSubtotal: false,
-          detail: input.returnFlight
-            ? "Outbound-leg display price only. The outbound and return displays are listed separately; neither is included until a seller confirms one comparable round-trip fare and passenger basis."
-            : "Outbound-leg display price only. No return leg or combined round-trip seller total has been selected, so this amount is excluded from the priced subtotal.",
-        });
-      } else {
-        rows.push({ id: "flight-outbound", label: "Flight · outbound", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "Choose an outbound flight to see its provider display price." });
-        unpricedCategories.push("Outbound flight");
-      }
-      if (input.returnFlight && isValidAmount(input.returnFlight.price)) {
-        addReference({
-          id: "flight-return",
-          label: "Flight · return display price",
-          amount: input.returnFlight.price,
-          currency: input.returnFlight.currency || input.currency,
-          status: "reference_only",
-          includedInSubtotal: false,
-          detail: "Return-leg display price only. It is not combined with the outbound display price or included in the priced subtotal; a seller must confirm a comparable round-trip fare and passenger basis.",
-        });
-      } else if (input.outbound && isValidAmount(input.outbound.price)) {
-        rows.push({ id: "flight-return", label: "Flight · return", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "No return-leg price has been selected yet." });
-        unpricedCategories.push("Return flight");
-      }
+      rows.push({ id: "flight-roundtrip-search", label: "Flight · airfare reference", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "No initial-search flight price is available. Choose an outbound option and its matching return leg, then compare seller offers for a complete combined or separate-ticket amount." });
+      unpricedCategories.push("Round-trip flight");
     }
   }
 
