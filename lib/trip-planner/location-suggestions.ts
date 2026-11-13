@@ -1,3 +1,5 @@
+import { AIRPORT_DIRECTORY, AIRPORT_METRO_GROUPS, searchAirportDirectory, getAirportMetroGroup, type AirportDirectoryEntry } from "./airports";
+
 export type LocationSuggestion = {
   value: string;
   label: string;
@@ -693,7 +695,7 @@ for (const state of US_STATES) {
 }
 
 const ORIGIN_AIRPORTS: LocationSuggestion[] = [
-  { value: "New York (NYC)", label: "New York · All airports", detail: "New York metro · JFK, LaGuardia and Newark", kind: "city", airportCode: "NYC", country: "United States" },
+  { value: "New York (NYC)", label: "New York · Major airports", detail: "New York metro · JFK, Newark and LaGuardia. Multi-airport searches prioritize a bounded set of up to four route combinations; choose a specific airport for exact control.", kind: "city", airportCode: "NYC", country: "United States" },
   { value: "John F. Kennedy International Airport (JFK)", label: "John F. Kennedy International", detail: "Queens, New York · JFK", kind: "airport", airportCode: "JFK", country: "United States" },
   { value: "LaGuardia Airport (LGA)", label: "LaGuardia Airport", detail: "Queens, New York · LGA", kind: "airport", airportCode: "LGA", country: "United States" },
   { value: "Newark Liberty International Airport (EWR)", label: "Newark Liberty International", detail: "Newark, New Jersey · EWR", kind: "airport", airportCode: "EWR", country: "United States" },
@@ -765,6 +767,7 @@ const AIRPORT_NAMES: Record<string, string> = {
   MSY: "Louis Armstrong New Orleans International Airport", YVR: "Vancouver International Airport",
   YUL: "Montréal–Trudeau International Airport",
 };
+for (const airport of AIRPORT_DIRECTORY) AIRPORT_NAMES[airport.code] = airport.name;
 
 export function getLocationSuggestions(
   query: string,
@@ -780,10 +783,24 @@ export function getLocationSuggestions(
       detail: `${state.name} (${state.abbreviation}), United States · departure airport`, kind: "airport" as const,
       airportCode: airport.code, country: "United States",
     })));
-    const allOriginAirports = [...ORIGIN_AIRPORTS, ...stateAirports];
+    const directoryOriginAirports: LocationSuggestion[] = AIRPORT_DIRECTORY.map((airport) => ({
+      value: `${airport.name} (${airport.code})`, label: airport.name,
+      detail: `${airport.city}, ${airport.country} · ${airport.code}`, kind: "airport" as const,
+      airportCode: airport.code, country: airport.country,
+    }));
+    const metroOriginSuggestions: LocationSuggestion[] = AIRPORT_METRO_GROUPS.map((group) => ({
+      value: `${group.city} (${group.code})`, label: `${group.city} · Major airports`,
+      detail: `${group.country} · ${group.airportCodes.join(", ")} · Flight searches prioritize a bounded set of up to four airport combinations; choose a specific airport for exact control.`, kind: "city" as const,
+      airportCode: group.code, country: group.country,
+    }));
+    const allOriginAirports = [...new Map(
+      [...ORIGIN_AIRPORTS, ...metroOriginSuggestions, ...stateAirports, ...directoryOriginAirports]
+        .map((item) => [item.airportCode, item] as const)
+    ).values()];
     const matches = q.length < 2
       ? ORIGIN_AIRPORTS.slice(0, 7)
-      : allOriginAirports.filter((item) => [item.value, item.label, item.detail, item.airportCode].some((value) => norm(value).includes(q)));
+      : allOriginAirports.filter((item) => [item.value, item.label, item.detail, item.airportCode].some((value) => norm(value).includes(q))
+        || searchAirportDirectory(query, 40).some((airport) => airport.code === item.airportCode));
     return matches.slice(0, 16);
   }
 
@@ -807,6 +824,23 @@ export function getLocationSuggestions(
     : [];
   const directAirportSuggestions: LocationSuggestion[] = includeAirports && q.length >= 2
     ? [
+      ...AIRPORT_METRO_GROUPS.filter((group) => [group.code, group.city, ...group.aliases].some((value) => norm(value).includes(q)))
+        .map((group) => ({
+          value: `${group.city}, ${group.country}`,
+          label: `${group.city} · Major airports`,
+          detail: `${group.country} · ${group.airportCodes.join(", ")} · Flight searches prioritize a bounded set of up to four airport combinations; choose a specific airport for exact control.`,
+          kind: "airport" as const,
+          airportCode: group.code,
+          country: group.country,
+        })),
+      ...searchAirportDirectory(query, 20).map((airport: AirportDirectoryEntry) => ({
+        value: `${airport.city}, ${airport.country}`,
+        label: airport.name,
+        detail: `${airport.city} · ${airport.country} · ${airport.code}`,
+        kind: "airport" as const,
+        airportCode: airport.code,
+        country: airport.country,
+      })),
       ...Object.entries(REGION_GATEWAYS).flatMap(([regionName, gateways]) => gateways
         .filter((gateway) => isIataCodeQuery
           ? gateway.code.toUpperCase() === query.trim().toUpperCase()
@@ -828,7 +862,10 @@ export function getLocationSuggestions(
         .map((airport) => ({ ...airport, value: airport.country || airport.value, kind: "airport" as const })),
     ]
     : [];
-  const airportSuggestions = [...new Map([...regionalAirportSuggestions, ...directAirportSuggestions].map((item) => [item.airportCode, item])).values()];
+  const airportSuggestions = [...[...directAirportSuggestions, ...regionalAirportSuggestions].reduce((map, item) => {
+    if (!map.has(item.airportCode)) map.set(item.airportCode, item);
+    return map;
+  }, new Map<string, LocationSuggestion>()).values()];
 
   const allSource = [...DESTINATION_REGIONS, ...airportSuggestions, ...DESTINATION_LOCATIONS, ...US_CITY_AREAS, ...(includeAttractions ? DESTINATION_ATTRACTIONS : [])];
   const scope = norm(regionScope);
@@ -868,6 +905,14 @@ export function destinationMetadata(value: string): { city: string; country: str
       return parts.includes(norm(entry.label)) && parts.includes(norm(entry.country));
     });
   if (item) return { city: item.label, country: item.country, airportCode: item.airportCode };
+  const cityPart = value.split(",")[0]?.trim() || value.trim();
+  const directoryAirport = AIRPORT_DIRECTORY.find((airport) =>
+    norm(airport.city) === norm(cityPart) && (!value.includes(",") || norm(value).includes(norm(airport.country)))
+  );
+  if (directoryAirport) {
+    const metro = getAirportMetroGroup(cityPart);
+    return { city: directoryAirport.city, country: directoryAirport.country, airportCode: metro?.code || directoryAirport.metroCode || directoryAirport.code };
+  }
   const region = DESTINATION_REGIONS.find((entry) => norm(entry.value) === q || norm(entry.label) === q);
   if (region) return { city: region.label, country: region.country || "", airportCode: "" };
   return { city: value.trim(), country: "", airportCode: "" };
@@ -906,6 +951,35 @@ export const AIRPORT_COORDINATES: Record<string, { latitude: number; longitude: 
 };
 export function getDestinationGateways(value: string): DestinationGateway[] {
   const state = getUSStateRegion(value);
-  return (state ? REGION_GATEWAYS[norm(state.name)] : REGION_GATEWAYS[norm(value)]) ?? [];
+  const normalized = norm(state?.name || value);
+  const metro = getAirportMetroGroup(value);
+  const curated = (state ? REGION_GATEWAYS[norm(state.name)] : REGION_GATEWAYS[normalized]) ?? [];
+  const directory = AIRPORT_DIRECTORY.filter((airport) => norm(airport.country) === normalized);
+  const metroGroupsForCountry = AIRPORT_METRO_GROUPS.filter((group) => norm(group.country) === normalized);
+  const metroOptions: DestinationGateway[] = metroGroupsForCountry.map((group) => ({
+    code: group.code, city: group.city, label: `${group.city} · Major airports · ${group.code}`,
+  }));
+  const directoryOptions: DestinationGateway[] = directory.map((airport) => ({
+    code: airport.code, city: airport.city, label: `${airport.city} · ${airport.code}`,
+  }));
+  if (metro) {
+    const groupOptions: DestinationGateway[] = [{ code: metro.code, city: metro.city, label: `${metro.city} · Major airports · ${metro.code}` }];
+    const airportOptions = AIRPORT_DIRECTORY.filter((airport) => metro.airportCodes.includes(airport.code)).map((airport) => ({
+      code: airport.code, city: airport.city, label: `${airport.name} · ${airport.code}`,
+    }));
+    return [...new Map([...groupOptions, ...airportOptions].map((item) => [item.code, item])).values()];
+  }
+  // A known city/area with one curated gateway should still expose that airport.
+  const metadata = destinationMetadata(value);
+  const metadataGateway = metadata.airportCode ? AIRPORT_DIRECTORY.find((airport) => airport.code === metadata.airportCode) : undefined;
+  const metadataOptions: DestinationGateway[] = metadataGateway ? [{
+    code: metadataGateway.code, city: metadataGateway.city, label: `${metadataGateway.name} · ${metadataGateway.code}`,
+  }] : [];
+  // U.S. states already expose a state-specific gateway list; avoid duplicating
+  // a second national list of the same airports. Search autocomplete still sees
+  // the complete curated directory for exact city/name/code lookups.
+  const addDirectoryForCountry = normalized !== "united states" && !state;
+  const combined = [...metroOptions, ...curated, ...(addDirectoryForCountry ? directoryOptions : []), ...metadataOptions];
+  return [...new Map(combined.map((item) => [item.code, item])).values()];
 }
 

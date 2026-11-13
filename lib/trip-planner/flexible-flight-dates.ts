@@ -1,5 +1,5 @@
 import type { TripSearchInput } from "./types";
-import { expandOriginAirports } from "./flight-search-params";
+import { expandAirportPair } from "./flight-search-params";
 
 export type FlexibleFlightDateOption = {
   departureDate: string;
@@ -51,11 +51,12 @@ export function makeFlexibleFlightCalendarParams(
   if (dateRangeEnd < dateRangeStart) throw new Error("INVALID_FLEXIBLE_DATE_WINDOW");
 
   const cabin = { economy: "1", premium_economy: "2", business: "3", first: "4" } as const;
+  const airportPair = expandAirportPair(originCode, destinationAirportCode);
   return {
     engine: "google_flights_calendar",
     type: "1",
-    departure_id: expandOriginAirports(originCode),
-    arrival_id: destinationAirportCode,
+    departure_id: airportPair.departureId,
+    arrival_id: airportPair.arrivalId,
     date_range_start: dateRangeStart,
     date_range_end: dateRangeEnd,
     round_trip_days: String(tripDurationDays(input.departureDate, input.returnDate)),

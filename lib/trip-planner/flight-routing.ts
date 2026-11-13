@@ -1,3 +1,5 @@
+import { AIRPORT_DIRECTORY, AIRPORT_METRO_GROUPS } from "./airports";
+
 /**
  * Shared airport metadata for connection preferences and airport-local
  * flight-time display. Unknown airports are deliberately left unclassified;
@@ -61,6 +63,18 @@ export const AIRPORT_TIMEZONES: Record<string, string> = {
   // Additional international connection airports
   GDN: "Europe/Warsaw", LUX: "Europe/Luxembourg", LCA: "Asia/Nicosia", SKG: "Europe/Athens", TBS: "Asia/Tbilisi", EVN: "Asia/Yerevan", TAS: "Asia/Tashkent", CMB: "Asia/Colombo", MNL: "Asia/Manila", DPS: "Asia/Makassar", KHI: "Asia/Karachi", KTW: "Europe/Warsaw", SPU: "Europe/Zagreb", DBV: "Europe/Zagreb", TIV: "Europe/Podgorica", OHD: "Europe/Skopje", MCT: "Asia/Muscat", ALG: "Africa/Algiers", TUN: "Africa/Tunis", LOS: "Africa/Lagos", ACC: "Africa/Accra", DAR: "Africa/Dar_es_Salaam", MRU: "Indian/Mauritius", BGI: "America/Barbados", NAS: "America/Nassau", CUR: "America/Curacao", GEO: "America/Guyana", UIO: "America/Guayaquil", MVD: "America/Montevideo", SJO: "America/Costa_Rica", SAL: "America/El_Salvador", GUA: "America/Guatemala",
 };
+
+// Keep airport-country and airport-local-time lookup aligned with autocomplete.
+// Explicit mappings above win when they contain a more specific zone.
+for (const airport of AIRPORT_DIRECTORY) {
+  AIRPORT_COUNTRIES[airport.code] ??= airport.country;
+  AIRPORT_TIMEZONES[airport.code] ??= airport.timeZone;
+}
+for (const group of AIRPORT_METRO_GROUPS) {
+  const firstAirport = AIRPORT_DIRECTORY.find((airport) => airport.code === group.airportCodes[0]);
+  AIRPORT_COUNTRIES[group.code] ??= group.country;
+  if (firstAirport) AIRPORT_TIMEZONES[group.code] ??= firstAirport.timeZone;
+}
 
 export function airportCountry(code?: string): string | undefined {
   return code ? AIRPORT_COUNTRIES[code.toUpperCase()] : undefined;

@@ -59,10 +59,10 @@
 - [ ] Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.
 - [x] Add controlled flexible-date comparisons (±1 to ±3 days) through one cached Google Flights Calendar request; preserve the same trip duration and re-run exact itineraries only after the traveler selects a date pair. Existing SerpApi shared quotas and per-client limits apply.
 - [x] Add a fixed desktop results quick-navigation rail with active-section tracking, jump controls, independent expand/collapse controls, and a compact horizontally scrollable responsive layout. Includes Flights, Places to stay, Activities & attractions, Restaurants & dining, Weather, Your plan, Cost breakdown, and Your trip schedule.
-- [ ] Improve airport autocomplete and multi-airport coverage.
+- [x] Expand local airport autocomplete and city/country gateway coverage across major international passenger airports; resolve airport names, aliases and IATA codes locally; expand metro selections into physical airports for exact and flexible searches while bounding the origin/destination matrix to four combinations for provider responsiveness. Selecting an individual airport remains available for exact control.
 - [x] Add a no-API-credit regression suite for parser examples, inclusive date/duration handling, outbound/return/seller token stages, connection-country filtering, airport-local time zones/DST, round-trip price basis, currency-safe cost totals, room/guest validation, and Google booking redirect URL validation.
 
-**Next Release 4 focus:** broader airport gateway coverage and improved airport resolution, followed by supplier-data quality and search-outcome monitoring. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
+**Next Release 4 focus:** enforce hard budget constraints only when each relevant cost component is reliably priced and complete, followed by supplier-data quality and search-outcome monitoring. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
 
 
 ## Release 5 — persistence and trip workspace
