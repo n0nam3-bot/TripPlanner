@@ -110,7 +110,7 @@ export async function searchGeoapifyPlaces(input: {
     return { data, fetchedAt: new Date().toISOString(), fromCache: false, places };
   } catch (error) {
     const code = error instanceof Error ? error.message : "GEOAPIFY_REQUEST_FAILED";
-    if (code.startsWith("GEOAPIFY_DAILY_CAP") || code.startsWith("GEOAPIFY_CLIENT_DAILY_CAP") || code === "GEOAPIFY_REQUEST_RATE_LIMITED") {
+    if (code.startsWith("GEOAPIFY_DAILY_CAP") || code.startsWith("GEOAPIFY_CLIENT_DAILY_CAP") || code.startsWith("GEOAPIFY_DAILY_GATE_INCONSISTENT") || code.startsWith("GEOAPIFY_CLIENT_GATE_INCONSISTENT") || code === "GEOAPIFY_REQUEST_RATE_LIMITED") {
       await recordProviderEvent({ provider: "Geoapify", category: input.kind === "restaurant" ? "Places / restaurants" : "Places / activities", eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss" });
     }
     const stale = await getProviderCacheFallback(cacheKey, 7 * 24 * 60 * 60).catch(() => null);
@@ -158,6 +158,7 @@ async function renderGeoapifyRouteMap(input: {
   return `data:${contentType};base64,${bytes.toString("base64")}`;
 }
 
+const GEOAPIFY_MAP_PREVIEW_VERSION = "route-map-v3";
 type MapAttempt = { mapImageDataUrl?: string; mapWarning?: string; mapRetryAt?: string };
 
 function errorCode(error: unknown): string {
@@ -188,6 +189,8 @@ async function attemptGeoapifyMapPreview(input: {
     const code = errorCode(error);
     const needsUsageSnapshot = code === "GEOAPIFY_DAILY_CAP_REACHED"
       || code === "GEOAPIFY_CLIENT_DAILY_CAP_REACHED"
+      || code === "GEOAPIFY_DAILY_GATE_INCONSISTENT"
+      || code === "GEOAPIFY_CLIENT_GATE_INCONSISTENT"
       || code === "GEOAPIFY_STATIC_MAP_HTTP_429";
     const usage = needsUsageSnapshot
       ? await getGeoapifyCreditUsageSnapshot(input.clientUsageKey).catch(() => null)
@@ -213,6 +216,7 @@ export async function getGeoapifyDrivingRoute(input: {
   originLabel?: string;
   destinationLabel?: string;
   clientUsageKey: string;
+  forceMapRefresh?: boolean;
 }): Promise<GeoapifyDrivingRouteResponse | null> {
   const key = apiKey();
   const cacheKey = providerCacheKey({
@@ -229,9 +233,14 @@ export async function getGeoapifyDrivingRoute(input: {
       let mapWarning = typeof cached.payload.mapWarning === "string" ? cached.payload.mapWarning : undefined;
       let mapRetryAt = typeof cached.payload.mapRetryAt === "string" ? cached.payload.mapRetryAt : undefined;
       const retryTime = mapRetryAt ? new Date(mapRetryAt).getTime() : 0;
-      // A route can remain useful after a temporary map-render failure. Retry only
-      // the static-map request (not routing) when the retry window has elapsed.
-      if (!mapImageDataUrl && route.geometry.length >= 2 && (!retryTime || !Number.isFinite(retryTime) || Date.now() >= retryTime)) {
+      const cachedMapVersion = typeof cached.payload.mapPreviewVersion === "string" ? cached.payload.mapPreviewVersion : "";
+      const legacyMapFailure = cachedMapVersion !== GEOAPIFY_MAP_PREVIEW_VERSION;
+      // Older deployments could cache a false daily-cap warning for the full
+      // route-cache TTL. Retry that legacy failure once using the cached route
+      // geometry, without spending credits on another routing request. Newer
+      // failures observe their retry window to protect the Geoapify allowance.
+      const retryWindowElapsed = !retryTime || !Number.isFinite(retryTime) || Date.now() >= retryTime;
+      if (!mapImageDataUrl && route.geometry.length >= 2 && (legacyMapFailure || retryWindowElapsed)) {
         const map = await attemptGeoapifyMapPreview({
           route, origin: input.origin, destination: input.destination,
           clientUsageKey: input.clientUsageKey, apiKey: key,
@@ -244,6 +253,7 @@ export async function getGeoapifyDrivingRoute(input: {
           mapImageDataUrl: mapImageDataUrl ?? null,
           mapWarning: mapWarning ?? null,
           mapRetryAt: mapRetryAt ?? null,
+          mapPreviewVersion: GEOAPIFY_MAP_PREVIEW_VERSION,
           directions: route.directions,
         }, 12 * 60 * 60).catch(() => undefined);
       }
@@ -294,6 +304,7 @@ export async function getGeoapifyDrivingRoute(input: {
       directions: route.directions,
       mapWarning: mapResult.mapWarning ?? null,
       mapRetryAt: mapResult.mapRetryAt ?? null,
+      mapPreviewVersion: GEOAPIFY_MAP_PREVIEW_VERSION,
     }, 12 * 60 * 60).catch(() => undefined);
     const checkedAt = new Date().toISOString();
     await recordProviderEvent({ provider: "Geoapify", category: "Driving directions", eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
@@ -308,7 +319,7 @@ export async function getGeoapifyDrivingRoute(input: {
     };
   } catch (error) {
     const code = error instanceof Error ? error.message : "GEOAPIFY_ROUTE_FAILED";
-    if (code.startsWith("GEOAPIFY_DAILY_CAP") || code.startsWith("GEOAPIFY_CLIENT_DAILY_CAP") || code === "GEOAPIFY_REQUEST_RATE_LIMITED") {
+    if (code.startsWith("GEOAPIFY_DAILY_CAP") || code.startsWith("GEOAPIFY_CLIENT_DAILY_CAP") || code.startsWith("GEOAPIFY_DAILY_GATE_INCONSISTENT") || code.startsWith("GEOAPIFY_CLIENT_GATE_INCONSISTENT") || code === "GEOAPIFY_REQUEST_RATE_LIMITED") {
       await recordProviderEvent({ provider: "Geoapify", category: "Driving directions", eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss" });
     } else {
       await recordProviderEvent({ provider: "Geoapify", category: "Driving directions", eventType: "provider_error", outcome: "error", durationMs: Date.now() - startedAt });

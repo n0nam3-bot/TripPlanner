@@ -9,6 +9,7 @@ const {
   parseGeoapifyRoute,
   estimateGeoapifyRouteCredits,
   resolveGeoapifyCreditCaps,
+  classifyGeoapifyReservationFailure,
   describeGeoapifyMapFailure,
 } = require("../../.test-build/lib/trip-planner/geoapify-format.js");
 
@@ -142,6 +143,55 @@ test("Geoapify safety caps share one bounded default and never exceed Tripfinder
 });
 
 
+test("Geoapify reservation diagnostics distinguish available headroom from a genuinely exhausted cap", () => {
+  assert.equal(classifyGeoapifyReservationFailure(28, 2400, 5), "gate-inconsistent");
+  assert.equal(classifyGeoapifyReservationFailure(2398, 2400, 5), "cap-reached");
+  assert.equal(classifyGeoapifyReservationFailure(76, 80, 5), "cap-reached");
+  assert.equal(classifyGeoapifyReservationFailure(26, 80, 5), "gate-inconsistent");
+});
+
+test("Geoapify reservation gate atomically upserts client and shared counters with cap predicates", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const db = fs.readFileSync(path.resolve(__dirname, "../../lib/db/travel-cache.ts"), "utf8");
+  const start = db.indexOf("export async function reserveGeoapifyCredits(");
+  const end = db.indexOf("export async function reserveProviderSearch", start);
+  const gate = db.slice(start, end);
+  assert.match(gate, /INSERT INTO tripfinder_geoapify_client_daily_usage[\s\S]*ON CONFLICT \(client_key, usage_date\) DO UPDATE/);
+  assert.match(gate, /tripfinder_geoapify_client_daily_usage\.credit_count \+ EXCLUDED\.credit_count <= \${clientCap}/);
+  assert.match(gate, /INSERT INTO tripfinder_geoapify_daily_usage[\s\S]*ON CONFLICT \(usage_date\) DO UPDATE/);
+  assert.match(gate, /tripfinder_geoapify_daily_usage\.credit_count \+ EXCLUDED\.credit_count <= \${globalCap}/);
+  assert.match(gate, /GEOAPIFY_DAILY_GATE_INCONSISTENT/);
+  assert.doesNotMatch(gate, /VALUES \(\$\{usageDate}::date, 0, now\(\)\)/);
+});
+
+test("Map refresh explicitly retries a failed cached map image without recalculating the route", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const provider = fs.readFileSync(path.resolve(__dirname, "../../lib/providers/geoapify.ts"), "utf8");
+  const workspace = fs.readFileSync(path.resolve(__dirname, "../../components/trips/results-workspace.tsx"), "utf8");
+  assert.match(provider, /legacyMapFailure \|\| retryWindowElapsed/);
+  assert.match(workspace, /forceMapRefresh: Boolean\(state\?\.duration && !state\.mapImageDataUrl\)/);
+});
+
+test("legacy cached map failures are retried once with cached route geometry after the map-preview version changes", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const provider = fs.readFileSync(path.resolve(__dirname, "../../lib/providers/geoapify.ts"), "utf8");
+  assert.match(provider, /GEOAPIFY_MAP_PREVIEW_VERSION = "route-map-v3"/);
+  assert.match(provider, /cachedMapVersion !== GEOAPIFY_MAP_PREVIEW_VERSION/);
+  assert.match(provider, /legacyMapFailure \|\| retryWindowElapsed/);
+  assert.match(provider, /mapPreviewVersion: GEOAPIFY_MAP_PREVIEW_VERSION/);
+});
+
+test("Activity and restaurant itinerary cards retain a date editor", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const workspace = fs.readFileSync(path.resolve(__dirname, "../../components/trips/results-workspace.tsx"), "utf8");
+  assert.match(workspace, /className="itinerary-date-select"/);
+  assert.match(workspace, /onUpdateExperience\(experience, \{ \.\.\.plan, date: event\.target\.value \}\)/);
+});
+
 test("Las Terrenas uses its own local anchor instead of the Samaná town center", () => {
   const { getDestinationAreaGeo } = require("../../.test-build/lib/trip-planner/location-suggestions.js");
   const lasTerrenas = getDestinationAreaGeo("Las Terrenas, Samaná, Dominican Republic");
@@ -202,6 +252,17 @@ test("Geoapify map cap denial is not reported as exhausted when the app counter 
   assert.match(failure.warning, /26 of 2,400 app credits used/);
   assert.match(failure.warning, /counter or deployment mismatch/);
   assert.doesNotMatch(failure.warning, /safety allowance is exhausted/);
+});
+
+test("Geoapify reservation inconsistency is not reported as provider quota exhaustion", () => {
+  const failure = describeGeoapifyMapFailure("GEOAPIFY_DAILY_GATE_INCONSISTENT", {
+    sharedUsed: 28, sharedCap: 2400, clientUsed: 28, clientCap: 80,
+  });
+  assert.equal(failure.blocked, true);
+  assert.equal(failure.retryDelayMs, 30000);
+  assert.match(failure.warning, /28 of 2,400 app credits used/);
+  assert.match(failure.warning, /database reservation inconsistency/);
+  assert.doesNotMatch(failure.warning, /allowance is exhausted/);
 });
 
 test("Geoapify map cap message reports a real exhausted Tripfinder allowance only at the configured threshold", () => {

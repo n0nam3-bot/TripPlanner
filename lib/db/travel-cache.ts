@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { createHash } from "node:crypto";
-import { resolveGeoapifyCreditCaps } from "../trip-planner/geoapify-format";
+import { classifyGeoapifyReservationFailure, resolveGeoapifyCreditCaps } from "../trip-planner/geoapify-format";
 
 type JsonRecord = Record<string, unknown>;
 type CacheRow = { payload: JsonRecord | string; created_at: string };
@@ -253,44 +253,72 @@ export async function getGeoapifyCreditUsageSnapshot(clientKey = "shared"): Prom
   };
 }
 
-/** Reserve Geoapify credits against Tripfinder's shared and per-visitor UTC-day safety caps. */
+/** Reserve Geoapify credits against Tripfinder's shared and per-visitor UTC-day safety caps.
+ *
+ * Each counter uses one atomic INSERT .. ON CONFLICT DO UPDATE operation. This
+ * handles both first-use rows and existing rows in the same statement, while
+ * retaining the conditional cap check under the row lock. The per-visitor
+ * reservation is compensated if the shared reservation cannot be completed.
+ */
 export async function reserveGeoapifyCredits(clientKey = "shared", credits = 1): Promise<number> {
   await ensureTravelTables();
-  const safeCredits = Math.max(1, Math.min(100, Math.ceil(credits)));
-  // Geoapify's Free plan currently lists 3,000 credits/day. Tripfinder caps itself
-  // at 2,800 maximum to retain a reserve for diagnostics or other apps sharing the key.
+  const safeCredits = Number.isFinite(credits) ? Math.max(1, Math.min(100, Math.ceil(credits))) : 1;
   const { dailyCap: globalCap, clientDailyCap: clientCap } = resolveGeoapifyCreditCaps({
     dailyCap: process.env.GEOAPIFY_DAILY_CREDIT_CAP,
     clientDailyCap: process.env.GEOAPIFY_CLIENT_DAILY_CREDIT_CAP,
   });
   const usageDate = new Date().toISOString().slice(0, 10);
   const sql = getSql();
+
+  if (safeCredits > clientCap) throw new Error("GEOAPIFY_CLIENT_DAILY_CAP_REACHED");
+  if (safeCredits > globalCap) throw new Error("GEOAPIFY_DAILY_CAP_REACHED");
+
   const clientRows = await sql`INSERT INTO tripfinder_geoapify_client_daily_usage
       (client_key, usage_date, credit_count, updated_at)
-    SELECT ${clientKey}, ${usageDate}, ${safeCredits}, now()
-    WHERE ${safeCredits} <= ${clientCap}
-    ON CONFLICT (client_key, usage_date) DO UPDATE SET
-      credit_count = tripfinder_geoapify_client_daily_usage.credit_count + ${safeCredits},
-      updated_at = now()
-    WHERE tripfinder_geoapify_client_daily_usage.credit_count + ${safeCredits} <= ${clientCap}
+    VALUES (${clientKey}, ${usageDate}::date, ${safeCredits}, now())
+    ON CONFLICT (client_key, usage_date) DO UPDATE
+      SET credit_count = tripfinder_geoapify_client_daily_usage.credit_count + EXCLUDED.credit_count,
+          updated_at = now()
+      WHERE tripfinder_geoapify_client_daily_usage.credit_count + EXCLUDED.credit_count <= ${clientCap}
     RETURNING credit_count`;
-  if (!clientRows.length) throw new Error("GEOAPIFY_CLIENT_DAILY_CAP_REACHED");
+  if (!clientRows.length) {
+    const currentRows = await sql`SELECT credit_count FROM tripfinder_geoapify_client_daily_usage
+      WHERE client_key = ${clientKey} AND usage_date = ${usageDate}::date LIMIT 1`;
+    const used = Math.max(0, Number((currentRows[0] as unknown as { credit_count?: number } | undefined)?.credit_count ?? 0) || 0);
+    const failure = classifyGeoapifyReservationFailure(used, clientCap, safeCredits);
+    if (failure === "cap-reached") throw new Error("GEOAPIFY_CLIENT_DAILY_CAP_REACHED");
+    throw new Error("GEOAPIFY_CLIENT_GATE_INCONSISTENT");
+  }
 
-  const globalRows = await sql`INSERT INTO tripfinder_geoapify_daily_usage
-      (usage_date, credit_count, updated_at)
-    SELECT ${usageDate}, ${safeCredits}, now()
-    WHERE ${safeCredits} <= ${globalCap}
-    ON CONFLICT (usage_date) DO UPDATE SET
-      credit_count = tripfinder_geoapify_daily_usage.credit_count + ${safeCredits},
-      updated_at = now()
-    WHERE tripfinder_geoapify_daily_usage.credit_count + ${safeCredits} <= ${globalCap}
-    RETURNING credit_count`;
-  if (!globalRows.length) {
+  let globalRows: unknown[];
+  try {
+    globalRows = await sql`INSERT INTO tripfinder_geoapify_daily_usage
+        (usage_date, credit_count, updated_at)
+      VALUES (${usageDate}::date, ${safeCredits}, now())
+      ON CONFLICT (usage_date) DO UPDATE
+        SET credit_count = tripfinder_geoapify_daily_usage.credit_count + EXCLUDED.credit_count,
+            updated_at = now()
+        WHERE tripfinder_geoapify_daily_usage.credit_count + EXCLUDED.credit_count <= ${globalCap}
+      RETURNING credit_count`;
+  } catch (error) {
     await sql`UPDATE tripfinder_geoapify_client_daily_usage
       SET credit_count = GREATEST(0, credit_count - ${safeCredits}), updated_at = now()
-      WHERE client_key = ${clientKey} AND usage_date = ${usageDate}`;
-    throw new Error("GEOAPIFY_DAILY_CAP_REACHED");
+      WHERE client_key = ${clientKey} AND usage_date = ${usageDate}::date`.catch(() => undefined);
+    throw error;
   }
+  if (!globalRows.length) {
+    // Roll back the visitor reservation because the shared allowance did not reserve.
+    await sql`UPDATE tripfinder_geoapify_client_daily_usage
+      SET credit_count = GREATEST(0, credit_count - ${safeCredits}), updated_at = now()
+      WHERE client_key = ${clientKey} AND usage_date = ${usageDate}::date`;
+    const currentRows = await sql`SELECT credit_count FROM tripfinder_geoapify_daily_usage
+      WHERE usage_date = ${usageDate}::date LIMIT 1`;
+    const used = Math.max(0, Number((currentRows[0] as unknown as { credit_count?: number } | undefined)?.credit_count ?? 0) || 0);
+    const failure = classifyGeoapifyReservationFailure(used, globalCap, safeCredits);
+    if (failure === "cap-reached") throw new Error("GEOAPIFY_DAILY_CAP_REACHED");
+    throw new Error("GEOAPIFY_DAILY_GATE_INCONSISTENT");
+  }
+
   await sql`DELETE FROM tripfinder_geoapify_client_daily_usage WHERE usage_date < current_date - interval '30 days'`;
   await sql`DELETE FROM tripfinder_geoapify_daily_usage WHERE usage_date < current_date - interval '30 days'`;
   return Number((globalRows[0] as unknown as { credit_count: number }).credit_count);
