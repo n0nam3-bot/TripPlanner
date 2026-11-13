@@ -1048,23 +1048,23 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
         <small>{item.label}</small>
         <strong title={item.value}>{item.value}</strong>
         {item.note && <span>{item.note}</span>}
-        {item.label === "DATES" && <>
-          <button type="button" className="results-overview-change-dates" onClick={() => { setDateEditorOpen((open) => !open); setDateChangeError(""); }} aria-expanded={dateEditorOpen} aria-controls="results-overview-date-editor">
-            <CalendarDays size={12}/> {dateEditorOpen ? "Close date editor" : "Change dates"}
-          </button>
-          {dateEditorOpen && <div className="results-overview-date-editor" id="results-overview-date-editor">
-            <label><span>Start</span><input type="date" value={nextDepartureDate} min={localDateInputValue()} onChange={(event) => setNextDepartureDate(event.target.value)} /></label>
-            <label><span>End</span><input type="date" value={nextReturnDate} min={nextDepartureDate || localDateInputValue()} onChange={(event) => setNextReturnDate(event.target.value)} /></label>
-            <p>Tripfinder will refresh results for these dates. Matching stays and activities can be restored; flights and items outside the new range may need review.{hasSavedTrip ? " After results load, choose Update saved trip to apply the new dates to your share link." : ""}</p>
-            {dateChangeError && <p className="results-overview-date-error" role="alert">{dateChangeError}</p>}
-            <div className="results-overview-date-actions">
-              <button type="button" onClick={() => { setNextDepartureDate(search.departureDate); setNextReturnDate(search.returnDate); setDateEditorOpen(false); setDateChangeError(""); }} disabled={dateChangePending}>Cancel</button>
-              <button type="button" onClick={applyDateRange} disabled={dateChangePending || (nextDepartureDate === search.departureDate && nextReturnDate === search.returnDate)}>{dateChangePending ? "Updating…" : "Update results"}</button>
-            </div>
-          </div>}
-        </>}
+        {item.label === "DATES" && <button type="button" className="results-overview-change-dates" onClick={() => { setDateEditorOpen((open) => !open); setDateChangeError(""); }} aria-expanded={dateEditorOpen} aria-controls="results-overview-date-editor">
+          <CalendarDays size={13}/> {dateEditorOpen ? "Close date editor" : "Change dates"}
+        </button>}
       </div>)}
     </div>
+    {dateEditorOpen && <div className="results-overview-date-editor" id="results-overview-date-editor" aria-label="Change trip dates">
+      <div className="results-overview-date-fields">
+        <label htmlFor="results-overview-start-date"><span>Start date</span><input id="results-overview-start-date" name="startDate" type="date" value={nextDepartureDate} min={localDateInputValue()} onChange={(event) => setNextDepartureDate(event.target.value)} /></label>
+        <label htmlFor="results-overview-end-date"><span>End date</span><input id="results-overview-end-date" name="endDate" type="date" value={nextReturnDate} min={nextDepartureDate || localDateInputValue()} onChange={(event) => setNextReturnDate(event.target.value)} /></label>
+      </div>
+      <p>Results will refresh for these dates. Some flights or activities may need review.{hasSavedTrip ? " After results load, update your saved trip to refresh its share link." : ""}</p>
+      {dateChangeError && <p className="results-overview-date-error" role="alert">{dateChangeError}</p>}
+      <div className="results-overview-date-actions">
+        <button type="button" onClick={() => { setNextDepartureDate(search.departureDate); setNextReturnDate(search.returnDate); setDateEditorOpen(false); setDateChangeError(""); }} disabled={dateChangePending}>Cancel</button>
+        <button type="button" onClick={applyDateRange} disabled={dateChangePending || (nextDepartureDate === search.departureDate && nextReturnDate === search.returnDate)}>{dateChangePending ? "Updating…" : "Update results"}</button>
+      </div>
+    </div>}
     <div className="results-trip-overview-save-actions">
       <button type="button" className="results-overview-save-primary" onClick={onSaveTrip} disabled={!databaseConfigured || savingTrip} title={!databaseConfigured ? "Neon database must be configured to save trips." : "Save this search and its selected itinerary."}>
         {savingTrip ? <><RefreshCw size={12} className="spin"/> Saving</> : <><Save size={12}/> {hasSavedTrip ? "Update saved trip" : "Save trip"}</>}

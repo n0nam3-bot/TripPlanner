@@ -31,3 +31,26 @@ test("desktop results typography receives a separate larger type scale", () => {
   assert.match(desktop, /\.results-trip-overview-item > strong\s*\{[^}]*font-size:\s*12px/s);
   assert.match(desktop, /\.results-left-sidebar \.results-section-rail-link\s*\{[^}]*font-size:\s*10px/s);
 });
+
+test("Your Trip date editor renders as a full-width panel outside the horizontal overview strip", () => {
+  const workspace = fs.readFileSync(path.join(root, "components/trips/results-workspace.tsx"), "utf8");
+  const sectionStart = workspace.indexOf('return <section className="results-trip-overview"');
+  const sectionEnd = workspace.indexOf("function ResultsSectionNavigation", sectionStart);
+  const overview = workspace.slice(sectionStart, sectionEnd);
+  const listClose = overview.indexOf("</div>\n    {dateEditorOpen && <div className=\"results-overview-date-editor\"");
+  const editorOpen = overview.indexOf('{dateEditorOpen && <div className="results-overview-date-editor"');
+  assert.ok(sectionStart >= 0 && sectionEnd > sectionStart, "Your Trip overview component exists");
+  assert.ok(listClose >= 0 && editorOpen > listClose, "date editor is a sibling below the horizontal list");
+  assert.match(overview, /htmlFor="results-overview-start-date"[\s\S]*?type="date"/);
+  assert.match(overview, /htmlFor="results-overview-end-date"[\s\S]*?type="date"/);
+  assert.match(overview, />Cancel<\/button>[\s\S]*?>\{dateChangePending \? "Updating…" : "Update results"\}<\/button>/);
+});
+
+test("date editor controls remain full-width, readable, and tappable on narrow screens", () => {
+  assert.match(css, /\.results-overview-date-editor\s*\{[^}]*width:\s*100%[^}]*box-sizing:\s*border-box/s);
+  assert.match(css, /\.results-overview-date-editor input\[type="date"\]\s*\{[^}]*min-height:\s*44px[^}]*font-size:\s*13px/s);
+  assert.match(css, /\.results-overview-date-actions button\s*\{[^}]*min-height:\s*44px[^}]*font-size:\s*12px/s);
+  const narrow = css.split("@media (max-width: 400px)")[1] || "";
+  assert.match(narrow, /\.results-overview-date-fields\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(narrow, /\.results-overview-date-actions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+});
