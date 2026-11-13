@@ -86,7 +86,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
       </section>
       <footer className="site-footer shell results-footer">
         <div className="footer-top">
-          <div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Plan the whole trip in one place.</p></div>
+          <div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Make room for somewhere new.</p></div>
           <div className="footer-side">
             <SupportTipLink />
             <Link href="/#plan" className="text-link dark-link">New search <ArrowRight size={16}/></Link>

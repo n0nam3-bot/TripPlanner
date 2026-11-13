@@ -17,7 +17,26 @@ function getSupportTipUrl(): string {
   }
 }
 
-export function SupportTipLink() {
+export function SupportTipLink({ compact = false }: { compact?: boolean }) {
+  const url = getSupportTipUrl();
+
+  if (compact) {
+    return (
+      <a
+        className="support-project-link support-project-link-compact"
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        aria-label="Support Tripfinder with an optional tip (opens in a new tab)"
+        title="Support Tripfinder"
+      >
+        <Heart size={14} aria-hidden="true" />
+        <span>Support</span>
+        <ArrowUpRight size={13} aria-hidden="true" />
+      </a>
+    );
+  }
+
   return (
     <div className="support-project">
       <div className="support-project-copy">
@@ -27,7 +46,7 @@ export function SupportTipLink() {
       </div>
       <a
         className="support-project-link"
-        href={getSupportTipUrl()}
+        href={url}
         target="_blank"
         rel="noopener noreferrer nofollow"
         aria-label="Support Tripfinder with an optional tip (opens in a new tab)"
