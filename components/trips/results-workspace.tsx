@@ -951,9 +951,12 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
 
 type ResultSectionNavItem = { key: string; id: string; label: string; icon: LucideIcon };
 
-type TripFeedbackEntry = { id: string; name: string; category: string; itemTitle: string; message: string; status: "pending" | "reviewed" | "dismissed"; createdAt: string; stale: boolean };
+type TripFeedbackEntry = { id: string; name: string; category: string; itemTitle: string; message: string; status: "pending" | "reviewed" | "dismissed"; createdAt: string; stale: boolean; appliedAt?: string };
+type FeedbackEditAction = "reschedule-place" | "remove-place";
+type FeedbackEditDraft = { feedbackId: string; action: FeedbackEditAction; target: string; date: string; time: string };
+type FeedbackEditPreview = { feedbackId: string; patch: { action: FeedbackEditAction; destinationIndex: number; itemIndex: number; date?: string; time?: string }; summary: string };
 
-function ResultsTripOverview({ search, totalBudget, people, nights, databaseConfigured, savingTrip, restoringCopiedTrip, hasSavedTrip, feedbackCredentials, shareUrl, saveMessage, currentSnapshot, onSaveTrip, onCopyShareLink }: {
+function ResultsTripOverview({ search, totalBudget, people, nights, databaseConfigured, savingTrip, restoringCopiedTrip, hasSavedTrip, feedbackCredentials, shareUrl, saveMessage, currentSnapshot, onSaveTrip, onCopyShareLink, onApprovedEditApplied }: {
   search: TripSearchInput;
   totalBudget: number;
   people: number;
@@ -968,6 +971,7 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
   currentSnapshot: SavedTripSnapshot;
   onSaveTrip: () => void;
   onCopyShareLink: () => void;
+  onApprovedEditApplied: (snapshot: SavedTripSnapshot) => void;
 }) {
   const [dateEditorOpen, setDateEditorOpen] = useState(false);
   const [nextDepartureDate, setNextDepartureDate] = useState(search.departureDate);
@@ -980,6 +984,8 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackEntries, setFeedbackEntries] = useState<TripFeedbackEntry[]>([]);
   const [feedbackUpdatedAt, setFeedbackUpdatedAt] = useState("");
+  const [feedbackEditDraft, setFeedbackEditDraft] = useState<FeedbackEditDraft | null>(null);
+  const [feedbackEditPreview, setFeedbackEditPreview] = useState<FeedbackEditPreview | null>(null);
   const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
   const travelerLabel = `${search.adults} adult${search.adults === 1 ? "" : "s"}${search.childrenAges.length ? ` · ${search.childrenAges.length} child${search.childrenAges.length === 1 ? "" : "ren"}` : ""}`;
   const budgetAmount = money(search.budget, search.currency);
@@ -1028,6 +1034,75 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
     } catch (error) {
       setFeedbackMessage(error instanceof Error ? error.message : "Tripfinder could not load traveler feedback.");
     } finally { setFeedbackLoading(false); }
+  }
+
+  const feedbackTargets = currentSnapshot.destinations.flatMap((destination, destinationIndex) =>
+    destination.items.flatMap((item, itemIndex) => ["activity", "restaurant"].includes(item.kind)
+      ? [{ key: `${destinationIndex}:${itemIndex}`, destinationIndex, itemIndex, title: item.title, date: item.date || search.departureDate, time: item.time || "", kind: item.kind }]
+      : []));
+
+  function beginFeedbackEdit(entry: TripFeedbackEntry) {
+    const firstTarget = feedbackTargets[0];
+    if (!firstTarget) {
+      setFeedbackMessage("Load the current activity or restaurant results and select the itinerary items before preparing an edit.");
+      return;
+    }
+    setFeedbackEditPreview(null);
+    setFeedbackEditDraft({ feedbackId: entry.id, action: "reschedule-place", target: firstTarget.key, date: firstTarget.date, time: /^\d{2}:\d{2}$/.test(firstTarget.time) ? firstTarget.time : "" });
+  }
+
+  function previewFeedbackEdit() {
+    if (!feedbackEditDraft) return;
+    const [destinationIndex, itemIndex] = feedbackEditDraft.target.split(":").map(Number);
+    const destination = currentSnapshot.destinations[destinationIndex];
+    const item = destination?.items[itemIndex];
+    if (!item || !["activity", "restaurant"].includes(item.kind)) {
+      setFeedbackMessage("The selected activity or restaurant is no longer in the current itinerary. Refresh the inbox and try again.");
+      return;
+    }
+    if (feedbackEditDraft.action === "reschedule-place") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(feedbackEditDraft.date) || feedbackEditDraft.date < search.departureDate || feedbackEditDraft.date > search.returnDate) {
+        setFeedbackMessage("Choose a date within the current trip range.");
+        return;
+      }
+      if (feedbackEditDraft.time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(feedbackEditDraft.time)) {
+        setFeedbackMessage("Choose a valid time.");
+        return;
+      }
+      setFeedbackEditPreview({ feedbackId: feedbackEditDraft.feedbackId, patch: {
+        action: "reschedule-place", destinationIndex, itemIndex, date: feedbackEditDraft.date,
+        ...(feedbackEditDraft.time ? { time: feedbackEditDraft.time } : {}),
+      }, summary: `Move ${item.title} from ${item.date || "an unspecified date"}${item.time ? ` at ${item.time}` : ""} to ${feedbackEditDraft.date}${feedbackEditDraft.time ? ` at ${feedbackEditDraft.time}` : " (keep its current time)"}.` });
+    } else {
+      setFeedbackEditPreview({ feedbackId: feedbackEditDraft.feedbackId, patch: { action: "remove-place", destinationIndex, itemIndex }, summary: `Remove ${item.title} from the saved itinerary.` });
+    }
+    setFeedbackMessage("");
+  }
+
+  async function applyApprovedFeedbackEdit() {
+    if (!feedbackCredentials || !feedbackUpdatedAt || !feedbackEditPreview || feedbackLoading) return;
+    setFeedbackLoading(true);
+    setFeedbackMessage("");
+    try {
+      const response = await fetch("/api/trips/feedback/apply", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...feedbackCredentials, feedbackId: feedbackEditPreview.feedbackId, expectedUpdatedAt: feedbackUpdatedAt, patch: feedbackEditPreview.patch }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string; updatedAt?: string; snapshot?: SavedTripSnapshot; summary?: string };
+      if (!response.ok || !payload.snapshot) throw new Error(payload.error || "Tripfinder could not apply this suggestion.");
+      const restoreKey = `tripfinder:saved-trip-fork-restore:v1:${window.location.pathname}${window.location.search}`;
+      try { window.localStorage.setItem(restoreKey, JSON.stringify({ snapshot: payload.snapshot, approvedEdit: true })); } catch { /* Current-page state can still restore the exact updated selection. */ }
+      setFeedbackUpdatedAt(payload.updatedAt || feedbackUpdatedAt);
+      setFeedbackEntries((current) => current.map((entry) => entry.id === feedbackEditPreview.feedbackId
+        ? { ...entry, status: "reviewed", appliedAt: new Date().toISOString(), stale: false } : entry));
+      setFeedbackEditDraft(null);
+      setFeedbackEditPreview(null);
+      setFeedbackMessage(payload.summary || "The approved suggestion was applied to the saved itinerary.");
+      onApprovedEditApplied(payload.snapshot);
+    } catch (error) {
+      setFeedbackMessage(error instanceof Error ? error.message : "Tripfinder could not apply this suggestion right now.");
+      setFeedbackLoading(false);
+    }
   }
 
   async function reviewTripFeedback(entryId: string, status: "reviewed" | "dismissed") {
@@ -1170,10 +1245,18 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
       {!feedbackEntries.length ? <p>No feedback has been submitted yet.</p> : feedbackEntries.map((entry) => <article key={entry.id} className="results-feedback-entry">
         <div><strong>{entry.category.replaceAll("-", " ")}{entry.itemTitle ? ` · ${entry.itemTitle}` : ""}</strong><small>{entry.name || "Traveler"} · {new Date(entry.createdAt).toLocaleString()}</small></div>
         <p>{entry.message}</p>
-        {entry.stale && <small className="is-stale">The saved trip changed after this invitation was created. Compare this suggestion with the current itinerary before applying anything.</small>}
+        {entry.stale && <small className="is-stale">The saved trip changed after this invitation was created. Review this suggestion against the current itinerary before applying it.</small>}
         <div className="results-feedback-entry-actions">
-          {entry.status === "pending" ? <><button type="button" onClick={() => void reviewTripFeedback(entry.id, "reviewed")} disabled={feedbackLoading}>Mark reviewed</button><button type="button" onClick={() => void reviewTripFeedback(entry.id, "dismissed")} disabled={feedbackLoading}>Dismiss</button></> : <span>{entry.status === "reviewed" ? "Reviewed" : "Dismissed"}</span>}
+          {entry.status === "pending" ? <><button type="button" onClick={() => beginFeedbackEdit(entry)} disabled={feedbackLoading}>Prepare suggested edit</button><button type="button" onClick={() => void reviewTripFeedback(entry.id, "reviewed")} disabled={feedbackLoading}>Mark reviewed</button><button type="button" onClick={() => void reviewTripFeedback(entry.id, "dismissed")} disabled={feedbackLoading}>Dismiss</button></> : <span>{entry.appliedAt ? "Applied to itinerary" : entry.status === "reviewed" ? "Reviewed" : "Dismissed"}</span>}
         </div>
+        {feedbackEditDraft?.feedbackId === entry.id && entry.status === "pending" && <div className="results-feedback-edit-panel">
+          <strong>Prepare an owner-approved change</strong>
+          <label>Change type<select value={feedbackEditDraft.action} onChange={(event) => { setFeedbackEditDraft((current) => current ? { ...current, action: event.target.value as FeedbackEditAction } : current); setFeedbackEditPreview(null); }}><option value="reschedule-place">Change activity or dining date/time</option><option value="remove-place">Remove activity or restaurant</option></select></label>
+          <label>Selected itinerary item<select value={feedbackEditDraft.target} onChange={(event) => { const target = feedbackTargets.find((candidate) => candidate.key === event.target.value); setFeedbackEditDraft((current) => current ? { ...current, target: event.target.value, date: target?.date || search.departureDate, time: target && /^\d{2}:\d{2}$/.test(target.time) ? target.time : "" } : current); setFeedbackEditPreview(null); }}>{feedbackTargets.map((target) => <option key={target.key} value={target.key}>{target.title} · {target.date}</option>)}</select></label>
+          {feedbackEditDraft.action === "reschedule-place" && <div className="results-feedback-edit-dates"><label>New date<input type="date" min={search.departureDate} max={search.returnDate} value={feedbackEditDraft.date} onChange={(event) => { setFeedbackEditDraft((current) => current ? { ...current, date: event.target.value } : current); setFeedbackEditPreview(null); }}/></label><label>New time <small>(optional)</small><input type="time" value={feedbackEditDraft.time} onChange={(event) => { setFeedbackEditDraft((current) => current ? { ...current, time: event.target.value } : current); setFeedbackEditPreview(null); }}/></label></div>}
+          <div className="results-feedback-entry-actions"><button type="button" onClick={previewFeedbackEdit} disabled={feedbackLoading || !feedbackTargets.length}>Preview change</button><button type="button" onClick={() => { setFeedbackEditDraft(null); setFeedbackEditPreview(null); }} disabled={feedbackLoading}>Cancel</button></div>
+          {feedbackEditPreview?.feedbackId === entry.id && <div className="results-feedback-edit-preview"><strong>Preview — nothing has changed yet</strong><p>{feedbackEditPreview.summary}</p><button type="button" onClick={() => void applyApprovedFeedbackEdit()} disabled={feedbackLoading}>{feedbackLoading ? "Applying…" : "Confirm and apply edit"}</button></div>}
+        </div>}
       </article>)}
     </div>}
   </section>;
@@ -1301,6 +1384,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const [pendingForkSnapshot, setPendingForkSnapshot] = useState<SavedTripSnapshot | null>(null);
   const [forkRestoreNotice, setForkRestoreNotice] = useState("");
   const forkRestoreStorageKeyRef = useRef("");
+  const approvedEditRestoreRef = useRef(false);
   const forkRestoreProcessedRef = useRef<Set<string>>(new Set());
   const forkReturnMatchesRef = useRef<Record<string, { destinationId: string; reference: Extract<SavedTripSelectionReference, { type: "flight" }> }>>({});
   const forkSellerMatchesRef = useRef<Record<string, { destinationId: string; reference: Extract<SavedTripSelectionReference, { type: "flight-seller" }> }>>({});
@@ -1333,11 +1417,14 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     try {
       const raw = window.localStorage.getItem(key);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { snapshot?: unknown; releasedPreviousCopy?: unknown };
+      const parsed = JSON.parse(raw) as { snapshot?: unknown; releasedPreviousCopy?: unknown; approvedEdit?: unknown };
       const snapshot = normalizeSavedTripSnapshot(parsed.snapshot);
       if (snapshot) {
+        approvedEditRestoreRef.current = parsed.approvedEdit === true;
         setPendingForkSnapshot(snapshot);
-        setForkRestoreNotice(`${parsed.releasedPreviousCopy === true ? "Your previous unsaved copy was cleared and its saved-trip slot was released. " : ""}Your copied itinerary is being matched to current provider results. Exact matches will be selected automatically; anything unavailable will be flagged for review. This is an unsaved draft. Press Save trip to keep it; closing this page before saving will not use a daily saved-trip slot.`);
+        setForkRestoreNotice(parsed.approvedEdit === true
+          ? "Your approved itinerary edit is being synchronized with current provider results. Exact activity and dining matches will be restored with the updated schedule; anything unavailable will be flagged for review."
+          : `${parsed.releasedPreviousCopy === true ? "Your previous unsaved copy was cleared and its saved-trip slot was released. " : ""}Your copied itinerary is being matched to current provider results. Exact matches will be selected automatically; anything unavailable will be flagged for review. This is an unsaved draft. Press Save trip to keep it; closing this page before saving will not use a daily saved-trip slot.`);
       } else {
         window.localStorage.removeItem(key);
       }
@@ -1419,6 +1506,15 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         if (sourceSession?.copyId === copyId) window.localStorage.removeItem(session.sourceSessionKey);
       }
     } catch { /* Saving succeeds even when browser cleanup is unavailable. */ }
+  }
+
+  function handleApprovedEditApplied(snapshot: SavedTripSnapshot) {
+    forkRestoreProcessedRef.current.clear();
+    forkReturnMatchesRef.current = {};
+    forkSellerMatchesRef.current = {};
+    approvedEditRestoreRef.current = true;
+    setForkRestoreNotice("The owner-approved itinerary edit was saved. Tripfinder is synchronizing the updated activity or dining selection with current results.");
+    setPendingForkSnapshot(snapshot);
   }
 
   async function saveCurrentTrip() {
@@ -1672,6 +1768,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       if (hotelRef?.type === "stay" && !hotel) missing.push(hotelRef.name);
       setSelections((current) => {
         const previous = current[destinationId] ?? emptySelection();
+        if (approvedEditRestoreRef.current) return { ...current, [destinationId]: {
+          ...previous, outbound: outbound || null, returnFlight: null, flightSeller: null, hotel: hotel || null,
+          checkInTime: hotel ? checkInTime : undefined, checkOutTime: hotel ? checkOutTime : undefined,
+          experiences,
+        } };
         return { ...current, [destinationId]: { ...previous, ...(outbound ? { outbound } : {}), ...(hotel ? { hotel } : {}), ...(hotel && checkInTime ? { checkInTime } : {}), ...(hotel && checkOutTime ? { checkOutTime } : {}), experiences: { ...previous.experiences, ...experiences } } };
       });
       if (outbound && returnRef?.type === "flight") {
@@ -1771,6 +1872,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     });
     if (!allLoadedAndProcessed || Object.keys(forkReturnMatchesRef.current).length || Object.keys(forkSellerMatchesRef.current).length) return;
     try { if (forkRestoreStorageKeyRef.current) window.localStorage.removeItem(forkRestoreStorageKeyRef.current); } catch { /* Restore data is also held in component state for this page. */ }
+    approvedEditRestoreRef.current = false;
     setPendingForkSnapshot(null);
   }, [pendingForkSnapshot, recommendations, states, returnStates, bookingStates]);
 
@@ -1910,6 +2012,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         databaseConfigured={databaseConfigured} savingTrip={savingTrip} restoringCopiedTrip={Boolean(pendingForkSnapshot)} hasSavedTrip={Boolean(savedTripCredentials)} feedbackCredentials={savedTripCredentials}
         shareUrl={savedShareUrl} saveMessage={saveTripMessage} currentSnapshot={buildSavedTripSnapshot(search, recommendations, states, selections)}
         onSaveTrip={() => void saveCurrentTrip()} onCopyShareLink={() => void copySavedTripLink()}
+        onApprovedEditApplied={handleApprovedEditApplied}
       />
       {navigationSections.length > 0 && <ResultsSectionNavigation sections={navigationSections} activeKey={activeNavSection || navigationSections[0].key} openState={navOpenState} onNavigate={navigateToResultSection} onToggle={toggleResultSection}/>}
     </aside>

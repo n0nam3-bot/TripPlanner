@@ -120,12 +120,12 @@ Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRE
 | SerpApi | Google Flights, Google Hotels/vacation rentals, and fallback Google Maps/Local places and address-based directions | Requires `SERPAPI_API_KEY` |
 | Geoapify | Optional OpenStreetMap-based activity/restaurant discovery and coordinate-based driving estimates | Optional; requires `GEOAPIFY_API_KEY`, Neon usage caps and visible attribution |
 | Booking.com Demand API v3.3 | Partner accommodation search, property details and redirect links | Optional; requires approved `BOOKING_COM_API_TOKEN` and `BOOKING_COM_AFFILIATE_ID` |
-| Neon PostgreSQL | Persistent provider cache and shared request counter | Requires `DATABASE_URL` |
+| Neon PostgreSQL | Provider cache, shared request counters, anonymous saved trips, and collaboration state | Requires `DATABASE_URL` |
 | Affiliate networks | Commission attribution and affiliate links | Not connected |
 | AI provider | Optional natural-language intent extraction | Not connected; not required for deterministic search validation |
 | WeatherAPI | Short-range destination forecasts | Optional `WEATHERAPI_API_KEY`; Free plan has a 3-day forecast |
 
-Neon currently stores provider cache and monthly usage counters. It does **not** yet store traveler accounts, saved trips, or synchronized search history. Those are separate later features.
+Neon stores provider cache and usage counters, anonymous saved trips, share-token hashes, and owner-only collaboration data. Tripfinder does not require traveler accounts; synchronized cross-device search history is not currently provided.
 
 ## Run locally
 
@@ -170,3 +170,8 @@ Vercel automatically generates unique deployment URLs for build records and prev
 - Do not call combined independent bookings an official vacation package.
 - Keep credentials server-side only.
 - Do not scrape travel sites directly or bypass provider terms. Use documented APIs, permitted widgets and outbound search links.
+
+## Saved trips and anonymous visitor limits
+
+Tripfinder does not require accounts to save or share an itinerary. A new saved trip uses one of **five daily saves per persistent anonymous browser identity**. The browser receives a random 256-bit visitor ID in a one-year HttpOnly cookie; Neon stores only its one-way SHA-256 hash. A separate **25-new-saves-per-IP/network-per-UTC-day** safety guard helps prevent abuse across shared or recreated browser identities. Searches, shared-trip views, temporary "Make my own copy" drafts, and updates to an existing saved trip do not use a new-save slot. The save counter and new saved-trip row are reserved together atomically, so a failed insert does not consume the allowance. Clearing browser cookies or using another browser/device creates a different anonymous identity; the network guard still applies. These are browser/network limits, not verified human-account limits.
+

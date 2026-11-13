@@ -91,6 +91,7 @@ export async function GET() {
       "tripfinder_geoapify_request_gate",
       "tripfinder_saved_trips",
       "tripfinder_saved_trip_daily_usage",
+      "tripfinder_saved_trip_ip_daily_usage",
     ] : [],
     persistentProviderCacheConfigured: databaseSchemaReady,
     monthlyProviderSearchSafetyCap: monthlyCap,

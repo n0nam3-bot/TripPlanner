@@ -12,6 +12,8 @@ type DashboardData = {
   dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
   recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; promptTokens: number | null; completionTokens: number | null; createdAt: string }>;
   geoapifyUsage: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; visitorCreditsToday: number; activeVisitorsToday: number; clientDailyCap: number };
+  providerHealth: Array<{ provider: string; category: string; attempts: number; successes: number; failures: number; staleFallbacks: number; fallbackEvents: number; successRate: number | null; lastSuccessAt: string | null; lastFailureAt: string | null }>;
+  savedTripHealth: { activeShares: number; created24h: number; updated24h: number; expiring7d: number; visitorSavesToday: number; visitorBucketsToday: number; ipSavesToday: number; ipBucketsToday: number };
   aiUsage: { openRouter: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number }; gemini: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number }; clientDailyCap: number };
   cache: { totalEntries: number; validEntries: number; expiredEntries: number; lastUpdatedAt: string | null };
   clientUsage: { activeClientsToday: number; reservedSearchesToday: number };
@@ -170,6 +172,23 @@ export default function AdminDashboard() {
                   {data.dailyTrend.length ? <div className="admin-chart" role="img" aria-label="Hourly provider calls and cache hits over the last 24 hours">{data.dailyTrend.slice(-24).map((item) => <div className="admin-chart-column" key={item.hour} title={`${shortTime(item.hour)}: ${item.apiCalls} provider calls, ${item.cacheHits} cache hits`}><div className="admin-chart-bars"><i className="api-bar" style={{ height: `${Math.max(item.apiCalls ? 4 : 0, item.apiCalls / maxCalls * 100)}%` }} /><i className="cache-bar" style={{ height: `${Math.max(item.cacheHits ? 4 : 0, item.cacheHits / maxCalls * 100)}%` }} /></div><span>{new Date(item.hour).toLocaleTimeString([], { hour: "numeric" })}</span></div>)}</div> : <div className="admin-empty-state">No provider events have been logged yet. New searches and cache hits will appear here.</div>}
                   <div className="admin-chart-legend"><span><i className="api-bar" /> Provider calls</span><span><i className="cache-bar" /> Cache hits</span></div>
                   <div className="admin-detail-line"><span>Average provider response time</span><strong>{data.periodTotals.averageProviderMs === null ? "—" : `${number(data.periodTotals.averageProviderMs)} ms`}</strong></div>
+                </article>
+              </section>
+
+              <section className="admin-section-grid admin-quality-grid">
+                <article className="admin-panel admin-table-panel">
+                  <div className="admin-panel-heading"><div><p className="admin-eyebrow">PROVIDER QUALITY · LAST 7 DAYS</p><h2>Availability and stale-result signals</h2></div><span className="admin-subtle-label">Event-based, not an uptime probe</span></div>
+                  {data.providerHealth.length ? <div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>Provider</th><th>Category</th><th>Attempts</th><th>Success</th><th>Errors</th><th>Stale</th><th>Fallbacks</th><th>Last success</th><th>Last error</th></tr></thead><tbody>{data.providerHealth.map((row) => <tr key={`${row.provider}-${row.category}`}><td><strong>{row.provider}</strong></td><td>{row.category}</td><td>{number(row.attempts)}</td><td>{row.successRate === null ? "—" : `${row.successRate}%`}</td><td>{number(row.failures)}</td><td>{number(row.staleFallbacks)}</td><td>{number(row.fallbackEvents)}</td><td>{row.lastSuccessAt ? shortTime(row.lastSuccessAt) : "—"}</td><td>{row.lastFailureAt ? shortTime(row.lastFailureAt) : "—"}</td></tr>)}</tbody></table></div> : <div className="admin-empty-state">No provider availability events have been recorded in the last seven days.</div>}
+                  <p className="admin-footnote">Success rates are calculated from Tripfinder's recorded provider request outcomes. This is not an independent synthetic uptime check. Stale rows indicate that an older cached response was used after a fresh result was unavailable.</p>
+                </article>
+                <article className="admin-panel admin-table-panel">
+                  <div className="admin-panel-heading"><div><p className="admin-eyebrow">SAVED TRIPS · UTC DAY</p><h2>Sharing and quota activity</h2></div><ShieldCheck size={17}/></div>
+                  <div className="admin-quota-numbers"><div><small>Active share links</small><strong>{number(data.savedTripHealth.activeShares)}</strong></div><div><small>New saves today</small><strong>{number(data.savedTripHealth.visitorSavesToday)} <em>/ {number(data.savedTripHealth.visitorBucketsToday)} browsers</em></strong></div></div>
+                  <div className="admin-detail-line"><span>New copies saved in last 24 hours</span><strong>{number(data.savedTripHealth.created24h)}</strong></div>
+                  <div className="admin-detail-line"><span>Existing trips updated in last 24 hours</span><strong>{number(Math.max(0, data.savedTripHealth.updated24h - data.savedTripHealth.created24h))}</strong></div>
+                  <div className="admin-detail-line"><span>Secondary network safety counter</span><strong>{number(data.savedTripHealth.ipSavesToday)} saves · {number(data.savedTripHealth.ipBucketsToday)} networks</strong></div>
+                  <div className="admin-detail-line"><span>Share links expiring within 7 days</span><strong>{number(data.savedTripHealth.expiring7d)}</strong></div>
+                  <p className="admin-footnote">Normal allowance: five new saves per persistent anonymous browser identity per UTC day. Secondary abuse guard: 25 new saves per IP/network per UTC day. Visitor and network identifiers are hashed; this panel never displays them.</p>
                 </article>
               </section>
 

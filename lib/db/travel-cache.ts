@@ -134,6 +134,13 @@ async function ensureTravelTables() {
         updated_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (client_key, usage_date)
       )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_saved_trip_ip_daily_usage (
+        ip_key text NOT NULL,
+        usage_date date NOT NULL,
+        save_count integer NOT NULL DEFAULT 0 CHECK (save_count >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (ip_key, usage_date)
+      )`;
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -160,9 +167,10 @@ export async function initializeTravelDatabase(): Promise<void> {
     to_regclass('public.tripfinder_geoapify_client_daily_usage') IS NOT NULL AS geoapify_client_daily_ready,
     to_regclass('public.tripfinder_geoapify_request_gate') IS NOT NULL AS geoapify_gate_ready,
     to_regclass('public.tripfinder_saved_trips') IS NOT NULL AS saved_trips_ready,
-    to_regclass('public.tripfinder_saved_trip_daily_usage') IS NOT NULL AS saved_trip_usage_ready`;
+    to_regclass('public.tripfinder_saved_trip_daily_usage') IS NOT NULL AS saved_trip_usage_ready,
+    to_regclass('public.tripfinder_saved_trip_ip_daily_usage') IS NOT NULL AS saved_trip_ip_usage_ready`;
   const row = rows[0] as unknown as Record<string, boolean> | undefined;
-  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready || !row.ai_provider_daily_ready || !row.ai_provider_minute_ready || !row.ai_client_daily_ready || !row.geoapify_daily_ready || !row.geoapify_client_daily_ready || !row.geoapify_gate_ready || !row.saved_trips_ready || !row.saved_trip_usage_ready) {
+  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready || !row.ai_provider_daily_ready || !row.ai_provider_minute_ready || !row.ai_client_daily_ready || !row.geoapify_daily_ready || !row.geoapify_client_daily_ready || !row.geoapify_gate_ready || !row.saved_trips_ready || !row.saved_trip_usage_ready || !row.saved_trip_ip_usage_ready) {
     throw new Error("DATABASE_SCHEMA_UNAVAILABLE");
   }
 }
@@ -541,6 +549,8 @@ export type AdminDashboardSnapshot = {
   dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
   recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; promptTokens: number | null; completionTokens: number | null; createdAt: string }>;
   geoapifyUsage: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; visitorCreditsToday: number; activeVisitorsToday: number; clientDailyCap: number };
+  providerHealth: Array<{ provider: string; category: string; attempts: number; successes: number; failures: number; staleFallbacks: number; fallbackEvents: number; successRate: number | null; lastSuccessAt: string | null; lastFailureAt: string | null }>;
+  savedTripHealth: { activeShares: number; created24h: number; updated24h: number; expiring7d: number; visitorSavesToday: number; visitorBucketsToday: number; ipSavesToday: number; ipBucketsToday: number };
   aiUsage: {
     openRouter: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
     gemini: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
@@ -561,7 +571,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
   const now = new Date();
   const month = now.toISOString().slice(0, 7);
   const usageDate = now.toISOString().slice(0, 10);
-  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows, aiDailyRows, aiMinuteRows, geoapifyRows] = await Promise.all([
+  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows, aiDailyRows, aiMinuteRows, geoapifyRows, providerHealthRows, savedTripHealthRows] = await Promise.all([
     sql`SELECT search_count FROM tripfinder_provider_usage WHERE month_key = ${month} LIMIT 1`,
     sql`SELECT search_count FROM tripfinder_provider_hourly_usage WHERE hour_bucket = date_trunc('hour', now()) LIMIT 1`,
     sql`SELECT count(*)::int AS active_clients, COALESCE(sum(day_count), 0)::int AS reserved_today
@@ -609,6 +619,26 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         COALESCE((SELECT credit_count FROM tripfinder_geoapify_daily_usage WHERE usage_date = ${usageDate} LIMIT 1), 0)::int AS shared_credits,
         COALESCE((SELECT sum(credit_count) FROM tripfinder_geoapify_client_daily_usage WHERE usage_date = ${usageDate}), 0)::int AS visitor_credits,
         (SELECT count(*) FROM tripfinder_geoapify_client_daily_usage WHERE usage_date = ${usageDate} AND credit_count > 0)::int AS active_visitors`,
+    sql`SELECT provider, category,
+        count(*) FILTER (WHERE event_type IN ('provider_request','provider_error'))::int AS attempts,
+        count(*) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'success')::int AS successes,
+        count(*) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'error')::int AS failures,
+        count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale')::int AS stale_fallbacks,
+        count(*) FILTER (WHERE event_type = 'provider_fallback')::int AS fallback_events,
+        max(created_at) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'success')::text AS last_success_at,
+        max(created_at) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'error')::text AS last_failure_at
+      FROM tripfinder_api_event_log
+      WHERE created_at >= now() - interval '7 days' AND category <> 'Account quota'
+      GROUP BY provider, category ORDER BY failures DESC, attempts DESC LIMIT 20`,
+    sql`SELECT
+        (SELECT count(*) FROM tripfinder_saved_trips WHERE expires_at > now())::int AS active_shares,
+        (SELECT count(*) FROM tripfinder_saved_trips WHERE created_at >= now() - interval '24 hours')::int AS created_24h,
+        (SELECT count(*) FROM tripfinder_saved_trips WHERE updated_at >= now() - interval '24 hours')::int AS updated_24h,
+        (SELECT count(*) FROM tripfinder_saved_trips WHERE expires_at > now() AND expires_at <= now() + interval '7 days')::int AS expiring_7d,
+        (SELECT COALESCE(sum(save_count),0) FROM tripfinder_saved_trip_daily_usage WHERE usage_date = ${usageDate})::int AS visitor_saves_today,
+        (SELECT count(*) FROM tripfinder_saved_trip_daily_usage WHERE usage_date = ${usageDate} AND save_count > 0)::int AS visitor_buckets_today,
+        (SELECT COALESCE(sum(save_count),0) FROM tripfinder_saved_trip_ip_daily_usage WHERE usage_date = ${usageDate})::int AS ip_saves_today,
+        (SELECT count(*) FROM tripfinder_saved_trip_ip_daily_usage WHERE usage_date = ${usageDate} AND save_count > 0)::int AS ip_buckets_today`,
   ]);
   const usage = usageRows[0] as unknown as { search_count?: number } | undefined;
   const hourly = hourlyRows[0] as unknown as { search_count?: number } | undefined;
@@ -681,6 +711,27 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
       activeVisitorsToday: asNumber(geoapifyRow?.active_visitors),
       clientDailyCap: geoapifyClientDailyCap,
     },
+    providerHealth: (providerHealthRows as unknown as Array<Record<string, unknown>>).map((row) => {
+      const attempts = asNumber(row.attempts);
+      const successes = asNumber(row.successes);
+      return {
+        provider: String(row.provider), category: String(row.category), attempts, successes,
+        failures: asNumber(row.failures), staleFallbacks: asNumber(row.stale_fallbacks),
+        fallbackEvents: asNumber(row.fallback_events),
+        successRate: attempts > 0 ? Math.round(successes / attempts * 100) : null,
+        lastSuccessAt: row.last_success_at ? String(row.last_success_at) : null,
+        lastFailureAt: row.last_failure_at ? String(row.last_failure_at) : null,
+      };
+    }),
+    savedTripHealth: (() => {
+      const row = savedTripHealthRows[0] as unknown as Record<string, unknown> | undefined;
+      return {
+        activeShares: asNumber(row?.active_shares), created24h: asNumber(row?.created_24h),
+        updated24h: asNumber(row?.updated_24h), expiring7d: asNumber(row?.expiring_7d),
+        visitorSavesToday: asNumber(row?.visitor_saves_today), visitorBucketsToday: asNumber(row?.visitor_buckets_today),
+        ipSavesToday: asNumber(row?.ip_saves_today), ipBucketsToday: asNumber(row?.ip_buckets_today),
+      };
+    })(),
     aiUsage: {
       openRouter: { configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "openrouter"), dailyCap: openRouterCap, remainingToday: Math.max(0, openRouterCap - aiUsed(aiDaily, "openrouter")), usedThisMinute: aiUsed(aiMinute, "openrouter"), minuteCap: 15 },
       gemini: { configured: Boolean(process.env.GEMINI_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "gemini"), dailyCap: geminiCap, remainingToday: Math.max(0, geminiCap - aiUsed(aiDaily, "gemini")), usedThisMinute: aiUsed(aiMinute, "gemini"), minuteCap: 10 },

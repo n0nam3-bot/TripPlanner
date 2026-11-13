@@ -109,15 +109,25 @@ test("server stores hashed share and owner tokens, never raw bearer tokens", () 
   assert.match(source, /expires_at > now\(\)/);
 });
 
-test("saved trip creation is rate-limited and share page is non-indexed", () => {
+test("saved trip creation uses persistent browser identity and secondary network abuse guard", () => {
   const db = read("lib/db/saved-trips.ts");
   const api = read("app/api/trips/route.ts");
+  const identity = read("lib/trip-planner/anonymous-visitor.ts");
   const page = read("app/trip/[token]/page.tsx");
-  assert.match(db, /SAVE_LIMIT_PER_CLIENT_PER_UTC_DAY = 5/);
-  assert.match(db, /WHERE tripfinder_saved_trip_daily_usage\.save_count < \$\{SAVE_LIMIT_PER_CLIENT_PER_UTC_DAY\}/);
+  assert.match(db, /SAVE_LIMIT_PER_VISITOR_PER_UTC_DAY = 5/);
+  assert.match(db, /SAVE_ABUSE_LIMIT_PER_IP_PER_UTC_DAY = 25/);
+  assert.match(db, /hashAnonymousVisitorId\(options\.visitorId\)/);
+  assert.match(db, /tripfinder_saved_trip_ip_daily_usage/);
+  assert.match(db, /pg_advisory_xact_lock/);
+  assert.match(db, /WITH lock_keys AS MATERIALIZED/);
+  assert.match(api, /ANONYMOUS_VISITOR_COOKIE/);
+  assert.match(api, /httpOnly: true/);
+  assert.match(api, /maxAge: ANONYMOUS_VISITOR_COOKIE_MAX_AGE/);
+  assert.match(identity, /randomBytes\(32\)\.toString\("base64url"\)/);
   assert.match(page, /index: false, follow: false/);
   assert.match(page, /Booking tokens, account credentials and private API data are not included/);
-  assert.match(api, /SAVED_TRIP_DAILY_LIMIT/);
+  assert.match(api, /SAVED_TRIP_VISITOR_DAILY_LIMIT/);
+  assert.match(api, /SAVED_TRIP_IP_ABUSE_LIMIT/);
 });
 
 test("results workspace exposes save/share action and snapshots no booking tokens", () => {

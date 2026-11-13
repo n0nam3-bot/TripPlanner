@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveAnonymousTripDraft } from "@/lib/db/saved-trips";
 import { validateSavedTripDraft } from "@/lib/trip-planner/saved-trips";
+import { ANONYMOUS_VISITOR_COOKIE, ANONYMOUS_VISITOR_COOKIE_MAX_AGE, createAnonymousVisitorId, isValidAnonymousVisitorId } from "@/lib/trip-planner/anonymous-visitor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,10 +34,20 @@ export async function POST(request: NextRequest) {
 
   const shareToken = typeof record.shareToken === "string" ? record.shareToken : undefined;
   const ownerToken = typeof record.ownerToken === "string" ? record.ownerToken : undefined;
+  const existingVisitorId = request.cookies.get(ANONYMOUS_VISITOR_COOKIE)?.value;
+  const visitorId = isValidAnonymousVisitorId(existingVisitorId) ? existingVisitorId : createAnonymousVisitorId();
+  const needsVisitorCookie = visitorId !== existingVisitorId;
+  const withVisitorCookie = (response: NextResponse) => {
+    if (needsVisitorCookie) response.cookies.set(ANONYMOUS_VISITOR_COOKIE, visitorId, {
+      httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/",
+      maxAge: ANONYMOUS_VISITOR_COOKIE_MAX_AGE,
+    });
+    return response;
+  };
   try {
-    const saved = await saveAnonymousTripDraft(validation.draft, { shareToken, ownerToken, clientAddress: clientAddress(request) });
+    const saved = await saveAnonymousTripDraft(validation.draft, { shareToken, ownerToken, visitorId, clientAddress: clientAddress(request) });
     const baseUrl = canonicalBaseUrl(request);
-    return NextResponse.json({
+    return withVisitorCookie(NextResponse.json({
       success: true,
       shareToken: saved.shareToken,
       ...(saved.ownerToken ? { ownerToken: saved.ownerToken } : {}),
@@ -45,13 +56,14 @@ export async function POST(request: NextRequest) {
       updatedAt: saved.updatedAt,
       expiresAt: saved.expiresAt,
       updated: Boolean(shareToken),
-    });
+    }));
   } catch (error) {
     const code = error instanceof Error ? error.message : "SAVED_TRIP_SAVE_FAILED";
-    if (code === "SAVED_TRIP_DAILY_LIMIT") return NextResponse.json({ error: "This connection has reached today's saved-trip limit. Try again tomorrow." }, { status: 429 });
+    if (code === "SAVED_TRIP_VISITOR_DAILY_LIMIT") return withVisitorCookie(NextResponse.json({ error: "This browser has reached today's limit of 5 new saved trips. Existing trips, shared links, copies and searches remain available. Try again after the UTC daily reset." }, { status: 429 }));
+    if (code === "SAVED_TRIP_IP_ABUSE_LIMIT") return withVisitorCookie(NextResponse.json({ error: "This network has reached Tripfinder's daily safety limit for new saved trips. Existing trips, shared links, copies and searches remain available. Try again after the UTC daily reset." }, { status: 429 }));
     if (code === "SAVED_TRIP_OWNER_TOKEN_REQUIRED" || code === "SAVED_TRIP_NOT_FOUND_OR_NOT_OWNER") return NextResponse.json({ error: "This saved trip could not be updated from this browser. Create a new shareable copy instead." }, { status: 403 });
-    if (code === "SAVED_TRIP_TOO_LARGE") return NextResponse.json({ error: "This trip is too large to save. Remove some selected items and try again." }, { status: 413 });
+    if (code === "SAVED_TRIP_TOO_LARGE") return withVisitorCookie(NextResponse.json({ error: "This trip is too large to save. Remove some selected items and try again." }, { status: 413 }));
     console.error("Tripfinder could not save an anonymous trip draft.", code);
-    return NextResponse.json({ error: "Tripfinder couldn't save this trip right now. Please try again." }, { status: 503 });
+    return withVisitorCookie(NextResponse.json({ error: "Tripfinder couldn't confirm this save. A rejected database insert does not consume your daily allowance; if the connection was interrupted, the save may still have completed. Please check before retrying." }, { status: 503 }));
   }
 }

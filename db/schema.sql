@@ -102,12 +102,23 @@ CREATE TABLE IF NOT EXISTS tripfinder_saved_trips (
 CREATE INDEX IF NOT EXISTS tripfinder_saved_trips_expiry_idx
   ON tripfinder_saved_trips (expires_at);
 
+-- Daily saved-trip allowance is keyed by a hash of a long-lived anonymous
+-- browser cookie; raw browser IDs and IP addresses are never stored.
 CREATE TABLE IF NOT EXISTS tripfinder_saved_trip_daily_usage (
   client_key text NOT NULL,
   usage_date date NOT NULL,
   save_count integer NOT NULL DEFAULT 0 CHECK (save_count >= 0),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (client_key, usage_date)
+);
+-- Higher secondary IP guard prevents cookie deletion/rotation abuse while
+-- allowing multiple people on one shared network to use independent quotas.
+CREATE TABLE IF NOT EXISTS tripfinder_saved_trip_ip_daily_usage (
+  ip_key text NOT NULL,
+  usage_date date NOT NULL,
+  save_count integer NOT NULL DEFAULT 0 CHECK (save_count >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (ip_key, usage_date)
 );
 
 -- Invite-only traveler feedback. These tokens authorize suggestions only;
@@ -137,7 +148,9 @@ CREATE TABLE IF NOT EXISTS tripfinder_trip_feedback (
   base_updated_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   reviewed_at timestamptz,
-  reviewed_by_owner_hash text
+  reviewed_by_owner_hash text,
+  applied_at timestamptz,
+  applied_patch jsonb
 );
 CREATE INDEX IF NOT EXISTS tripfinder_feedback_trip_created_idx
   ON tripfinder_trip_feedback (saved_trip_id, created_at DESC);
