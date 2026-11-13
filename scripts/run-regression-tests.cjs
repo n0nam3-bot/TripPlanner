@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, "..");
 const buildDir = path.join(root, ".test-build");
 const sourceFiles = [
   "lib/trip-planner/types.ts",
+  "lib/trip-planner/destinations.ts",
   "lib/trip-planner/airports.ts",
   "lib/trip-planner/flight-routing.ts",
   "lib/trip-planner/flight-search-params.ts",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { LoaderCircle, MessageCircle, Minus, Send, Sparkles, X } from "lucide-react";
+import { LoaderCircle, MessageCircle, Minus, Send, Sparkles } from "lucide-react";
 import type { TripAssistantContext, TripAssistantMessage, TripAssistantResultAction } from "@/lib/ai/trip-assistant";
 
 type Props = {
@@ -33,7 +33,7 @@ function messageId(): string {
 }
 
 export function AITripAssistant({ context, configured, databaseAvailable, geminiAvailable, openRouterAvailable }: Props) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [draft, setDraft] = useState("");
   const [allowGemini, setAllowGemini] = useState(false);
@@ -116,12 +116,12 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
     window.setTimeout(() => target.classList.remove("trip-ai-result-highlight"), 3000);
   }
 
-  return <div className="trip-ai-dock">
+  return <div className={`trip-ai-dock ${open ? "is-expanded" : "is-minimized"}`}>
     {open && <section className="trip-ai-panel" role="dialog" aria-label="Tripfinder travel assistant" aria-modal="false">
       <header className="trip-ai-chat-header">
         <span className="trip-ai-chat-mark"><Sparkles size={17}/></span>
         <div><strong>Tripfinder assistant</strong><small>{context.destination} · Travel questions only</small></div>
-        <button type="button" className="trip-ai-window-control" onClick={() => setOpen(false)} aria-label="Minimize Tripfinder assistant"><Minus size={18}/></button>
+        <button type="button" className="trip-ai-window-control" onClick={() => setOpen(false)} aria-label="Minimize Tripfinder assistant" title="Minimize assistant"><Minus size={18}/></button>
       </header>
 
       <div className="trip-ai-chat-messages" ref={scrollRef} aria-live="polite">
@@ -159,8 +159,8 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
       <footer className="trip-ai-chat-footer">Answers use the results already loaded. No additional travel-provider searches are triggered.</footer>
     </section>}
 
-    <button type="button" className={`trip-ai-launcher ${open ? "is-open" : ""}`} onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={open ? "Close Tripfinder assistant" : "Open Tripfinder assistant"}>
-      {open ? <X size={19}/> : <><MessageCircle size={19}/><span>Ask Tripfinder</span></>}
-    </button>
+    {!open && <button type="button" className="trip-ai-launcher" onClick={() => setOpen(true)} aria-expanded={false} aria-label="Open Tripfinder assistant">
+      <MessageCircle size={19}/><span>Ask Tripfinder</span>
+    </button>}
   </div>;
 }

@@ -57,8 +57,8 @@ test("foreign-currency stay totals remain references and are not silently conver
   assert.equal(result.pricedSubtotal, 0);
 });
 
-test("empty estimates remain unpriced rather than being treated as free", () => {
-  const result = buildTripCostLedger(ledgerInput({ manual: { groundTransport: 0, activities: 0, dining: 0 } }));
+test("blank estimates remain unpriced rather than being treated as free", () => {
+  const result = buildTripCostLedger(ledgerInput({ manual: { groundTransport: null, activities: null, dining: null } }));
   const transport = result.rows.find((row) => row.id === "transport");
   assert.equal(transport.amount, null);
   assert.equal(transport.status, "unpriced");
@@ -107,4 +107,29 @@ test("room count, adult count and child ages are retained for provider handoff",
 test("invalid chronological date ranges are rejected", () => {
   const parsed = parseTripSearch(validSearchParams({ return: "2026-12-25" }));
   assert.ok(parsed.errors.some((error) => /Return date must be after departure date/i.test(error)));
+});
+
+
+test("blank estimates remain unpriced but explicit zero estimates are recorded as user-entered", () => {
+  const blank = buildTripCostLedger(ledgerInput({ flightRequested: false, stayRequested: false, activitiesRequested: true }));
+  assert.ok(blank.unpricedCategories.includes("Ground transport"));
+  assert.ok(blank.unpricedCategories.includes("Activities"));
+  const explicitZero = buildTripCostLedger(ledgerInput({
+    flightRequested: false, stayRequested: false, activitiesRequested: true,
+    manual: { groundTransport: 0, activities: 0, dining: 0 },
+  }));
+  assert.equal(explicitZero.unpricedCategories.length, 0);
+  assert.equal(explicitZero.rows.find((row) => row.id === "transport").amount, 0);
+  assert.equal(explicitZero.rows.find((row) => row.id === "activities").amount, 0);
+  assert.equal(explicitZero.rows.find((row) => row.id === "dining").amount, 0);
+  assert.equal(explicitZero.budgetEnforcement.ready, true);
+});
+
+test("budget enforcement stays advisory when flight or accommodation prices are not verified all-in totals", () => {
+  const result = buildTripCostLedger(ledgerInput({
+    manual: { groundTransport: 0, activities: 0, dining: 0 },
+  }));
+  assert.equal(result.budgetEnforcement.ready, false);
+  assert.match(result.budgetEnforcement.reasons.join(" "), /airfare.*display quote/i);
+  assert.match(result.budgetEnforcement.reasons.join(" "), /Accommodation display totals/i);
 });

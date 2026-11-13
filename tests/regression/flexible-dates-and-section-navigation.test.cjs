@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "../..");
 const { makeFlexibleFlightCalendarParams, normalizeFlexibleFlightDateOptions, tripDurationDays } = require("../../.test-build/lib/trip-planner/flexible-flight-dates.js");
+const { formatTripDestinationLabel } = require("../../.test-build/lib/trip-planner/destinations.js");
 
 function baseInput(overrides = {}) {
   return {
@@ -106,4 +107,25 @@ test("product roadmap uses visible checkmarks for completed work and unchecked b
   assert.match(roadmap, /## Release 4[\s\S]*?- \[ \] Enforce hard budget constraints/);
   assert.match(roadmap, /## Release 5[\s\S]*?- \[ \] Neon persistence/);
   assert.match(roadmap, /## Release 6[\s\S]*?- \[x\] Initial Booking\.com/);
+});
+
+
+test("results layout places the compact search snapshot above the fixed section navigation", () => {
+  const source = fs.readFileSync(path.join(root, "components/trips/results-workspace.tsx"), "utf8");
+  const assistant = fs.readFileSync(path.join(root, "components/trips/ai-trip-assistant.tsx"), "utf8");
+  const css = fs.readFileSync(path.join(root, "app/globals.css"), "utf8");
+  assert.match(source, /className="results-left-sidebar"[\s\S]*?ResultsTripOverview[\s\S]*?ResultsSectionNavigation/);
+  assert.match(source, /className="results-trip-overview"/);
+  assert.match(assistant, /const \[open, setOpen\] = useState\(true\)/);
+  assert.match(assistant, /is-expanded.*is-minimized/);
+  assert.match(css, /\.trip-ai-dock\.is-expanded\s*\{[^}]*position:\s*fixed/s);
+  assert.match(css, /\.results-content-with-rail:has\(\.trip-ai-dock\.is-expanded\)/);
+  assert.match(css, /\.results-content-with-rail:has\(\.trip-ai-dock\.is-minimized\)/);
+  assert.match(css, /@media \(max-width: 1279px\)/);
+});
+
+test("trip heading destination formatter avoids repeating the area already present in the destination", () => {
+  assert.equal(formatTripDestinationLabel("Las Terrenas, Dominican Republic", "Las Terrenas"), "Las Terrenas, Dominican Republic");
+  assert.equal(formatTripDestinationLabel("Dominican Republic", "Las Terrenas"), "Las Terrenas, Dominican Republic");
+  assert.equal(formatTripDestinationLabel("Albania", ""), "Albania");
 });

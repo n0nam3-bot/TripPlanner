@@ -45,6 +45,11 @@ export type CostLedgerInput = {
   contingencyPercent: number;
 };
 
+export type BudgetEnforcementReadiness = {
+  ready: boolean;
+  reasons: string[];
+};
+
 export type CostLedgerResult = {
   rows: CostLedgerRow[];
   pricedSubtotal: number;
@@ -55,6 +60,7 @@ export type CostLedgerResult = {
   unpricedCategories: string[];
   budget: number;
   remainingBeforeUnpriced: number;
+  budgetEnforcement: BudgetEnforcementReadiness;
 };
 
 export function parseCostEstimate(value: string): number | null {
@@ -158,8 +164,8 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
   if (input.activitiesRequested) {
     const selected = input.activities;
     const hints = selected.map((item) => `${item.name}${cleanText(item.price) ? ` (${cleanText(item.price)})` : ""}`).join("; ");
-    if (isPositiveAmount(input.manual.activities)) {
-      addIncluded({ id: "activities", label: "Activities · your estimate", amount: input.manual.activities, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: "Your manually entered group estimate. Provider price text for individual activities is shown separately and is not double-counted." });
+    if (isValidAmount(input.manual.activities)) {
+      addIncluded({ id: "activities", label: "Activities · your estimate", amount: input.manual.activities, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: input.manual.activities === 0 ? "You explicitly entered a $0 group estimate. This is not an automatically assumed free activity." : "Your manually entered group estimate. Provider price text for individual activities is shown separately and is not double-counted." });
     } else if (selected.length) {
       rows.push({ id: "activities", label: "Selected activities · provider price text", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: hints || `${selected.length} selected activity${selected.length === 1 ? "" : "ies"}; no numeric amount supplied.` });
       unpricedCategories.push("Activities");
@@ -172,16 +178,16 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
   if (input.activitiesRequested) {
     const selectedDining = input.restaurants;
     const hints = selectedDining.map((item) => `${item.name}${cleanText(item.price) ? ` (${cleanText(item.price)})` : ""}`).join("; ");
-    if (isPositiveAmount(input.manual.dining)) {
-      addIncluded({ id: "dining", label: "Food & dining · your estimate", amount: input.manual.dining, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: "Your manually entered group estimate. Restaurant price indicators are not converted into meal totals." });
+    if (isValidAmount(input.manual.dining)) {
+      addIncluded({ id: "dining", label: "Food & dining · your estimate", amount: input.manual.dining, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: input.manual.dining === 0 ? "You explicitly entered a $0 group estimate. This is not an automatically assumed free meal." : "Your manually entered group estimate. Restaurant price indicators are not converted into meal totals." });
     } else {
       rows.push({ id: "dining", label: "Food & dining", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: hints || (selectedDining.length ? "Selected restaurants do not provide a comparable meal total." : "No food budget entered; restaurant prices are not estimated." ) });
       unpricedCategories.push("Food & dining");
     }
   }
 
-  if (isPositiveAmount(input.manual.groundTransport)) {
-    addIncluded({ id: "transport", label: "Ground transport · your estimate", amount: input.manual.groundTransport, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: "Your manually entered group estimate for airport transfers, local transport and other ground travel." });
+  if (isValidAmount(input.manual.groundTransport)) {
+    addIncluded({ id: "transport", label: "Ground transport · your estimate", amount: input.manual.groundTransport, currency: input.currency, status: "user_estimate", includedInSubtotal: true, detail: input.manual.groundTransport === 0 ? "You explicitly entered a $0 group estimate for ground transport. This is not an automatically assumed free transfer." : "Your manually entered group estimate for airport transfers, local transport and other ground travel." });
   } else {
     rows.push({ id: "transport", label: "Ground transport", amount: null, currency: input.currency, status: "unpriced", includedInSubtotal: false, detail: "No priced transfer or rental-car selection is connected to this trip yet. Enter a group estimate to include it." });
     unpricedCategories.push("Ground transport");
@@ -196,6 +202,15 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
   const planningTotal = Math.round(pricedSubtotal * 100) / 100;
   const referenceOnlyTotal = Math.round(rows.reduce((sum, row) => row.status === "reference_only" && row.currency === input.currency && isValidAmount(row.amount) ? sum + row.amount : sum, 0) * 100) / 100;
   const displayedTotalIncludingReferences = Math.round((planningTotal + referenceOnlyTotal) * 100) / 100;
+  const budgetReasons: string[] = [];
+  if (input.flightRequested) budgetReasons.push("Round-trip airfare is still a provider or seller display quote; the final passenger basis, baggage, taxes and checkout total are not independently verified.");
+  if (input.stayRequested) budgetReasons.push("Accommodation display totals may change with room or guest confirmation and may exclude property taxes or fees.");
+  if (input.activitiesRequested && !isValidAmount(input.manual.activities)) budgetReasons.push("Enter a group activity estimate, including $0 if no activity spending is expected.");
+  if (input.activitiesRequested && !isValidAmount(input.manual.dining)) budgetReasons.push("Enter a group dining estimate, including $0 if no dining spending is expected.");
+  if (!isValidAmount(input.manual.groundTransport)) budgetReasons.push("Enter a ground-transport estimate, including $0 if no ground transport is needed.");
+  if (unpricedCategories.length > 0) budgetReasons.push(`Unpriced categories remain: ${[...new Set(unpricedCategories)].join(", ")}.`);
+  if (referenceOnlyTotal > 0) budgetReasons.push("Provider reference prices are excluded from a confirmed total and cannot be treated as final costs.");
+  const budgetEnforcement = { ready: budgetReasons.length === 0, reasons: [...new Set(budgetReasons)] };
   return {
     rows,
     pricedSubtotal: Math.round((planningTotal - contingencyAmount) * 100) / 100,
@@ -206,5 +221,6 @@ export function buildTripCostLedger(input: CostLedgerInput): CostLedgerResult {
     unpricedCategories: [...new Set(unpricedCategories)],
     budget: input.budget,
     remainingBeforeUnpriced: Math.round((input.budget - planningTotal) * 100) / 100,
+    budgetEnforcement,
   };
 }

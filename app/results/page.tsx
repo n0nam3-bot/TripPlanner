@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, CalendarDays, MapPin, Plane, Users, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { ResultsWorkspace } from "@/components/trips/results-workspace";
 import { SupportTipLink } from "@/components/support-tip-link";
 import { buildTripRecommendations, tripLength } from "@/lib/trip-planner/engine";
+import { formatTripDestinationLabel } from "@/lib/trip-planner/destinations";
 import { parseTripSearch } from "@/lib/trip-planner/validation";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -15,10 +16,6 @@ function toSearchParams(values: Record<string, string | string[] | undefined>): 
     else if (Array.isArray(value) && value[0]) params.set(key, value[0]);
   }
   return params;
-}
-
-function formatMoney(value: number, currency: string) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 }
 
 export default async function ResultsPage({ searchParams }: { searchParams: SearchParams }) {
@@ -44,13 +41,9 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
   const search = parsed.input;
   const recommendations = buildTripRecommendations(search);
   const travelers = search.adults + search.childrenAges.length;
-  const travelerLabel = `${search.adults} adult${search.adults === 1 ? "" : "s"}${search.childrenAges.length ? ` · ${search.childrenAges.length} child${search.childrenAges.length === 1 ? "" : "ren"}` : ""}`;
-  const budgetLabel = `${formatMoney(search.budget, search.currency)} ${search.budgetMode === "total" ? "total" : "per traveler"}`;
-  const dateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-  const dateLabel = `${dateFormat.format(new Date(`${search.departureDate}T12:00:00Z`))} – ${dateFormat.format(new Date(`${search.returnDate}T12:00:00Z`))}`;
 
   const requested = search.components.map((item) => item === "flights" ? "Flights" : item === "stays" ? (search.stayTypes.length > 1 ? "Hotels and rentals" : search.stayTypes[0] === "vacation_rentals" ? "Rentals" : "Hotels") : "Activities");
-  const destinationLabel = search.destinationArea ? `${search.destinationArea}, ${search.destination}` : search.destination;
+  const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
   const heading = search.destination.toLowerCase() === "anywhere" ? "Destinations worth comparing" : `Travel options for ${destinationLabel}`;
 
   return (
@@ -60,13 +53,6 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
         <Link href="/#plan" className="back-link"><ArrowLeft size={15} /> Edit search</Link>
         <div className="results-title-row">
           <div><span className="eyebrow">TRIP SEARCH</span><h1>{heading}</h1><p className="results-intro">Flights, places to stay and activities based on the dates, travelers and filters you chose.</p></div>
-        </div>
-        <div className="search-summary">
-          {search.components.includes("flights") && <div><Plane size={16}/><span><small>FROM</small><strong>{search.origin}</strong></span></div>}
-          <div><MapPin size={16}/><span><small>DESTINATION</small><strong>{destinationLabel}</strong></span></div>
-          <div><CalendarDays size={16}/><span><small>DATES</small><strong>{dateLabel}</strong></span></div>
-          <div><Users size={16}/><span><small>TRAVELERS</small><strong>{travelerLabel}</strong></span></div>
-          <div><Wallet size={16}/><span><small>BUDGET</small><strong>{budgetLabel}</strong></span></div>
         </div>
         <div className="results-filter-line">
           <span>{requested.join(" + ")}</span>
@@ -78,7 +64,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
           {search.components.includes("flights") && <span>{search.cabinClass.replaceAll("_", " ")}</span>}
           {search.components.includes("flights") && search.preferredLayoverCountries.length > 0 && <span>Prefer connections: {search.preferredLayoverCountries.join(", ")}</span>}
           {search.components.includes("flights") && search.avoidLayoverCountries.length > 0 && <span>Avoid connections: {search.avoidLayoverCountries.join(", ")}</span>}
-          {search.planningNotes.map((note, index) => <span key={`planning-note-${index}`}>Planning note: {note}</span>)}
+          {search.planningNotes.map((note, index) => <span className="results-filter-note" key={`planning-note-${index}`}>Planning note: {note}</span>)}
         </div>
       </section>
       <section className="results-content shell results-content-with-rail">

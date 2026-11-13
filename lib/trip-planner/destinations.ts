@@ -220,6 +220,17 @@ export function normalizeDestinationQuery(value: string): string {
  * Avoids repeating the country when the supplied city and country are the same
  * (for example, when a destination is entered as a country-level search).
  */
+export function formatTripDestinationLabel(destination: string, area: string): string {
+  const cleanDestination = destination.trim();
+  const cleanArea = area.trim();
+  if (!cleanDestination) return cleanArea;
+  if (!cleanArea) return cleanDestination;
+  const destinationKey = normalizeDestinationQuery(cleanDestination);
+  const areaKey = normalizeDestinationQuery(cleanArea);
+  if (destinationKey === areaKey || destinationKey.startsWith(`${areaKey} `)) return cleanDestination;
+  return `${cleanArea}, ${cleanDestination}`;
+}
+
 export function formatDestinationLabel(city: string, country: string): string {
   const cleanCity = city.trim();
   const cleanCountry = country.trim();

@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain, ClipboardList, type LucideIcon } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
 import type { StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
-import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
+import { formatDestinationLabel, formatTripDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
 import { AIRPORT_COORDINATES } from "@/lib/trip-planner/location-suggestions";
 import { airportLocalDateTimeToTimestamp, destinationTimezoneNotice, flightLayoverDuration, flightTimeSortTimestamp, formatFlightTimeAtAirport } from "@/lib/trip-planner/flight-routing";
 import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityConfirmed } from "@/lib/providers/stay-features";
@@ -555,7 +555,13 @@ function TripCostLedger({ selection, experiences, currency, nights, people, budg
             ? `${format(ledger.remainingBeforeUnpriced, currency)} of your ${format(budget, currency)} budget remains against the priced items and entered estimates shown. This is not a complete trip total.`
             : `Priced items and entered estimates exceed your ${format(budget, currency)} budget by ${format(Math.abs(ledger.remainingBeforeUnpriced), currency)}, before any unpriced categories.`}</p>
     </div>
-    <p className="trip-cost-ledger-disclaimer">Flight-leg and seller display prices are shown as reference amounts and excluded from the priced subtotal until a comparable fare is confirmed for the selected itinerary and passenger basis. Activities and restaurant price text are not converted into totals. Ground transport, activities and dining estimates are optional positive amounts you enter for the whole group; leaving a field blank or entering zero means no estimate has been supplied. No currency conversion or taxes/fee assumptions are applied.</p>
+    <section className={`trip-budget-readiness ${ledger.budgetEnforcement.ready ? "is-complete" : "is-advisory"}`} aria-label="Budget completeness status">
+      <div className="trip-budget-readiness-heading"><strong>Budget completeness</strong><span>{ledger.budgetEnforcement.ready ? "Entered costs complete" : "Advisory only"}</span></div>
+      {ledger.budgetEnforcement.ready
+        ? <p>All requested planning categories have numeric provider totals or explicit group estimates. The amount remains a planning figure; final checkout prices can still change.</p>
+        : <><p>Hard budget enforcement is not active because one or more costs are unknown or provider-displayed rather than verified all-in prices. Tripfinder will not treat missing amounts as $0 or block choices using an incomplete total.</p><ul>{ledger.budgetEnforcement.reasons.slice(0, 5).map((reason) => <li key={reason}>{reason}</li>)}</ul></>}
+    </section>
+    <p className="trip-cost-ledger-disclaimer">Flight-leg and seller display prices are shown as reference amounts and excluded from the priced subtotal until a comparable fare is confirmed for the selected itinerary and passenger basis. Activities and restaurant price text are not converted into totals. Ground transport, activities and dining estimates are optional group amounts entered by you; a blank field remains unpriced, while an explicit $0 is treated as your estimate. No currency conversion or taxes/fee assumptions are applied.</p>
   </section>;
 }
 
@@ -733,6 +739,36 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
 
 type ResultSectionNavItem = { key: string; id: string; label: string; icon: LucideIcon };
 
+function ResultsTripOverview({ search, totalBudget, people, nights }: {
+  search: TripSearchInput;
+  totalBudget: number;
+  people: number;
+  nights: number;
+}) {
+  const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
+  const travelerLabel = `${search.adults} adult${search.adults === 1 ? "" : "s"}${search.childrenAges.length ? ` · ${search.childrenAges.length} child${search.childrenAges.length === 1 ? "" : "ren"}` : ""}`;
+  const budgetAmount = money(search.budget, search.currency);
+  const budgetBasis = search.budgetMode === "total" ? "total group budget" : `per traveler · ${money(totalBudget, search.currency)} group total`;
+  const items = [
+    ...(search.components.includes("flights") ? [{ label: "FROM", value: search.originAirportCode || search.origin }] : []),
+    { label: "DESTINATION", value: destinationLabel },
+    { label: "DATES", value: `${dateLabel(search.departureDate)} – ${dateLabel(search.returnDate)}`, note: `${nights} nights` },
+    { label: "TRAVELERS", value: travelerLabel, note: `${people} total` },
+    { label: "BUDGET", value: budgetAmount, note: budgetBasis },
+  ];
+
+  return <section className="results-trip-overview" aria-label="Your selected trip details">
+    <div className="results-trip-overview-heading"><span>YOUR TRIP</span><small>Search overview</small></div>
+    <div className="results-trip-overview-list">
+      {items.map((item) => <div className="results-trip-overview-item" key={item.label}>
+        <small>{item.label}</small>
+        <strong title={item.value}>{item.value}</strong>
+        {item.note && <span>{item.note}</span>}
+      </div>)}
+    </div>
+  </section>;
+}
+
 function ResultsSectionNavigation({
   sections,
   activeKey,
@@ -850,7 +886,6 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const people = search.adults + search.childrenAges.length;
   const nights = Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000));
   const totalBudget = search.budgetMode === "per_person" ? search.budget * people : search.budget;
-  const perPersonDaily = useMemo(() => totalBudget / Math.max(1, nights * people), [totalBudget, nights, people]);
   const singleDestination = recommendations.length === 1;
 
   async function checkLiveOffers(recommendation: TripRecommendation, forceRefresh = false) {
@@ -1083,13 +1118,10 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   } : null;
 
   return <div className="planner-results-workspace">
-    {navigationSections.length > 0 && <ResultsSectionNavigation sections={navigationSections} activeKey={activeNavSection || navigationSections[0].key} openState={navOpenState} onNavigate={navigateToResultSection} onToggle={toggleResultSection}/>}
-    <div className="results-overview-bar">
-      <div><small>Budget</small><strong>{money(totalBudget, search.currency)}</strong><span>{search.budgetMode === "total" ? "for the whole group" : "per traveler"}</span></div>
-      <div><small>Dates</small><strong>{dateLabel(search.departureDate)} – {dateLabel(search.returnDate)}</strong><span>{nights} nights</span></div>
-      <div><small>Travelers</small><strong>{people}</strong><span>{search.adults} adults{search.childrenAges.length ? ` · ${search.childrenAges.length} children` : ""}</span></div>
-      <div><small>Daily budget</small><strong>{money(perPersonDaily, search.currency)}</strong><span>per person / day</span></div>
-    </div>
+    <aside className="results-left-sidebar" aria-label="Trip overview and section navigation">
+      <ResultsTripOverview search={search} totalBudget={totalBudget} people={people} nights={nights}/>
+      {navigationSections.length > 0 && <ResultsSectionNavigation sections={navigationSections} activeKey={activeNavSection || navigationSections[0].key} openState={navOpenState} onNavigate={navigateToResultSection} onToggle={toggleResultSection}/>}
+    </aside>
 
     {!liveSearchConfigured && <div className="live-setup-note"><ShieldAlert size={17}/><div><strong>Live search is not connected</strong><p>{!providerKeyConfigured ? "Add SERPAPI_API_KEY in Vercel. " : ""}{!databaseConfigured ? "Add DATABASE_URL for the Neon cache and shared usage limits." : ""}</p></div></div>}
 
