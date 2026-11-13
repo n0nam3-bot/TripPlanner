@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(root, "components/trips/results-workspa
 
 test("activities and dining searches show an independent optional starting point", () => {
   assert.match(source, /search\.components\.includes\("activities"\)\s*&&\s*<>\s*<ProximityStartingPointPanel/);
-  assert.match(source, /placeholder="Hotel, Airbnb, college, venue or street address"/);
+  assert.match(source, /placeholder=\{defaultOriginLabel \? "Use a different starting point \(optional\)" : "Hotel, Airbnb, college, venue or street address"\}/);
   assert.match(source, /no hotel booking required/i);
 });
 
@@ -31,4 +31,19 @@ test("starting point remains browser-local and is explicitly excluded from publi
   assert.match(source, /tripfinder:proximity-origin:v1:/);
   assert.match(source, /not included in the public trip share link/i);
   assert.doesNotMatch(source, /buildSavedTripSnapshot\(search, recommendations, states, selections, startingPoints/);
+});
+
+
+test("the selected hotel or Airbnb is the default origin for both activities and restaurants", () => {
+  assert.match(source, /defaultOriginLabel=\{selection\.hotel\?\.name\}/);
+  assert.match(source, /activityExperiences\.map\(\(experience\) => <ExperienceResult[^>]*selectedHotel=\{selection\.hotel\}/);
+  assert.match(source, /restaurantExperiences\.map\(\(experience\) => <ExperienceResult[^>]*selectedHotel=\{selection\.hotel\}/);
+  assert.match(source, /: selectedHotel && selectedStayLocation/);
+  assert.doesNotMatch(source, /isRestaurant && selectedHotel && selectedStayLocation/);
+});
+
+test("other hotel and Airbnb options stop appearing as competing proximity origins after a stay is selected", () => {
+  assert.match(source, /const nearbyStays = !selectedHotel && search\.components\.includes\("stays"\)/);
+  assert.match(source, /Using your selected stay by default:/);
+  assert.match(source, /Your selected hotel or Airbnb is the default origin for activities and restaurants/);
 });
