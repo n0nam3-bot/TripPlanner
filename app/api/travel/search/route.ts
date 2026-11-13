@@ -60,6 +60,21 @@ export async function POST(request: Request) {
     if (message === "SERPAPI_CLIENT_RATE_LIMITED") {
       return NextResponse.json({ error: "This connection has reached its travel-search limit. Please use the cached results or try again later.", code: message }, { status: 429 });
     }
+    if (message === "GEOAPIFY_DAILY_CAP_REACHED") {
+      return NextResponse.json({ error: "Tripfinder has reached its shared Geoapify daily credit safety limit. Cached place results remain available; new Geoapify searches will resume after the UTC-day reset.", code: message }, { status: 429 });
+    }
+    if (message === "GEOAPIFY_CLIENT_DAILY_CAP_REACHED") {
+      return NextResponse.json({ error: "This connection has reached its daily location-search allowance. Cached results remain available; please try again after the UTC-day reset.", code: message }, { status: 429 });
+    }
+    if (message === "GEOAPIFY_REQUEST_RATE_LIMITED" || message === "GEOAPIFY_PROVIDER_RATE_LIMITED") {
+      return NextResponse.json({ error: "Tripfinder is spacing out location searches to protect the Geoapify request limit. Please try again shortly.", code: message }, { status: 429 });
+    }
+    if (message === "GEOAPIFY_NOT_CONFIGURED") {
+      return NextResponse.json({ error: "The optional Geoapify location provider is not configured. Existing SerpApi location search remains available when configured.", code: message }, { status: 503 });
+    }
+    if (["GEOAPIFY_HTTP_401", "GEOAPIFY_HTTP_403"].includes(message)) {
+      return NextResponse.json({ error: "Geoapify rejected the configured server-side API key or access plan. Check GEOAPIFY_API_KEY and the enabled Places API in the Geoapify account.", code: message }, { status: 503 });
+    }
     if (message === "DESTINATION_AREA_REQUIRED") {
       return NextResponse.json({ error: "Choose a city or area within this country or region before searching for stays, attractions or restaurants. This prevents unrelated results from across the entire country.", code: message }, { status: 422 });
     }

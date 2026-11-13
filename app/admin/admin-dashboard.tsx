@@ -11,6 +11,7 @@ type DashboardData = {
   providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; staleCacheHits: number; failures: number; averageMs: number | null; promptTokens: number; completionTokens: number; totalTokens: number }>;
   dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
   recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; promptTokens: number | null; completionTokens: number | null; createdAt: string }>;
+  geoapifyUsage: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; visitorCreditsToday: number; activeVisitorsToday: number; clientDailyCap: number };
   aiUsage: { openRouter: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number }; gemini: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number }; clientDailyCap: number };
   cache: { totalEntries: number; validEntries: number; expiredEntries: number; lastUpdatedAt: string | null };
   clientUsage: { activeClientsToday: number; reservedSearchesToday: number };
@@ -170,6 +171,17 @@ export default function AdminDashboard() {
                   <div className="admin-chart-legend"><span><i className="api-bar" /> Provider calls</span><span><i className="cache-bar" /> Cache hits</span></div>
                   <div className="admin-detail-line"><span>Average provider response time</span><strong>{data.periodTotals.averageProviderMs === null ? "—" : `${number(data.periodTotals.averageProviderMs)} ms`}</strong></div>
                 </article>
+              </section>
+
+              <section className="admin-panel admin-table-panel">
+                <div className="admin-panel-heading"><div><p className="admin-eyebrow">OPENSTREETMAP PLACES + ROUTING</p><h2>Geoapify daily credit budget</h2></div><div className="admin-dashboard-meta"><span className="admin-subtle-label">UTC day</span><span className={`admin-status ${data.geoapifyUsage.configured ? "is-ok" : "is-warning"}`}>{data.geoapifyUsage.configured ? <><CheckCircle2 size={13} />Configured</> : <><AlertTriangle size={13} />Not configured</>}</span></div></div>
+                <div className="admin-quota-numbers"><div><small>Tripfinder credits reserved today</small><strong>{number(data.geoapifyUsage.usedToday)} <em>/ {number(data.geoapifyUsage.dailyCap)}</em></strong></div><div><small>Remaining within Tripfinder cap</small><strong>{number(data.geoapifyUsage.remainingToday)}</strong></div></div>
+                <div className="admin-progress"><i style={{ width: `${Math.min(100, data.geoapifyUsage.usedToday / Math.max(1, data.geoapifyUsage.dailyCap) * 100)}%` }} /></div>
+                <div className="admin-detail-line"><span>Per-visitor daily cap</span><strong>{number(data.geoapifyUsage.clientDailyCap)} credits</strong></div>
+                <div className="admin-detail-line"><span>Visitor usage today</span><strong>{number(data.geoapifyUsage.visitorCreditsToday)} credits · {number(data.geoapifyUsage.activeVisitorsToday)} visitors</strong></div>
+                <div className="admin-detail-line"><span>Place and route provider</span><strong>{data.geoapifyUsage.configured ? "Geoapify / OpenStreetMap" : "SerpApi Maps / Local fallback"}</strong></div>
+                <p className="admin-footnote">These are credits reserved by Tripfinder before uncached calls; conservative reservations and failed attempts can make the count higher than provider-billed usage. The shared counter tracks requests made by this app using its Neon database; it cannot include other apps using the same Geoapify key. The provider Free plan currently lists 3,000 credits/day and up to 5 requests/second. Tripfinder reserves at most {number(data.geoapifyUsage.dailyCap)} credits/day, serializes uncached requests at a slower shared rate, and uses a 12-hour cache. See <a href="https://www.geoapify.com/pricing/" target="_blank" rel="noreferrer">Geoapify pricing</a> and retain the required <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap attribution</a>.</p>
+                {!data.geoapifyUsage.configured && <p className="admin-muted admin-small">Optional provider is disabled until GEOAPIFY_API_KEY is added as a server-side Vercel environment variable. No Geoapify requests are being made.</p>}
               </section>
 
               <section className="admin-panel admin-table-panel">

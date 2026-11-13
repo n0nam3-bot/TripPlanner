@@ -7,6 +7,7 @@ import type { TripSearchInput, TripComponent, StaySpaceType, StayType } from "@/
 import { makeFlightBookingParams, makeFlightParams, makeReturnFlightParams } from "@/lib/trip-planner/flight-search-params";
 import { applyLayoverPreferences } from "@/lib/trip-planner/flight-search-policy";
 import { safeGoogleBookingUrl } from "@/lib/trip-planner/flight-booking-url";
+import { getGeoapifyDrivingRoute, searchGeoapifyPlaces } from "@/lib/providers/geoapify";
 
 const ENDPOINT = "https://serpapi.com/search.json";
 type JsonObject = Record<string, unknown>;
@@ -72,6 +73,8 @@ export type LiveExperience = {
   price?: string;
   website?: string;
   mapsUrl: string;
+  source?: string;
+  openingHours?: string;
 };
 
 export type HotelBookingOption = { seller: string; price: number | null; currency: string; url?: string; terms: string[] };
@@ -151,6 +154,14 @@ function providerWarning(error: unknown, label: string): string {
     SERPAPI_PROVIDER_HOURLY_LIMIT: "The SerpApi account is near its hourly throughput limit; new searches are paused.",
     SERPAPI_QUOTA_CHECK_FAILED: "Tripfinder could not verify the provider account balance, so it paused this search for safety.",
     SERPAPI_CLIENT_RATE_LIMITED: "This connection reached its search limit. Try again later.",
+    GEOAPIFY_NOT_CONFIGURED: "The Geoapify location provider is not configured.",
+    GEOAPIFY_DAILY_CAP_REACHED: "Tripfinder reached its shared daily Geoapify credit safety limit.",
+    GEOAPIFY_CLIENT_DAILY_CAP_REACHED: "This connection reached its daily location-search limit. Try again tomorrow.",
+    GEOAPIFY_PROVIDER_RATE_LIMITED: "The Geoapify account reached its current request limit. Try again later.",
+    GEOAPIFY_REQUEST_RATE_LIMITED: "Tripfinder is spacing out map requests to protect the Geoapify rate limit. Try again shortly.",
+    GEOAPIFY_HTTP_401: "Geoapify rejected the configured API key. Check the server-side Vercel environment variable.",
+    GEOAPIFY_HTTP_403: "Geoapify denied this request. Check the project key, enabled API access and plan limits.",
+    GEOAPIFY_HTTP_400: "Geoapify rejected the place-search request. Check the destination anchor and provider response.",
   };
   return `${label}: ${messages[code] ?? (code ? code.slice(0, 180) : "The provider could not complete this search.")}`;
 }
@@ -471,6 +482,20 @@ function destinationLocalityTokens(destinationName: string): string[] {
   );
 }
 
+function geoapifyCountryCode(destinationName: string): string | undefined {
+  const metadata = destinationMetadata(destinationName);
+  const parts = destinationName.split(",").map((part) => part.trim()).filter(Boolean);
+  const country = normalizeLocationText(metadata.country || parts[parts.length - 1] || "");
+  const codes: Record<string, string> = {
+    "united states": "us", canada: "ca", mexico: "mx", "dominican republic": "do", "puerto rico": "pr", jamaica: "jm", aruba: "aw",
+    albania: "al", portugal: "pt", spain: "es", france: "fr", italy: "it", germany: "de", netherlands: "nl", belgium: "be", switzerland: "ch", austria: "at", greece: "gr", turkey: "tr", türkiye: "tr", "united kingdom": "gb", ireland: "ie", iceland: "is", norway: "no", sweden: "se", finland: "fi", denmark: "dk", poland: "pl", serbia: "rs", croatia: "hr", slovenia: "si", "bosnia and herzegovina": "ba", montenegro: "me", "north macedonia": "mk", bulgaria: "bg", romania: "ro", hungary: "hu", czechia: "cz", slovakia: "sk", ukraine: "ua", moldova: "md", cyprus: "cy", estonia: "ee", latvia: "lv", lithuania: "lt", luxembourg: "lu",
+    japan: "jp", china: "cn", "south korea": "kr", "north korea": "kp", taiwan: "tw", thailand: "th", vietnam: "vn", cambodia: "kh", malaysia: "my", singapore: "sg", indonesia: "id", philippines: "ph", india: "in", pakistan: "pk", "sri lanka": "lk", nepal: "np", australia: "au", "new zealand": "nz",
+    "united arab emirates": "ae", qatar: "qa", "saudi arabia": "sa", oman: "om", bahrain: "bh", jordan: "jo", israel: "il", egypt: "eg", morocco: "ma", tunisia: "tn", algeria: "dz", kenya: "ke", ethiopia: "et", ghana: "gh", nigeria: "ng", "south africa": "za", tanzania: "tz", mauritius: "mu",
+    brazil: "br", argentina: "ar", chile: "cl", colombia: "co", peru: "pe", ecuador: "ec", uruguay: "uy", venezuela: "ve", panama: "pa", "costa rica": "cr", guatemala: "gt", "el salvador": "sv", bahamas: "bs", barbados: "bb", curaçao: "cw", curacao: "cw", guyana: "gy",
+  };
+  return codes[country];
+}
+
 function googleCountryCode(destinationName: string): string {
   const metadata = destinationMetadata(destinationName);
   const parts = destinationName.split(",").map((part) => part.trim()).filter(Boolean);
@@ -763,10 +788,12 @@ function normalizeExperiences(data: JsonObject, destinationName: string, kind: "
       address,
       rating: num(place.rating),
       reviews: num(place.reviews),
-      latitude: num(coords.latitude),
-      longitude: num(coords.longitude),
+      latitude: num(coords.latitude) ?? num(place.lat),
+      longitude: num(coords.longitude) ?? num(place.lon),
       thumbnail: safeHttpUrl(place.thumbnail) ?? safeHttpUrl(place.serpapi_thumbnail),
       openState: str(place.open_state) || undefined,
+      openingHours: str(place.opening_hours) || undefined,
+      source: str(place.data_source) || "SerpApi / Google Maps and Local",
       price: str(place.price) || undefined,
       website: safeHttpUrl(place.website) ?? safeHttpUrl(obj(place.links).website),
       mapsUrl: safeHttpUrl(obj(place.links).directions) ?? mapsUrl,
@@ -827,6 +854,32 @@ async function searchPlacesWithFallback(
 ): Promise<ProviderResponse> {
   const airport = AIRPORT_COORDINATES[destinationAirportCode];
   const area = getDestinationAreaGeo(destinationName);
+  if (process.env.GEOAPIFY_API_KEY?.trim()) {
+    const center = area
+      ? { latitude: area.latitude, longitude: area.longitude }
+      : airport ? { latitude: airport.latitude, longitude: airport.longitude } : null;
+    if (center) {
+      const radiusMiles = area
+        ? (kind === "restaurant" ? area.restaurantRadiusMiles : area.activityRadiusMiles)
+        : (kind === "restaurant" ? 45 : 60);
+      const result = await searchGeoapifyPlaces({
+        center,
+        radiusMeters: Math.round(radiusMiles * 1609.344),
+        kind,
+        countryCode: geoapifyCountryCode(destinationName),
+        clientUsageKey,
+        forceRefresh,
+      });
+      return {
+        data: result.data,
+        fetchedAt: result.fetchedAt,
+        fromCache: result.fromCache,
+        isStale: result.isStale,
+      };
+    }
+    // Geoapify needs a spatial anchor. If the internal destination/airport
+    // catalog has no coordinates, retain the existing location-aware Maps path.
+  }
   const mapsParams: Record<string, string> = {
     engine: "google_maps",
     type: "search",
@@ -913,6 +966,9 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   const normalizedDestinationName = cleanDestinationSearchName(destinationName);
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
   const destinationCode = input.destinationAirportCode || destinationAirportCode;
+  const geoapifyPlacesActive = Boolean(process.env.GEOAPIFY_API_KEY?.trim() && (
+    getDestinationAreaGeo(normalizedDestinationName) || AIRPORT_COORDINATES[destinationCode || destinationAirportCode]
+  ));
   if (components.includes("flights") && !originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (components.includes("flights") && (!destinationCode || !/^[A-Z]{3}$/.test(destinationCode))) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
 
@@ -938,7 +994,7 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   const errors = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected").map((outcome) => outcome.reason instanceof Error ? outcome.reason.message : "");
   const successfulCount = outcomes.filter((outcome) => outcome.status === "fulfilled").length;
   if (successfulCount === 0 && errors.length && !(bookingResult?.hotels.length)) {
-    const priority = ["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_QUOTA_CHECK_FAILED", "SERPAPI_CLIENT_RATE_LIMITED", "DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED", "SERPAPI_NOT_CONFIGURED"];
+    const priority = ["GEOAPIFY_DAILY_CAP_REACHED", "GEOAPIFY_CLIENT_DAILY_CAP_REACHED", "GEOAPIFY_REQUEST_RATE_LIMITED", "GEOAPIFY_PROVIDER_RATE_LIMITED", "SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_QUOTA_CHECK_FAILED", "SERPAPI_CLIENT_RATE_LIMITED", "DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED", "SERPAPI_NOT_CONFIGURED"];
     const selected = priority.find((code) => errors.includes(code));
     if (selected) throw new Error(selected);
   }
@@ -1037,7 +1093,11 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   if (input.childrenAges.length && components.includes("flights")) warnings.push("The flight provider applies child count but does not confirm age-specific fare rules here. Verify passenger ages and fares with the airline or seller.");
   return {
     status,
-    provider: bookingResult?.hotels.length ? "SerpApi / Google Travel and Maps + Booking.com" : "SerpApi / Google Travel and Maps",
+    provider: [
+      "SerpApi / Google Travel",
+      components.includes("activities") && geoapifyPlacesActive ? "Geoapify / OpenStreetMap Places" : components.includes("activities") ? "Google Maps/Local via SerpApi" : "",
+      bookingResult?.hotels.length ? "Booking.com" : "",
+    ].filter(Boolean).join(" + "),
     checkedAt: new Date().toISOString(),
     dataAsOf: fetchedAt.sort()[0] ?? new Date().toISOString(),
     servedFromCache: cacheFlags.length > 0 && cacheFlags.every(Boolean),
@@ -1076,12 +1136,36 @@ export async function getHotelBookingOptions(propertyToken: string, input: TripS
 }
 
 export type DrivingRouteResult = { distance: string; duration: string; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string };
+export type RouteCoordinates = { latitude: number; longitude: number };
 
-export async function getDrivingRoute(origin: string, destination: string, clientUsageKey = "shared"): Promise<DrivingRouteResult | null> {
+export async function getDrivingRoute(
+  origin: string,
+  destination: string,
+  clientUsageKey = "shared",
+  coordinates?: { origin?: RouteCoordinates; destination?: RouteCoordinates },
+): Promise<DrivingRouteResult | null> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   const cleanOrigin = origin.trim().slice(0, 300);
   const cleanDestination = destination.trim().slice(0, 300);
   if (!cleanOrigin || !cleanDestination) throw new Error("INVALID_ROUTE_ENDPOINTS");
+  if (process.env.GEOAPIFY_API_KEY?.trim() && coordinates?.origin && coordinates?.destination) {
+    const route = await getGeoapifyDrivingRoute({
+      origin: coordinates.origin,
+      destination: coordinates.destination,
+      originLabel: cleanOrigin,
+      destinationLabel: cleanDestination,
+      clientUsageKey,
+    });
+    if (!route) return null;
+    return {
+      distance: route.distance,
+      duration: route.duration,
+      startAddress: route.startAddress,
+      endAddress: route.endAddress,
+      source: route.source,
+      checkedAt: route.checkedAt,
+    };
+  }
   const result = await querySerpApi({
     engine: "google_maps_directions",
     start_addr: cleanOrigin,

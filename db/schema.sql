@@ -64,3 +64,24 @@ CREATE TABLE IF NOT EXISTS tripfinder_admin_login_attempts (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   locked_until timestamptz
 );
+
+-- Optional Geoapify / OpenStreetMap provider usage and shared request-rate control.
+CREATE TABLE IF NOT EXISTS tripfinder_geoapify_daily_usage (
+  usage_date date PRIMARY KEY,
+  credit_count integer NOT NULL DEFAULT 0 CHECK (credit_count >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tripfinder_geoapify_client_daily_usage (
+  client_key text NOT NULL,
+  usage_date date NOT NULL,
+  credit_count integer NOT NULL DEFAULT 0 CHECK (credit_count >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (client_key, usage_date)
+);
+
+CREATE TABLE IF NOT EXISTS tripfinder_geoapify_request_gate (
+  gate_key text PRIMARY KEY,
+  next_allowed_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);

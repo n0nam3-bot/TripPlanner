@@ -48,8 +48,10 @@
 - [x] Add an in-results trip cost ledger separating provider-displayed stay totals, reference-only flight quotes, user-entered ground transport/activity/dining estimates and a transparent contingency allowance. The displayed planning amount is explicitly partial; unknown amounts and ambiguous flight price bases are excluded.
 - [x] Replace the dense trip-selection text block with compact flight, accommodation, activity and dining cards, including direct links to the exact selected result and clearly separate provider links.
 - [x] Extend the travel timeline with selected flight departure/arrival times, links to selected results, editable property check-in/check-out time notes, and exact user-entered activity/restaurant times. Provider-unsupplied times remain visibly unconfirmed; editing a time does not create a reservation.
-- Add real activity/point-of-interest provider with licensing and display-rights review.
-- Add distance and travel-time estimates for activities, using a permitted maps/routing provider.
+- [x] Add an optional Geoapify Places provider backed by OpenStreetMap, with visible Geoapify/OSM attribution, source labels, no invented ratings, and a SerpApi Maps/Local fallback when the Geoapify key is absent. Free-plan commercial-production limitations are documented for operator review.
+- [x] Add coordinate-based Geoapify driving estimates for accommodation-to-activity/restaurant/airport checks. Requests remain user-triggered, are cached for 12 hours, and disclose that the estimates exclude live traffic. Address-only lookups retain the SerpApi directions path.
+- [x] Add Geoapify credit reservations in Neon: shared daily cap, per-visitor daily cap, shared 400 ms request gate with bounded queue, 12-hour places and route cache, and `/api/health` reporting. No provider requests are made during health checks.
+- [x] Show Geoapify key status, shared and per-visitor credit usage, remaining daily app budget and low-budget warnings in `/admin`.
 - Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.
 - Add flexible-date searches in a controlled way that respects provider quotas.
 - Improve airport autocomplete and multi-airport coverage.

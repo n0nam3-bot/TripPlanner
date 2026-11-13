@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { initializeTravelDatabase } from "@/lib/db/travel-cache";
+import { resolveGeoapifyCreditCaps } from "@/lib/trip-planner/geoapify-format";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const providerKeyConfigured = Boolean(process.env.SERPAPI_API_KEY);
+  const geoapifyKeyConfigured = Boolean(process.env.GEOAPIFY_API_KEY?.trim());
   const databaseConfigured = Boolean(process.env.DATABASE_URL);
   const bookingComConfigured = Boolean(
     process.env.BOOKING_COM_API_TOKEN?.trim() && /^\d+$/.test(process.env.BOOKING_COM_AFFILIATE_ID?.trim() || ""),
@@ -24,6 +26,10 @@ export async function GET() {
   const clientHourlyCap = Number.isInteger(configuredClientHourlyCap) ? Math.max(5, Math.min(45, configuredClientHourlyCap)) : 30;
   const configuredClientDailyCap = Number(process.env.SERPAPI_CLIENT_DAILY_SEARCH_CAP ?? "120");
   const clientDailyCap = Number.isInteger(configuredClientDailyCap) ? Math.max(30, Math.min(180, configuredClientDailyCap)) : 120;
+  const geoapifyCaps = resolveGeoapifyCreditCaps({
+    dailyCap: process.env.GEOAPIFY_DAILY_CREDIT_CAP,
+    clientDailyCap: process.env.GEOAPIFY_CLIENT_DAILY_CREDIT_CAP,
+  });
 
   let databaseConnected = false;
   let databaseSchemaReady = false;
@@ -57,6 +63,11 @@ export async function GET() {
     app: "tripfinder",
     mode: liveSearchReadyToTest ? "live_search_ready_to_test" : "planning_only_or_setup_incomplete",
     providerKeyConfigured,
+    geoapifyKeyConfigured,
+    geoapifyDailyCreditSafetyCap: geoapifyCaps.dailyCap,
+    geoapifyClientDailyCreditCap: geoapifyCaps.clientDailyCap,
+    geoapifySharedRequestGateEnabled: databaseSchemaReady,
+    geoapifyCreditUsageTrackedInNeon: databaseSchemaReady,
     bookingComConfigured,
     bookingComEndpoint,
     aiProviders,
@@ -75,6 +86,9 @@ export async function GET() {
       "tripfinder_ai_provider_daily_usage",
       "tripfinder_ai_provider_minute_usage",
       "tripfinder_ai_client_daily_usage",
+      "tripfinder_geoapify_daily_usage",
+      "tripfinder_geoapify_client_daily_usage",
+      "tripfinder_geoapify_request_gate",
     ] : [],
     persistentProviderCacheConfigured: databaseSchemaReady,
     monthlyProviderSearchSafetyCap: monthlyCap,
@@ -86,6 +100,6 @@ export async function GET() {
     affiliateTrackingEnabled: false,
     timestamp: new Date().toISOString(),
     adminDashboardConfigured: Boolean(process.env.ADMIN_DASHBOARD_SECRET && process.env.ADMIN_DASHBOARD_SECRET.length >= 32),
-    note: "Opening this endpoint initializes and verifies Tripfinder's Neon cache, usage, telemetry and admin-auth tables. SerpApi credentials are validated on the first uncached live search; no flight or hotel search is performed by this health check.",
+    note: "Opening this endpoint initializes and verifies Tripfinder's Neon cache, usage, telemetry and admin-auth tables. SerpApi and Geoapify credentials are used only by their relevant provider actions; Geoapify uncached calls are shared-rate-limited and no flight, hotel, places or directions search is performed by this health check.",
   }, { headers: { "Cache-Control": "no-store" } });
 }

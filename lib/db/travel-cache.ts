@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { createHash } from "node:crypto";
+import { resolveGeoapifyCreditCaps } from "../trip-planner/geoapify-format";
 
 type JsonRecord = Record<string, unknown>;
 type CacheRow = { payload: JsonRecord | string; created_at: string };
@@ -98,6 +99,23 @@ async function ensureTravelTables() {
         updated_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (client_key, usage_date)
       )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_geoapify_daily_usage (
+        usage_date date PRIMARY KEY,
+        credit_count integer NOT NULL DEFAULT 0 CHECK (credit_count >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_geoapify_client_daily_usage (
+        client_key text NOT NULL,
+        usage_date date NOT NULL,
+        credit_count integer NOT NULL DEFAULT 0 CHECK (credit_count >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (client_key, usage_date)
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_geoapify_request_gate (
+        gate_key text PRIMARY KEY,
+        next_allowed_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -119,9 +137,12 @@ export async function initializeTravelDatabase(): Promise<void> {
     to_regclass('public.tripfinder_admin_login_attempts') IS NOT NULL AS admin_auth_ready,
     to_regclass('public.tripfinder_ai_provider_daily_usage') IS NOT NULL AS ai_provider_daily_ready,
     to_regclass('public.tripfinder_ai_provider_minute_usage') IS NOT NULL AS ai_provider_minute_ready,
-    to_regclass('public.tripfinder_ai_client_daily_usage') IS NOT NULL AS ai_client_daily_ready`;
+    to_regclass('public.tripfinder_ai_client_daily_usage') IS NOT NULL AS ai_client_daily_ready,
+    to_regclass('public.tripfinder_geoapify_daily_usage') IS NOT NULL AS geoapify_daily_ready,
+    to_regclass('public.tripfinder_geoapify_client_daily_usage') IS NOT NULL AS geoapify_client_daily_ready,
+    to_regclass('public.tripfinder_geoapify_request_gate') IS NOT NULL AS geoapify_gate_ready`;
   const row = rows[0] as unknown as Record<string, boolean> | undefined;
-  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready || !row.ai_provider_daily_ready || !row.ai_provider_minute_ready || !row.ai_client_daily_ready) {
+  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready || !row.ai_provider_daily_ready || !row.ai_provider_minute_ready || !row.ai_client_daily_ready || !row.geoapify_daily_ready || !row.geoapify_client_daily_ready || !row.geoapify_gate_ready) {
     throw new Error("DATABASE_SCHEMA_UNAVAILABLE");
   }
 }
@@ -180,6 +201,71 @@ export async function setProviderCache(cacheKey: string, payload: JsonRecord, tt
   await sql`DELETE FROM tripfinder_provider_cache WHERE expires_at < now() - interval '7 days'`;
   await sql`DELETE FROM tripfinder_client_usage WHERE usage_date < current_date - interval '30 days'`;
   await sql`DELETE FROM tripfinder_provider_hourly_usage WHERE hour_bucket < now() - interval '3 days'`;
+}
+
+/**
+ * Allocate one shared request slot across all Vercel instances.
+ * A 400 ms interval keeps Tripfinder below the Geoapify Free plan's five requests/second limit,
+ * even when several visitors search at once. Cache hits do not call this function.
+ */
+export async function waitForGeoapifyRequestSlot(): Promise<void> {
+  await ensureTravelTables();
+  const sql = getSql();
+  const rows = await sql`INSERT INTO tripfinder_geoapify_request_gate (gate_key, next_allowed_at, updated_at)
+    VALUES ('global', now() + interval '400 milliseconds', now())
+    ON CONFLICT (gate_key) DO UPDATE SET
+      next_allowed_at = GREATEST(tripfinder_geoapify_request_gate.next_allowed_at, now()) + interval '400 milliseconds',
+      updated_at = now()
+    WHERE GREATEST(tripfinder_geoapify_request_gate.next_allowed_at, now()) + interval '400 milliseconds' <= now() + interval '3 seconds'
+    RETURNING (next_allowed_at - interval '400 milliseconds')::text AS slot_at`;
+  const slotAt = rows[0] as unknown as { slot_at?: string } | undefined;
+  if (!slotAt?.slot_at) throw new Error("GEOAPIFY_REQUEST_RATE_LIMITED");
+  const slotMs = new Date(slotAt.slot_at).getTime();
+  const delayMs = Math.max(0, slotMs - Date.now());
+  if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+}
+
+/** Reserve Geoapify credits against Tripfinder's shared and per-visitor UTC-day safety caps. */
+export async function reserveGeoapifyCredits(clientKey = "shared", credits = 1): Promise<number> {
+  await ensureTravelTables();
+  const safeCredits = Math.max(1, Math.min(100, Math.ceil(credits)));
+  // Geoapify's Free plan currently lists 3,000 credits/day. Tripfinder caps itself
+  // at 2,800 maximum to retain a reserve for diagnostics or other apps sharing the key.
+  const { dailyCap: globalCap, clientDailyCap: clientCap } = resolveGeoapifyCreditCaps({
+    dailyCap: process.env.GEOAPIFY_DAILY_CREDIT_CAP,
+    clientDailyCap: process.env.GEOAPIFY_CLIENT_DAILY_CREDIT_CAP,
+  });
+  const usageDate = new Date().toISOString().slice(0, 10);
+  const sql = getSql();
+  const clientRows = await sql`INSERT INTO tripfinder_geoapify_client_daily_usage
+      (client_key, usage_date, credit_count, updated_at)
+    SELECT ${clientKey}, ${usageDate}, ${safeCredits}, now()
+    WHERE ${safeCredits} <= ${clientCap}
+    ON CONFLICT (client_key, usage_date) DO UPDATE SET
+      credit_count = tripfinder_geoapify_client_daily_usage.credit_count + ${safeCredits},
+      updated_at = now()
+    WHERE tripfinder_geoapify_client_daily_usage.credit_count + ${safeCredits} <= ${clientCap}
+    RETURNING credit_count`;
+  if (!clientRows.length) throw new Error("GEOAPIFY_CLIENT_DAILY_CAP_REACHED");
+
+  const globalRows = await sql`INSERT INTO tripfinder_geoapify_daily_usage
+      (usage_date, credit_count, updated_at)
+    SELECT ${usageDate}, ${safeCredits}, now()
+    WHERE ${safeCredits} <= ${globalCap}
+    ON CONFLICT (usage_date) DO UPDATE SET
+      credit_count = tripfinder_geoapify_daily_usage.credit_count + ${safeCredits},
+      updated_at = now()
+    WHERE tripfinder_geoapify_daily_usage.credit_count + ${safeCredits} <= ${globalCap}
+    RETURNING credit_count`;
+  if (!globalRows.length) {
+    await sql`UPDATE tripfinder_geoapify_client_daily_usage
+      SET credit_count = GREATEST(0, credit_count - ${safeCredits}), updated_at = now()
+      WHERE client_key = ${clientKey} AND usage_date = ${usageDate}`;
+    throw new Error("GEOAPIFY_DAILY_CAP_REACHED");
+  }
+  await sql`DELETE FROM tripfinder_geoapify_client_daily_usage WHERE usage_date < current_date - interval '30 days'`;
+  await sql`DELETE FROM tripfinder_geoapify_daily_usage WHERE usage_date < current_date - interval '30 days'`;
+  return Number((globalRows[0] as unknown as { credit_count: number }).credit_count);
 }
 
 export async function reserveProviderSearch(clientKey = "shared"): Promise<number> {
@@ -378,6 +464,7 @@ export type AdminDashboardSnapshot = {
   providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; staleCacheHits: number; failures: number; averageMs: number | null; promptTokens: number; completionTokens: number; totalTokens: number }>;
   dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
   recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; promptTokens: number | null; completionTokens: number | null; createdAt: string }>;
+  geoapifyUsage: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; visitorCreditsToday: number; activeVisitorsToday: number; clientDailyCap: number };
   aiUsage: {
     openRouter: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
     gemini: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
@@ -397,7 +484,8 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
   const hourlyCap = Number.isInteger(rawHourlyCap) ? Math.max(1, Math.min(45, rawHourlyCap)) : 30;
   const now = new Date();
   const month = now.toISOString().slice(0, 7);
-  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows, aiDailyRows, aiMinuteRows] = await Promise.all([
+  const usageDate = now.toISOString().slice(0, 10);
+  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows, aiDailyRows, aiMinuteRows, geoapifyRows] = await Promise.all([
     sql`SELECT search_count FROM tripfinder_provider_usage WHERE month_key = ${month} LIMIT 1`,
     sql`SELECT search_count FROM tripfinder_provider_hourly_usage WHERE hour_bucket = date_trunc('hour', now()) LIMIT 1`,
     sql`SELECT count(*)::int AS active_clients, COALESCE(sum(day_count), 0)::int AS reserved_today
@@ -440,6 +528,10 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
       FROM tripfinder_provider_cache`,
     sql`SELECT provider_key, request_count FROM tripfinder_ai_provider_daily_usage WHERE usage_date = ${now.toISOString().slice(0, 10)}`,
     sql`SELECT provider_key, request_count FROM tripfinder_ai_provider_minute_usage WHERE minute_bucket = ${new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes())).toISOString()}`,
+    sql`SELECT
+        COALESCE((SELECT credit_count FROM tripfinder_geoapify_daily_usage WHERE usage_date = ${usageDate} LIMIT 1), 0)::int AS shared_credits,
+        COALESCE((SELECT sum(credit_count) FROM tripfinder_geoapify_client_daily_usage WHERE usage_date = ${usageDate}), 0)::int AS visitor_credits,
+        (SELECT count(*) FROM tripfinder_geoapify_client_daily_usage WHERE usage_date = ${usageDate} AND credit_count > 0)::int AS active_visitors`,
   ]);
   const usage = usageRows[0] as unknown as { search_count?: number } | undefined;
   const hourly = hourlyRows[0] as unknown as { search_count?: number } | undefined;
@@ -449,6 +541,12 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
   const asNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const aiDaily = aiDailyRows as unknown as Array<{ provider_key: string; request_count: number }>;
   const aiMinute = aiMinuteRows as unknown as Array<{ provider_key: string; request_count: number }>;
+  const geoapifyRow = geoapifyRows[0] as unknown as Record<string, number | null> | undefined;
+  const { dailyCap: geoapifyDailyCap, clientDailyCap: geoapifyClientDailyCap } = resolveGeoapifyCreditCaps({
+    dailyCap: process.env.GEOAPIFY_DAILY_CREDIT_CAP,
+    clientDailyCap: process.env.GEOAPIFY_CLIENT_DAILY_CREDIT_CAP,
+  });
+  const geoapifyUsed = asNumber(geoapifyRow?.shared_credits);
   const aiUsed = (rows: Array<{ provider_key: string; request_count: number }>, key: string) => asNumber(rows.find((row) => row.provider_key === key)?.request_count);
   const openRouterCapRaw = Number(process.env.AI_OPENROUTER_DAILY_CAP ?? "40");
   const openRouterCap = Number.isInteger(openRouterCapRaw) ? Math.max(1, Math.min(49, openRouterCapRaw)) : 40;
@@ -497,6 +595,15 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
       completionTokens: row.completion_tokens === null ? null : asNumber(row.completion_tokens),
       createdAt: String(row.created_at),
     })),
+    geoapifyUsage: {
+      configured: Boolean(process.env.GEOAPIFY_API_KEY?.trim()),
+      usedToday: geoapifyUsed,
+      dailyCap: geoapifyDailyCap,
+      remainingToday: Math.max(0, geoapifyDailyCap - geoapifyUsed),
+      visitorCreditsToday: asNumber(geoapifyRow?.visitor_credits),
+      activeVisitorsToday: asNumber(geoapifyRow?.active_visitors),
+      clientDailyCap: geoapifyClientDailyCap,
+    },
     aiUsage: {
       openRouter: { configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "openrouter"), dailyCap: openRouterCap, remainingToday: Math.max(0, openRouterCap - aiUsed(aiDaily, "openrouter")), usedThisMinute: aiUsed(aiMinute, "openrouter"), minuteCap: 15 },
       gemini: { configured: Boolean(process.env.GEMINI_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "gemini"), dailyCap: geminiCap, remainingToday: Math.max(0, geminiCap - aiUsed(aiDaily, "gemini")), usedThisMinute: aiUsed(aiMinute, "gemini"), minuteCap: 10 },

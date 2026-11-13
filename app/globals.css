@@ -1233,6 +1233,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .admin-panel-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
 .admin-panel-heading h2 { margin: 5px 0 0; color: #293b31; font: 500 21px/1.2 var(--serif); }
 .admin-panel-heading > svg { color: #91a094; }
+.admin-dashboard-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .admin-status { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; font-size: 9px; font-weight: 700; }
 .admin-status.is-ok { color: #52725a; background: #e9f0e7; }
 .admin-status.is-warning { color: #9b6940; background: #f5eee4; }
@@ -1613,3 +1614,8 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
 .booking-separate-ticket-breakdown { color:#7a6a59 !important; font-size:8px !important; line-height:1.5; white-space:normal; }
 .booking-combined-ticket-note { color:#7a8a7e !important; font-size:8px !important; line-height:1.45; white-space:normal; }
 .trip-selection-inline-note > small { flex:1 0 100%; color:#7a6a59; font-size:9px; line-height:1.45; }
+
+/* OpenStreetMap / Geoapify source credit and routing estimate disclosure. */
+.experience-attribution { display:block; margin-top:5px; color:#7f8c82; font-size:9px; line-height:1.45; }
+.experience-attribution a { color:#647a69; text-decoration:underline; text-underline-offset:2px; }
+.route-source-note { display:block; color:#829087; font-size:8px; line-height:1.45; }

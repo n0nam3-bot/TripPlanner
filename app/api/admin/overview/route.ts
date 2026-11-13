@@ -57,6 +57,8 @@ async function getSerpApiAccountSummary() {
   }
 }
 
+function numberLike(value: number): string { return Math.max(0, Math.floor(value)).toLocaleString("en-US"); }
+
 export async function GET(request: NextRequest) {
   if (!hasValidAdminSession(request)) return NextResponse.json({ error: "Admin authentication required." }, { status: 401, headers: { "Cache-Control": "no-store" } });
   try {
@@ -68,6 +70,7 @@ export async function GET(request: NextRequest) {
     const quotaReserve = Number.isInteger(configuredReserve) ? Math.max(10, Math.min(200, configuredReserve)) : 75;
     if (serpApiAccount.remaining !== null && serpApiAccount.remaining <= quotaReserve) warnings.push(`SerpApi has ${quotaReserve} or fewer searches remaining. Tripfinder may pause new searches to protect the reserve.`);
     if (snapshot.appUsage.monthlyRemaining <= 20) warnings.push("Tripfinder is within 20 searches of its app-level monthly safety cap.");
+    if (snapshot.geoapifyUsage.configured && snapshot.geoapifyUsage.remainingToday <= Math.max(1, Math.ceil(snapshot.geoapifyUsage.dailyCap * 0.1))) warnings.push(`Geoapify has ${numberLike(snapshot.geoapifyUsage.remainingToday)} Tripfinder credits remaining within today's shared cap.`);
     if (snapshot.periodTotals.failures24h > 0) warnings.push(`${snapshot.periodTotals.failures24h} provider error(s) were recorded in the last 24 hours.`);
     return NextResponse.json({ ...snapshot, serpApiAccount, warnings }, { headers: { "Cache-Control": "no-store" } });
   } catch {

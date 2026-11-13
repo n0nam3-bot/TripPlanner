@@ -11,6 +11,7 @@ const sourceFiles = [
   "lib/trip-planner/flight-search-params.ts",
   "lib/trip-planner/flight-search-policy.ts",
   "lib/trip-planner/flight-booking-url.ts",
+  "lib/trip-planner/geoapify-format.ts",
   "lib/trip-planner/cost-ledger.ts",
   "lib/trip-planner/validation.ts",
   "lib/ai/search-preferences.ts",

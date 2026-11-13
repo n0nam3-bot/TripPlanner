@@ -30,7 +30,7 @@ type BookingState = { loading: boolean; error: string; options: FlightBookingOpt
 type HotelBookingState = { loading: boolean; error: string; options: HotelBookingOption[] | null };
 type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null };
 type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attribution?: string };
-type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string };
+type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string; source?: string };
 type ExperienceSlot = "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening";
 type SelectedExperience = { date: string; slot: ExperienceSlot; time?: string };
 type SelectedFlightSeller = { flightId: string; option: FlightBookingOption };
@@ -218,22 +218,28 @@ function FlightResult({ flight, currency, returnState, bookingStates, selectedOu
   </article>;
 }
 
-function RouteLookup({ origin, destination, label }: { origin: string; destination: string; label: string }) {
+function RouteLookup({ origin, destination, label, originCoordinates, destinationCoordinates }: {
+  origin: string;
+  destination: string;
+  label: string;
+  originCoordinates?: { latitude: number; longitude: number };
+  destinationCoordinates?: { latitude: number; longitude: number };
+}) {
   const [state, setState] = useState<RouteState | null>(null);
   async function load() {
     setState({ loading: true });
     try {
-      const response = await fetch("/api/travel/directions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ origin, destination }) });
+      const response = await fetch("/api/travel/directions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ origin, destination, originCoordinates, destinationCoordinates }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Driving route unavailable.");
-      setState({ loading: false, distance: String(data.distance || ""), duration: String(data.duration || ""), durationInTraffic: typeof data.durationInTraffic === "string" ? data.durationInTraffic : undefined });
+      setState({ loading: false, distance: String(data.distance || ""), duration: String(data.duration || ""), durationInTraffic: typeof data.durationInTraffic === "string" ? data.durationInTraffic : undefined, source: typeof data.source === "string" ? data.source : undefined });
     } catch (error) {
       setState({ loading: false, error: error instanceof Error ? error.message : "Driving route unavailable." });
     }
   }
   return <span className="route-lookup">
     <button type="button" onClick={load} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={11} className="spin"/> Checking route</> : state?.duration ? "Refresh drive" : label}</button>
-    {state?.duration && <small>{state.distance} · {state.duration}{state.durationInTraffic ? ` · ${state.durationInTraffic} in traffic` : ""}</small>}
+    {state?.duration && <><small>{state.distance} · {state.duration}{state.durationInTraffic ? ` · ${state.durationInTraffic} in traffic` : ""}</small>{state.source?.includes("Geoapify") && <small className="route-source-note">Estimated road time · no live traffic · Geoapify / OpenStreetMap</small>}</>}
     {state?.error && <><small className="route-error">{state.error}</small><a href={directionsUrl(origin, destination)} target="_blank" rel="noreferrer">Open route in Maps</a></>}
   </span>;
 }
@@ -273,9 +279,9 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, search
       {hotel.providerOffers.some((offer) => offer.url) && <div className="hotel-provider-links"><strong>Available booking sites</strong>{hotel.providerOffers.filter((offer) => offer.url).slice(0, 4).map((offer, index) => <div className="hotel-provider-offer" key={`${offer.seller}-${index}`}><span><b>{offer.seller}</b><small>{offer.price !== null ? `${money(offer.price, offer.currency || currency)}${offer.priceBasis === "stay" ? " total stay" : offer.priceBasis === "night" ? " per night" : ""}` : "Price not supplied"}</small></span><a href={offer.url} target="_blank" rel="noreferrer">Open seller <ExternalLink size={11}/></a></div>)}</div>}
       {(airportDistance !== null || nearestActivities.length > 0 || hotel.nearbyPlaces.length > 0) && <div className="hotel-proximity">
         {airportDistance !== null && airport && <span>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportDistance)} straight-line</span>}
-        {airport && <RouteLookup origin={hotelOrigin} destination={airport.name} label="Check drive to airport"/>}
+        {airport && <RouteLookup origin={hotelOrigin} destination={airport.name} label="Check drive to airport" originCoordinates={hotel.latitude !== null && hotel.longitude !== null ? { latitude: hotel.latitude, longitude: hotel.longitude } : undefined} destinationCoordinates={{ latitude: airport.latitude, longitude: airport.longitude }}/>}
         {hotel.nearbyPlaces.slice(0, 4).map((place) => <span className="hotel-nearby-place" key={`${place.name}-${place.category}`}><strong>{place.name}</strong>{place.category !== "Place" && ` · ${place.category}`}{place.transportations.length > 0 && ` · ${place.transportations.map((item) => `${item.type} ${item.duration}`).join(" · ")}`}</span>)}
-        {nearestActivities.map(({ item, miles }) => <span className="hotel-activity-distance" key={item.id}>{item.name}: {distanceLabel(miles)} straight-line <RouteLookup origin={hotelOrigin} destination={item.address || `${item.latitude},${item.longitude}`} label="Driving time"/></span>)}
+        {nearestActivities.map(({ item, miles }) => <span className="hotel-activity-distance" key={item.id}>{item.name}: {distanceLabel(miles)} straight-line <RouteLookup origin={hotelOrigin} destination={item.address || `${item.latitude},${item.longitude}`} label="Driving time" originCoordinates={{ latitude: hotel.latitude!, longitude: hotel.longitude! }} destinationCoordinates={{ latitude: item.latitude!, longitude: item.longitude! }}/></span>)}
       </div>}
       {bookingState?.loading && <p className="inline-loading"><RefreshCw size={12} className="spin"/> Retrieving property booking options…</p>}
       {bookingState?.error && <p className="provider-inline-error">{bookingState.error}</p>}
@@ -338,14 +344,14 @@ function ExperienceResult({ experience, hotels, selectedHotel, airportCode, sear
   };
   return <article id={getTripAssistantResultAnchor(experience.kind, experience.id)} tabIndex={-1} className={`experience-card ${selected ? "is-selected" : ""}`}>
     {experience.thumbnail && <img src={experience.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer"/>}
-    <div className="experience-copy"><div className="experience-title"><h4><a href={experience.website || experience.mapsUrl} target="_blank" rel="noreferrer">{experience.name} <ExternalLink size={11}/></a></h4>{experience.rating !== null && <span><Star size={12} fill="currentColor"/> {experience.rating.toFixed(1)}{experience.reviews ? ` · ${experience.reviews.toLocaleString()}` : ""}</span>}</div><p>{experience.category}{experience.address ? ` · ${experience.address}` : ""}</p>{experience.openState && <small>{experience.openState}</small>}{experience.price && <small>{experience.price}</small>}
+    <div className="experience-copy"><div className="experience-title"><h4><a href={experience.website || experience.mapsUrl} target="_blank" rel="noreferrer">{experience.name} <ExternalLink size={11}/></a></h4>{experience.rating !== null && <span><Star size={12} fill="currentColor"/> {experience.rating.toFixed(1)}{experience.reviews ? ` · ${experience.reviews.toLocaleString()}` : ""}</span>}</div><p>{experience.category}{experience.address ? ` · ${experience.address}` : ""}</p>{experience.openState && <small>{experience.openState}</small>}{experience.openingHours && <small>Hours listed: {experience.openingHours} · confirm directly before visiting</small>}{experience.price && <small>{experience.price}</small>}{experience.source?.includes("Geoapify") && <small className="experience-attribution">Place data via <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer">Geoapify</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a></small>}
       {isRestaurant && selectedHotel && selectedStayLocation
-        ? <div className="experience-distances"><span>{selectedStayMiles !== null ? `${distanceLabel(selectedStayMiles)} straight-line from selected stay · ` : "From selected stay · "}<RouteLookup origin={selectedStayLocation} destination={activityLocation} label="Check drive time from selected stay"/></span></div>
+        ? <div className="experience-distances"><span>{selectedStayMiles !== null ? `${distanceLabel(selectedStayMiles)} straight-line from selected stay · ` : "From selected stay · "}<RouteLookup origin={selectedStayLocation} destination={activityLocation} label="Check drive time from selected stay" originCoordinates={selectedHotel?.latitude !== null && selectedHotel?.latitude !== undefined && selectedHotel.longitude !== null ? { latitude: selectedHotel.latitude, longitude: selectedHotel.longitude } : undefined} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></span></div>
         : nearbyStays.length > 0 && <div className="experience-distances">{nearbyStays.map(({ hotel, miles }) => {
           const hotelLocation = hotel.address || (hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : hotel.name);
-          return <span key={hotel.id}>{distanceLabel(miles)} from {hotel.name} (straight-line) <RouteLookup origin={hotelLocation} destination={activityLocation} label="Drive from hotel"/></span>;
+          return <span key={hotel.id}>{distanceLabel(miles)} from {hotel.name} (straight-line) <RouteLookup origin={hotelLocation} destination={activityLocation} label="Drive from hotel" originCoordinates={hotel.latitude !== null && hotel.longitude !== null ? { latitude: hotel.latitude, longitude: hotel.longitude } : undefined} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></span>;
         })}</div>}
-      {airport && airportMiles !== null && <div className="experience-distances"><span>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportMiles)} straight-line <RouteLookup origin={airport.name} destination={activityLocation} label="Check drive from airport"/></span></div>}
+      {airport && airportMiles !== null && <div className="experience-distances"><span>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportMiles)} straight-line <RouteLookup origin={airport.name} destination={activityLocation} label="Check drive from airport" originCoordinates={{ latitude: airport.latitude, longitude: airport.longitude }} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></span></div>}
     </div>
     <div className="experience-actions">
       <label className="experience-schedule-field"><span>Trip day</span><select value={activeDate} onChange={(event) => setDate(event.target.value)}>{days.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select></label>
@@ -354,7 +360,7 @@ function ExperienceResult({ experience, hotels, selectedHotel, airportCode, sear
       <button type="button" className={`selection-button ${selected ? "is-selected" : ""}`} onClick={() => onSelectionChange(experience, selected ? null : { date: activeDate, slot: activeSlot, time: activeTime || undefined })}>{selected ? <><Check size={13}/> Added to trip · Remove</> : isRestaurant ? "Add restaurant" : "Add activity"}</button>
       <small className="experience-time-note">A time you enter is a planning note; Tripfinder does not make or confirm reservations.</small>
       {experience.website && <a href={experience.website} target="_blank" rel="noreferrer" className="text-action">Official site <ArrowUpRight size={12}/></a>}
-      <a href={experience.mapsUrl} target="_blank" rel="noreferrer" className="text-action">Open in Maps <ArrowUpRight size={12}/></a>
+      <a href={experience.mapsUrl} target="_blank" rel="noreferrer" className="text-action">{experience.source?.includes("Geoapify") ? "Open OpenStreetMap" : "Open in Maps"} <ArrowUpRight size={12}/></a>
       {isRestaurant ? null : <><a href={viatorUrl} target="_blank" rel="noreferrer" className="text-action">Search Viator <ArrowUpRight size={12}/></a><a href={getYourGuideUrl} target="_blank" rel="noreferrer" className="text-action">Search GetYourGuide <ArrowUpRight size={12}/></a></>}
     </div>
   </article>;
