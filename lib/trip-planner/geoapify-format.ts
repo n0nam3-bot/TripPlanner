@@ -61,7 +61,6 @@ export function buildGeoapifyPlacesUrl(input: {
   radiusMeters: number;
   kind: GeoapifyKind;
   apiKey: string;
-  countryCode?: string;
   limit?: number;
 }): string {
   const { center } = input;
@@ -71,12 +70,14 @@ export function buildGeoapifyPlacesUrl(input: {
   if (!input.apiKey.trim()) throw new Error("GEOAPIFY_NOT_CONFIGURED");
   const radiusMeters = Math.max(500, Math.min(100_000, Math.round(input.radiusMeters)));
   const limit = Math.max(1, Math.min(40, Math.floor(input.limit ?? 40)));
-  const countryCode = input.countryCode?.trim().toLowerCase();
-  if (countryCode && !/^[a-z]{2}$/.test(countryCode)) throw new Error("INVALID_GEOAPIFY_COUNTRY_CODE");
+  // The GET Places API documents countrycode filters as not yet available.
+  // Use the supported circle filter for a bounded local search and proximity
+  // bias for ranking. Country/locality matching is still validated after
+  // results are normalized, before they are shown to the traveler.
   const params = new URLSearchParams({
     categories: geoapifyCategories(input.kind).join(","),
-    filter: countryCode ? `countrycode:${countryCode}` : `circle:${center.longitude},${center.latitude},${radiusMeters}`,
-    bias: countryCode ? `circle:${center.longitude},${center.latitude},${radiusMeters}` : `proximity:${center.longitude},${center.latitude}`,
+    filter: `circle:${center.longitude},${center.latitude},${radiusMeters}`,
+    bias: `proximity:${center.longitude},${center.latitude}`,
     limit: String(limit),
     lang: "en",
     apiKey: input.apiKey.trim(),

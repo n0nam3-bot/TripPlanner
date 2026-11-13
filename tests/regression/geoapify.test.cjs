@@ -10,20 +10,20 @@ const {
   resolveGeoapifyCreditCaps,
 } = require("../../.test-build/lib/trip-planner/geoapify-format.js");
 
-test("Geoapify POI searches use category filters, country constraints and a local radius bias", () => {
+test("Geoapify GET Places searches use the supported local circle filter and proximity bias", () => {
   assert.deepEqual(geoapifyCategories("restaurant"), ["catering.restaurant", "catering.cafe", "catering.fast_food"]);
   assert.ok(geoapifyCategories("activity").includes("tourism.attraction"));
   const url = new URL(buildGeoapifyPlacesUrl({
     center: { latitude: 19.205, longitude: -69.336 },
     radiusMeters: 40_000,
     kind: "restaurant",
-    countryCode: "DO",
     apiKey: "server-only-test-key",
   }));
   assert.equal(url.origin, "https://api.geoapify.com");
   assert.equal(url.pathname, "/v2/places");
-  assert.equal(url.searchParams.get("filter"), "countrycode:do");
-  assert.match(url.searchParams.get("bias"), /^circle:-69\.336,19\.205,40000$/);
+  assert.equal(url.searchParams.get("filter"), "circle:-69.336,19.205,40000");
+  assert.equal(url.searchParams.get("bias"), "proximity:-69.336,19.205");
+  assert.equal(url.searchParams.has("countrycode"), false);
   assert.equal(url.searchParams.get("limit"), "40");
   assert.equal(url.searchParams.get("apiKey"), "server-only-test-key");
 });

@@ -482,20 +482,6 @@ function destinationLocalityTokens(destinationName: string): string[] {
   );
 }
 
-function geoapifyCountryCode(destinationName: string): string | undefined {
-  const metadata = destinationMetadata(destinationName);
-  const parts = destinationName.split(",").map((part) => part.trim()).filter(Boolean);
-  const country = normalizeLocationText(metadata.country || parts[parts.length - 1] || "");
-  const codes: Record<string, string> = {
-    "united states": "us", canada: "ca", mexico: "mx", "dominican republic": "do", "puerto rico": "pr", jamaica: "jm", aruba: "aw",
-    albania: "al", portugal: "pt", spain: "es", france: "fr", italy: "it", germany: "de", netherlands: "nl", belgium: "be", switzerland: "ch", austria: "at", greece: "gr", turkey: "tr", türkiye: "tr", "united kingdom": "gb", ireland: "ie", iceland: "is", norway: "no", sweden: "se", finland: "fi", denmark: "dk", poland: "pl", serbia: "rs", croatia: "hr", slovenia: "si", "bosnia and herzegovina": "ba", montenegro: "me", "north macedonia": "mk", bulgaria: "bg", romania: "ro", hungary: "hu", czechia: "cz", slovakia: "sk", ukraine: "ua", moldova: "md", cyprus: "cy", estonia: "ee", latvia: "lv", lithuania: "lt", luxembourg: "lu",
-    japan: "jp", china: "cn", "south korea": "kr", "north korea": "kp", taiwan: "tw", thailand: "th", vietnam: "vn", cambodia: "kh", malaysia: "my", singapore: "sg", indonesia: "id", philippines: "ph", india: "in", pakistan: "pk", "sri lanka": "lk", nepal: "np", australia: "au", "new zealand": "nz",
-    "united arab emirates": "ae", qatar: "qa", "saudi arabia": "sa", oman: "om", bahrain: "bh", jordan: "jo", israel: "il", egypt: "eg", morocco: "ma", tunisia: "tn", algeria: "dz", kenya: "ke", ethiopia: "et", ghana: "gh", nigeria: "ng", "south africa": "za", tanzania: "tz", mauritius: "mu",
-    brazil: "br", argentina: "ar", chile: "cl", colombia: "co", peru: "pe", ecuador: "ec", uruguay: "uy", venezuela: "ve", panama: "pa", "costa rica": "cr", guatemala: "gt", "el salvador": "sv", bahamas: "bs", barbados: "bb", curaçao: "cw", curacao: "cw", guyana: "gy",
-  };
-  return codes[country];
-}
-
 function googleCountryCode(destinationName: string): string {
   const metadata = destinationMetadata(destinationName);
   const parts = destinationName.split(",").map((part) => part.trim()).filter(Boolean);
@@ -866,7 +852,6 @@ async function searchPlacesWithFallback(
         center,
         radiusMeters: Math.round(radiusMiles * 1609.344),
         kind,
-        countryCode: geoapifyCountryCode(destinationName),
         clientUsageKey,
         forceRefresh,
       });

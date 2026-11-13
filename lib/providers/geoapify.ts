@@ -64,7 +64,6 @@ export async function searchGeoapifyPlaces(input: {
   center: GeoCoordinates;
   radiusMeters: number;
   kind: GeoapifyKind;
-  countryCode?: string;
   clientUsageKey: string;
   forceRefresh?: boolean;
 }): Promise<GeoapifyPlacesResponse> {
@@ -73,7 +72,6 @@ export async function searchGeoapifyPlaces(input: {
   const cacheKey = providerCacheKey({
     provider: "geoapify-places-v1",
     kind: input.kind,
-    countryCode: input.countryCode || "",
     latitude: input.center.latitude.toFixed(4),
     longitude: input.center.longitude.toFixed(4),
     radiusMeters: String(Math.round(input.radiusMeters / 250) * 250),
@@ -94,7 +92,7 @@ export async function searchGeoapifyPlaces(input: {
     // (one credit per 20 places returned, up to 40 requested).
     await waitForGeoapifyRequestSlot();
     await reserveGeoapifyCredits(input.clientUsageKey, 2);
-    const url = buildGeoapifyPlacesUrl({ center: input.center, radiusMeters: input.radiusMeters, kind: input.kind, countryCode: input.countryCode, apiKey: key, limit });
+    const url = buildGeoapifyPlacesUrl({ center: input.center, radiusMeters: input.radiusMeters, kind: input.kind, apiKey: key, limit });
     const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(12_000) });
     if (!response.ok) {
       await recordProviderEvent({ provider: "Geoapify", category: input.kind === "restaurant" ? "Places / restaurants" : "Places / activities", eventType: "provider_error", outcome: "error", httpStatus: response.status, durationMs: Date.now() - startedAt });
