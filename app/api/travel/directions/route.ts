@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
     const route = await getDrivingRoute(origin, destination, hashClientAddress(address), { origin: originCoordinates, destination: destinationCoordinates });
     if (!route) return NextResponse.json({ error: "The routing provider did not return a driving route for these locations. You can still open the route in Maps." }, { status: 404 });
-    return NextResponse.json(route, { headers: { "Cache-Control": "private, max-age=300" } });
+    return NextResponse.json(route, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Driving route lookup failed.";
     const rateLimited = ["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_CLIENT_RATE_LIMITED", "GEOAPIFY_DAILY_CAP_REACHED", "GEOAPIFY_CLIENT_DAILY_CAP_REACHED", "GEOAPIFY_PROVIDER_RATE_LIMITED", "GEOAPIFY_REQUEST_RATE_LIMITED"].includes(message);

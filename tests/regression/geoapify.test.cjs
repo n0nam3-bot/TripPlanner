@@ -9,6 +9,7 @@ const {
   parseGeoapifyRoute,
   estimateGeoapifyRouteCredits,
   resolveGeoapifyCreditCaps,
+  describeGeoapifyMapFailure,
 } = require("../../.test-build/lib/trip-planner/geoapify-format.js");
 
 test("Geoapify GET Places searches use the supported local circle filter and proximity bias", () => {
@@ -190,4 +191,67 @@ test("Geoapify provider fetches and caches a server-side static map image with t
   assert.match(provider, /reserveGeoapifyCredits\(input\.clientUsageKey, 5\)/);
   assert.match(provider, /mapImageDataUrl/);
   assert.match(provider, /geoapify-driving-route-v2/);
+});
+
+test("Geoapify map cap denial is not reported as exhausted when the app counter is below its cap", () => {
+  const failure = describeGeoapifyMapFailure("GEOAPIFY_DAILY_CAP_REACHED", {
+    sharedUsed: 26, sharedCap: 2400, clientUsed: 26, clientCap: 80,
+  });
+  assert.equal(failure.blocked, true);
+  assert.equal(failure.retryDelayMs, 120000);
+  assert.match(failure.warning, /26 of 2,400 app credits used/);
+  assert.match(failure.warning, /counter or deployment mismatch/);
+  assert.doesNotMatch(failure.warning, /safety allowance is exhausted/);
+});
+
+test("Geoapify map cap message reports a real exhausted Tripfinder allowance only at the configured threshold", () => {
+  const failure = describeGeoapifyMapFailure("GEOAPIFY_DAILY_CAP_REACHED", {
+    sharedUsed: 2400, sharedCap: 2400, clientUsed: 80, clientCap: 80,
+  });
+  assert.equal(failure.blocked, true);
+  assert.equal(failure.retryDelayMs, null);
+  assert.match(failure.warning, /2,400 of 2,400 app credits used/);
+});
+
+test("Geoapify provider HTTP 429 is distinguished from Tripfinder's internal credit gate", () => {
+  const failure = describeGeoapifyMapFailure("GEOAPIFY_STATIC_MAP_HTTP_429", {
+    sharedUsed: 26, sharedCap: 2400, clientUsed: 26, clientCap: 80,
+  });
+  assert.equal(failure.blocked, false);
+  assert.equal(failure.httpStatus, 429);
+  assert.equal(failure.retryDelayMs, 900000);
+  assert.match(failure.warning, /other apps sharing this API key/);
+  assert.match(failure.warning, /26 of 2,400 daily app credits/);
+});
+
+test("cached route map failures are retried without rerunning the driving route request", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const provider = fs.readFileSync(path.resolve(__dirname, "../../lib/providers/geoapify.ts"), "utf8");
+  assert.match(provider, /cached\.payload\.mapRetryAt/);
+  assert.match(provider, /!mapImageDataUrl && route\.geometry\.length >= 2/);
+  assert.match(provider, /attemptGeoapifyMapPreview\(/);
+  assert.match(provider, /mapRetryAt: mapRetryAt \?\? null/);
+});
+
+test("map preview failures log actual HTTP status and classify internal quota denials as blocked", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const provider = fs.readFileSync(path.resolve(__dirname, "../../lib/providers/geoapify.ts"), "utf8");
+  assert.match(provider, /getGeoapifyCreditUsageSnapshot/);
+  assert.match(provider, /eventType: failure\.blocked \? "request_blocked" : "provider_error"/);
+  assert.match(provider, /httpStatus: failure\.httpStatus/);
+  assert.match(provider, /durationMs: Date\.now\(\) - startedAt/);
+});
+
+test("admin provider breakdown exposes blocked reservations separately from provider errors", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = path.resolve(__dirname, "../..");
+  const db = fs.readFileSync(path.join(root, "lib/db/travel-cache.ts"), "utf8");
+  const admin = fs.readFileSync(path.join(root, "app/admin/admin-dashboard.tsx"), "utf8");
+  assert.match(db, /count\(\*\) FILTER \(WHERE outcome = 'blocked'\)::int AS blocked/);
+  assert.match(db, /blocked: asNumber\(row\.blocked\)/);
+  assert.match(admin, /<th>Blocked<\/th>/);
+  assert.match(admin, /number\(row\.blocked\)/);
 });

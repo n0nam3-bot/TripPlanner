@@ -225,6 +225,34 @@ export async function waitForGeoapifyRequestSlot(): Promise<void> {
   if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
 
+/** Read the exact UTC-day counters used by the Geoapify reservation gate. */
+export async function getGeoapifyCreditUsageSnapshot(clientKey = "shared"): Promise<{
+  sharedUsed: number;
+  sharedCap: number;
+  clientUsed: number;
+  clientCap: number;
+  utcDate: string;
+}> {
+  await ensureTravelTables();
+  const usageDate = new Date().toISOString().slice(0, 10);
+  const sql = getSql();
+  const rows = await sql`SELECT
+    COALESCE((SELECT credit_count FROM tripfinder_geoapify_daily_usage WHERE usage_date = ${usageDate} LIMIT 1), 0)::int AS shared_used,
+    COALESCE((SELECT credit_count FROM tripfinder_geoapify_client_daily_usage WHERE client_key = ${clientKey} AND usage_date = ${usageDate} LIMIT 1), 0)::int AS client_used`;
+  const row = rows[0] as unknown as { shared_used?: number; client_used?: number } | undefined;
+  const caps = resolveGeoapifyCreditCaps({
+    dailyCap: process.env.GEOAPIFY_DAILY_CREDIT_CAP,
+    clientDailyCap: process.env.GEOAPIFY_CLIENT_DAILY_CREDIT_CAP,
+  });
+  return {
+    sharedUsed: Math.max(0, Number(row?.shared_used ?? 0) || 0),
+    sharedCap: caps.dailyCap,
+    clientUsed: Math.max(0, Number(row?.client_used ?? 0) || 0),
+    clientCap: caps.clientDailyCap,
+    utcDate: usageDate,
+  };
+}
+
 /** Reserve Geoapify credits against Tripfinder's shared and per-visitor UTC-day safety caps. */
 export async function reserveGeoapifyCredits(clientKey = "shared", credits = 1): Promise<number> {
   await ensureTravelTables();
@@ -461,7 +489,7 @@ export type AdminDashboardSnapshot = {
   generatedAt: string;
   appUsage: { month: string; monthlyUsed: number; monthlyCap: number; monthlyRemaining: number; hourlyUsed: number; hourlyCap: number; todayReservedSearches: number };
   periodTotals: { events24h: number; apiCalls24h: number; accountChecks24h: number; cacheHits24h: number; staleCacheHits24h: number; failures24h: number; blocked24h: number; averageProviderMs: number | null; promptTokens24h: number; completionTokens24h: number; totalTokens24h: number };
-  providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; staleCacheHits: number; failures: number; averageMs: number | null; promptTokens: number; completionTokens: number; totalTokens: number }>;
+  providerBreakdown: Array<{ provider: string; category: string; apiCalls: number; accountChecks: number; cacheHits: number; staleCacheHits: number; failures: number; blocked: number; averageMs: number | null; promptTokens: number; completionTokens: number; totalTokens: number }>;
   dailyTrend: Array<{ hour: string; apiCalls: number; cacheHits: number; failures: number }>;
   recentEvents: Array<{ id: number; provider: string; category: string; eventType: string; outcome: string; cacheStatus: string; httpStatus: number | null; durationMs: number | null; promptTokens: number | null; completionTokens: number | null; createdAt: string }>;
   geoapifyUsage: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; visitorCreditsToday: number; activeVisitorsToday: number; clientDailyCap: number };
@@ -508,6 +536,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale' AND category <> 'Account quota')::int AS stale_cache_hits,
         count(*) FILTER (WHERE outcome = 'error')::int AS failures,
+        count(*) FILTER (WHERE outcome = 'blocked')::int AS blocked,
         round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms,
         COALESCE(sum(prompt_tokens), 0)::int AS prompt_tokens,
         COALESCE(sum(completion_tokens), 0)::int AS completion_tokens
@@ -580,7 +609,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
     },
     providerBreakdown: (breakdownRows as unknown as Array<Record<string, unknown>>).map((row) => ({
       provider: String(row.provider), category: String(row.category), apiCalls: asNumber(row.api_calls),
-      accountChecks: asNumber(row.account_checks), cacheHits: asNumber(row.cache_hits), staleCacheHits: asNumber(row.stale_cache_hits), failures: asNumber(row.failures), averageMs: row.avg_ms === null ? null : asNumber(row.avg_ms),
+      accountChecks: asNumber(row.account_checks), cacheHits: asNumber(row.cache_hits), staleCacheHits: asNumber(row.stale_cache_hits), failures: asNumber(row.failures), blocked: asNumber(row.blocked), averageMs: row.avg_ms === null ? null : asNumber(row.avg_ms),
       promptTokens: asNumber(row.prompt_tokens), completionTokens: asNumber(row.completion_tokens), totalTokens: asNumber(row.prompt_tokens) + asNumber(row.completion_tokens),
     })),
     dailyTrend: (trendRows as unknown as Array<Record<string, unknown>>).map((row) => ({
