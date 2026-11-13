@@ -15,6 +15,7 @@ import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-
 import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
 import { sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem } from "@/lib/trip-planner/saved-trips";
+import { isValidProximityStartingPoint, type ProximityStartingPoint } from "@/lib/trip-planner/proximity";
 
 type Props = {
   search: TripSearchInput;
@@ -476,10 +477,36 @@ function HotelResult({ hotel, currency, airportCode, experiences, nights, search
   </article>;
 }
 
-function ExperienceResult({ experience, hotels, selectedHotel, airportCode, search, days, selected, onSelectionChange }: {
+function ProximityStartingPointPanel({ destinationId, point, value, loading, error, onChange, onSubmit, onClear }: {
+  destinationId: string;
+  point?: ProximityStartingPoint;
+  value: string;
+  loading: boolean;
+  error?: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  onClear: () => void;
+}) {
+  return <section className="proximity-origin-panel" aria-labelledby={`proximity-origin-title-${destinationId}`}>
+    <div className="proximity-origin-copy">
+      <div><MapPin size={15}/><strong id={`proximity-origin-title-${destinationId}`}>Your starting point</strong><span>Optional · no hotel booking required</span></div>
+      {point && <p>Using <strong>{point.label}</strong> · {point.address}</p>}
+    </div>
+    <form className="proximity-origin-form" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder="Hotel, Airbnb, college, venue or street address" aria-label="Where you will be staying or starting from" maxLength={180}/>
+      <button type="submit" disabled={loading || value.trim().length < 4}>{loading ? <><RefreshCw size={12} className="spin"/> Finding</> : point ? "Update point" : "Use this location"}</button>
+      {point && <button type="button" className="proximity-origin-clear" onClick={onClear}>Clear</button>}
+    </form>
+    {error && <p className="proximity-origin-error" role="alert">{error}</p>}
+    <small>Distances from this point are straight-line estimates. Driving routes are calculated only when requested. This location is saved in this browser and is not included in the public trip share link.</small>
+  </section>;
+}
+
+function ExperienceResult({ experience, hotels, selectedHotel, startingPoint, airportCode, search, days, selected, onSelectionChange }: {
   experience: LiveExperience;
   hotels: LiveHotel[];
   selectedHotel?: LiveHotel | null;
+  startingPoint?: ProximityStartingPoint;
   airportCode: string;
   search: TripSearchInput;
   days: Array<{ date: string; label: string }>;
@@ -493,13 +520,17 @@ function ExperienceResult({ experience, hotels, selectedHotel, airportCode, sear
   const activeDate = selected?.date ?? draftDate;
   const activeSlot = selected?.slot ?? draftSlot;
   const activeTime = selected?.time ?? draftTime;
-  const nearbyStays = experience.latitude !== null && experience.longitude !== null
+  const nearbyStays = search.components.includes("stays") && experience.latitude !== null && experience.longitude !== null
     ? hotels.filter((hotel) => hotel.latitude !== null && hotel.longitude !== null).map((hotel) => ({ hotel, miles: haversineMiles(experience.latitude!, experience.longitude!, hotel.latitude!, hotel.longitude!) })).sort((a, b) => a.miles - b.miles).slice(0, 2)
     : [];
   const selectedStayLocation = selectedHotel?.address || (selectedHotel && selectedHotel.latitude !== null && selectedHotel.longitude !== null ? `${selectedHotel.latitude},${selectedHotel.longitude}` : "");
   const selectedStayMiles = selectedHotel && selectedHotel.latitude !== null && selectedHotel.longitude !== null && experience.latitude !== null && experience.longitude !== null
     ? haversineMiles(selectedHotel.latitude, selectedHotel.longitude, experience.latitude, experience.longitude)
     : null;
+  const startingPointMiles = startingPoint && experience.latitude !== null && experience.longitude !== null
+    ? haversineMiles(startingPoint.latitude, startingPoint.longitude, experience.latitude, experience.longitude)
+    : null;
+  const startingPointLocation = startingPoint?.address || (startingPoint ? `${startingPoint.latitude},${startingPoint.longitude}` : "");
   const airport = experience.latitude !== null && experience.longitude !== null
     ? nearestKnownAirport(experience.latitude, experience.longitude, airportCode) : null;
   const airportMiles = airport?.miles ?? null;
@@ -528,13 +559,15 @@ function ExperienceResult({ experience, hotels, selectedHotel, airportCode, sear
   return <article id={getTripAssistantResultAnchor(experience.kind, experience.id)} tabIndex={-1} className={`experience-card ${experience.thumbnail ? "has-image" : "no-image"} ${selected ? "is-selected" : ""}`}>
     {experience.thumbnail && <img src={experience.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="experience-copy"><div className="experience-title"><h4><a href={experience.website || experience.mapsUrl} target="_blank" rel="noreferrer">{experience.name} <ExternalLink size={11}/></a></h4>{experience.rating !== null && <span><Star size={12} fill="currentColor"/> {experience.rating.toFixed(1)}{experience.reviews ? ` · ${experience.reviews.toLocaleString()}` : ""}</span>}</div><p>{experience.category}{experience.address ? ` · ${experience.address}` : ""}</p>{experience.openState && <small>{experience.openState}</small>}{experience.openingHours && <small>Hours listed: {experience.openingHours} · confirm directly before visiting</small>}{experience.price && <small>{experience.price}</small>}{experience.source?.includes("Geoapify") && <small className="experience-attribution">Place data via <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer">Geoapify</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a></small>}
-      {isRestaurant && selectedHotel && selectedStayLocation
-        ? <div className="experience-distances"><div>{selectedStayMiles !== null ? `${distanceLabel(selectedStayMiles)} straight-line from selected stay` : "From selected stay"}<RouteLookup origin={selectedStayLocation} destination={activityLocation} label="Show driving route from selected stay" originCoordinates={selectedHotel?.latitude !== null && selectedHotel?.latitude !== undefined && selectedHotel.longitude !== null ? { latitude: selectedHotel.latitude, longitude: selectedHotel.longitude } : undefined} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></div></div>
-        : nearbyStays.length > 0 && <div className="experience-distances">{nearbyStays.map(({ hotel, miles }) => {
-          const hotelLocation = hotel.address || (hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : hotel.name);
-          return <div key={hotel.id}>{distanceLabel(miles)} from {hotel.name} (straight-line)<RouteLookup origin={hotelLocation} destination={activityLocation} label="Show driving route from hotel" originCoordinates={hotel.latitude !== null && hotel.longitude !== null ? { latitude: hotel.latitude, longitude: hotel.longitude } : undefined} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></div>;
-        })}</div>}
-      {airport && airportMiles !== null && <div className="experience-distances"><div>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportMiles)} straight-line<RouteLookup origin={airport.name} destination={activityLocation} label="Show driving route from airport" originCoordinates={{ latitude: airport.latitude, longitude: airport.longitude }} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></div></div>}
+      {startingPoint && startingPointLocation
+        ? <div className="experience-distances"><div>{startingPointMiles !== null ? `${distanceLabel(startingPointMiles)} straight-line from ${startingPoint.label}` : `From ${startingPoint.label}`}<RouteLookup origin={startingPointLocation} destination={activityLocation} label="Show driving route from your starting point" originCoordinates={{ latitude: startingPoint.latitude, longitude: startingPoint.longitude }} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></div></div>
+        : isRestaurant && selectedHotel && selectedStayLocation
+          ? <div className="experience-distances"><div>{selectedStayMiles !== null ? `${distanceLabel(selectedStayMiles)} straight-line from selected stay` : "From selected stay"}<RouteLookup origin={selectedStayLocation} destination={activityLocation} label="Show driving route from selected stay" originCoordinates={selectedHotel?.latitude !== null && selectedHotel?.latitude !== undefined && selectedHotel.longitude !== null ? { latitude: selectedHotel.latitude, longitude: selectedHotel.longitude } : undefined} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></div></div>
+          : nearbyStays.length > 0 && <div className="experience-distances">{nearbyStays.map(({ hotel, miles }) => {
+            const hotelLocation = hotel.address || (hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : hotel.name);
+            return <div key={hotel.id}>{distanceLabel(miles)} from {hotel.name} (straight-line)<RouteLookup origin={hotelLocation} destination={activityLocation} label="Show driving route from hotel" originCoordinates={hotel.latitude !== null && hotel.longitude !== null ? { latitude: hotel.latitude, longitude: hotel.longitude } : undefined} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></div>;
+          })}</div>}
+      {search.components.includes("flights") && airport && airportMiles !== null && <div className="experience-distances"><div>{airport.name}{!airportCode ? " · nearest listed airport" : ""}: {distanceLabel(airportMiles)} straight-line<RouteLookup origin={airport.name} destination={activityLocation} label="Show driving route from airport" originCoordinates={{ latitude: airport.latitude, longitude: airport.longitude }} destinationCoordinates={experience.latitude !== null && experience.longitude !== null ? { latitude: experience.latitude, longitude: experience.longitude } : undefined}/></div></div>}
     </div>
     <div className="experience-actions">
       <label className="experience-schedule-field"><span>Trip day</span><select value={activeDate} onChange={(event) => setDate(event.target.value)}>{days.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select></label>
@@ -1068,6 +1101,10 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const [savedShareUrl, setSavedShareUrl] = useState("");
   const [savedTripCredentials, setSavedTripCredentials] = useState<{ shareToken: string; ownerToken: string } | null>(null);
   const [savedTripStorageKey, setSavedTripStorageKey] = useState("");
+  const [startingPoints, setStartingPoints] = useState<Record<string, ProximityStartingPoint>>({});
+  const [startingPointDrafts, setStartingPointDrafts] = useState<Record<string, string>>({});
+  const [startingPointLoading, setStartingPointLoading] = useState<Record<string, boolean>>({});
+  const [startingPointErrors, setStartingPointErrors] = useState<Record<string, string>>({});
   const people = search.adults + search.childrenAges.length;
   const nights = Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000));
   const totalBudget = search.budgetMode === "per_person" ? search.budget * people : search.budget;
@@ -1086,6 +1123,69 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       }
     } catch { /* Saved-link ownership is a convenience; creating a new share link remains available. */ }
   }, []);
+
+  useEffect(() => {
+    const restored: Record<string, ProximityStartingPoint> = {};
+    const drafts: Record<string, string> = {};
+    for (const recommendation of recommendations) {
+      const destinationId = recommendation.destination.id;
+      try {
+        const raw = window.localStorage.getItem(`tripfinder:proximity-origin:v1:${destinationId}`);
+        if (!raw) continue;
+        const parsed: unknown = JSON.parse(raw);
+        if (!isValidProximityStartingPoint(parsed)) continue;
+        restored[destinationId] = parsed;
+        drafts[destinationId] = parsed.label;
+      } catch { /* Invalid or unavailable local storage is ignored. */ }
+    }
+    if (Object.keys(restored).length) setStartingPoints(restored);
+    if (Object.keys(drafts).length) setStartingPointDrafts(drafts);
+  }, [recommendations]);
+
+  async function resolveStartingPoint(destinationId: string, rawLocation: string): Promise<ProximityStartingPoint> {
+    const query = rawLocation.trim().slice(0, 180);
+    if (query.length < 4) throw new Error("Enter a hotel, Airbnb, college, venue, landmark, or full street address.");
+    setStartingPointLoading((current) => ({ ...current, [destinationId]: true }));
+    setStartingPointErrors((current) => ({ ...current, [destinationId]: "" }));
+    try {
+      const recommendation = recommendations.find((item) => item.destination.id === destinationId);
+      if (!recommendation) throw new Error("The destination could not be found. Reload the results and try again.");
+      const destinationText = formatDestinationLabel(recommendation.destination.city, recommendation.destination.country);
+      const response = await fetch("/api/travel/geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, destination: destinationText }),
+      });
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Tripfinder could not resolve that starting point.");
+      const candidate = {
+        label: typeof payload.label === "string" ? payload.label : query,
+        address: typeof payload.address === "string" ? payload.address : "",
+        latitude: typeof payload.latitude === "number" ? payload.latitude : NaN,
+        longitude: typeof payload.longitude === "number" ? payload.longitude : NaN,
+        confidence: typeof payload.confidence === "number" ? payload.confidence : 0,
+        ...(typeof payload.resultType === "string" ? { resultType: payload.resultType } : {}),
+      };
+      if (!isValidProximityStartingPoint(candidate)) throw new Error("Geoapify returned an incomplete location. Add a more specific address or place name.");
+      setStartingPoints((current) => ({ ...current, [destinationId]: candidate }));
+      setStartingPointDrafts((current) => ({ ...current, [destinationId]: candidate.label }));
+      try { window.localStorage.setItem(`tripfinder:proximity-origin:v1:${destinationId}`, JSON.stringify(candidate)); } catch { /* The current page can use it even if browser storage is disabled. */ }
+      return candidate;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Tripfinder could not resolve that starting point.";
+      setStartingPointErrors((current) => ({ ...current, [destinationId]: message }));
+      throw new Error(message);
+    } finally {
+      setStartingPointLoading((current) => ({ ...current, [destinationId]: false }));
+    }
+  }
+
+  function clearStartingPoint(destinationId: string) {
+    setStartingPoints((current) => { const next = { ...current }; delete next[destinationId]; return next; });
+    setStartingPointDrafts((current) => ({ ...current, [destinationId]: "" }));
+    setStartingPointErrors((current) => ({ ...current, [destinationId]: "" }));
+    try { window.localStorage.removeItem(`tripfinder:proximity-origin:v1:${destinationId}`); } catch { /* Ignore unavailable storage. */ }
+  }
 
   async function saveCurrentTrip() {
     if (savingTrip) return;
@@ -1318,6 +1418,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   ];
   const assistantContext: TripAssistantContext | null = assistantRecommendation && assistantResult ? {
     destination: formatDestinationLabel(assistantRecommendation.destination.city, assistantRecommendation.destination.country),
+    ...(startingPoints[assistantRecommendation.destination.id] ? { startingPoint: startingPoints[assistantRecommendation.destination.id] } : {}),
     currency: search.currency,
     budget: totalBudget,
     departureDate: search.departureDate,
@@ -1421,7 +1522,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
 
         return <motion.article className={`planner-destination-card ${isExpanded ? "is-expanded" : ""}`} key={destination.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: index * 0.035 }}>
           <div className="planner-destination-body">
-            <div className="planner-destination-heading"><div>{destination.country && normalizeDestinationQuery(destination.country) !== normalizeDestinationQuery(destination.city) && <span className="planner-country">{destination.country}</span>}<h3>{destination.city}</h3><p>{destination.summary}</p>{recommendation.typicalDaytimeHighF !== null ? <p className="planner-climate-note">Typical daytime high for these dates: <strong>{Math.round(search.temperatureUnit === "C" ? (recommendation.typicalDaytimeHighF - 32) * 5 / 9 : recommendation.typicalDaytimeHighF)}°{search.temperatureUnit}</strong> <span>· monthly climate average, not a forecast</span></p> : (search.temperatureMin !== null || search.temperatureMax !== null) ? <p className="planner-climate-note">No monthly temperature baseline is available for this location, so your temperature range could not be checked.</p> : null}</div>{airportCode && <span className="planner-airport">{airportCode}</span>}</div>
+            <div className="planner-destination-heading"><div>{destination.country && normalizeDestinationQuery(destination.country) !== normalizeDestinationQuery(destination.city) && <span className="planner-country">{destination.country}</span>}<h3>{destination.city}</h3><p>{destination.summary}</p>{recommendation.typicalDaytimeHighF !== null ? <p className="planner-climate-note">Typical daytime high for these dates: <strong>{Math.round(search.temperatureUnit === "C" ? (recommendation.typicalDaytimeHighF - 32) * 5 / 9 : recommendation.typicalDaytimeHighF)}°{search.temperatureUnit}</strong> <span>· monthly climate average, not a forecast</span></p> : (search.temperatureMin !== null || search.temperatureMax !== null) ? <p className="planner-climate-note">No monthly temperature baseline is available for this location, so your temperature range could not be checked.</p> : null}</div>{search.components.includes("flights") && airportCode && <span className="planner-airport">{airportCode}</span>}</div>
             <div className="planner-highlights">{destination.highlights.slice(0, 3).map((highlight) => <span key={highlight}>{highlight}</span>)}</div>
             <div className="planner-actions">
               {search.components.includes("flights") && <a className="planner-outbound-link" href={state?.result?.providerSearchLinks?.flights || recommendation.flightSearchUrl} target="_blank" rel="noreferrer"><Plane size={14}/> Flights <ArrowUpRight size={12}/></a>}
@@ -1454,12 +1555,22 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               </details>}
 
               {search.components.includes("activities") && <>
+                <ProximityStartingPointPanel
+                  destinationId={destination.id}
+                  point={startingPoints[destination.id]}
+                  value={startingPointDrafts[destination.id] ?? startingPoints[destination.id]?.label ?? ""}
+                  loading={startingPointLoading[destination.id] === true}
+                  error={startingPointErrors[destination.id]}
+                  onChange={(value) => setStartingPointDrafts((current) => ({ ...current, [destination.id]: value }))}
+                  onSubmit={() => { void resolveStartingPoint(destination.id, startingPointDrafts[destination.id] ?? "").catch(() => undefined); }}
+                  onClear={() => clearStartingPoint(destination.id)}
+                />
                 <details id={`trip-section-${destination.id}-activities`} data-section-key="activities" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Activity size={17}/><strong>Activities & attractions</strong><span>{activityExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "activity")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
-                  {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
+                  {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
                 </details>
                 <details id={`trip-section-${destination.id}-restaurants`} data-section-key="restaurants" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
-                  {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">To verify the requested drive-time limit, select your preferred property above and use “Check drive time from selected stay” on each restaurant. Tripfinder checks the route only when you request it; straight-line distance is not driving time.</p>}
-                  {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
+                  {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">To verify a requested drive-time limit, set Your starting point above or select a property, then use the driving-route control on each restaurant. Tripfinder checks routes only when requested; straight-line distance is not driving time.</p>}
+                  {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
                 </details>
               </>}
               <details id={`trip-section-${destination.id}-weather`} data-section-key="weather" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
@@ -1504,7 +1615,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       })}
     </div>
 
-    {assistantContext && assistantRecommendation && <AITripAssistant key={assistantRecommendation.destination.id} context={assistantContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured}/>}
+    {assistantContext && assistantRecommendation && <AITripAssistant key={assistantRecommendation.destination.id} context={assistantContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured} onSetStartingPoint={(location) => resolveStartingPoint(assistantRecommendation.destination.id, location)}/>}
 
     <div className="planner-method-note"><p><strong>How to read these results.</strong> Flights, properties and places come from the selected providers. Straight-line distances are geographic estimates, not driving times. Weather is only shown when the forecast provider can cover the requested dates. Confirm final terms with the booking provider.</p></div>
   </div>;

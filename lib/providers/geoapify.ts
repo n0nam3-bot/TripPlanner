@@ -327,3 +327,83 @@ export async function getGeoapifyDrivingRoute(input: {
     throw error;
   }
 }
+
+export type GeoapifyGeocodedLocation = {
+  label: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  confidence: number;
+  resultType?: string;
+  fromCache: boolean;
+};
+
+/** Resolve a traveler-entered hotel, venue, college, landmark, or address. One credit per uncached lookup. */
+export async function geocodeGeoapifyStartingPoint(input: {
+  query: string;
+  destination: string;
+  clientUsageKey: string;
+}): Promise<GeoapifyGeocodedLocation | null> {
+  const key = apiKey();
+  const query = input.query.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+  const destination = input.destination.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+  if (query.length < 4 || !destination) throw new Error("GEOAPIFY_GEOCODE_INPUT_INVALID");
+  const searchText = `${query}, ${destination}`;
+  const cacheKey = providerCacheKey({ provider: "geoapify-starting-point-v1", text: searchText.toLowerCase() });
+  const cached = await getProviderCache(cacheKey);
+  if (cached) {
+    const row = asRecord(cached.payload.location);
+    if (typeof row.label === "string" && typeof row.address === "string" && typeof row.latitude === "number" && typeof row.longitude === "number") {
+      await recordProviderEvent({ provider: "Geoapify", category: "Geocoding / starting point", eventType: "cache_hit", outcome: "success", cacheStatus: "hit" });
+      return {
+        label: row.label, address: row.address, latitude: row.latitude, longitude: row.longitude,
+        confidence: typeof row.confidence === "number" ? row.confidence : 0.5,
+        ...(typeof row.resultType === "string" ? { resultType: row.resultType } : {}), fromCache: true,
+      };
+    }
+  }
+
+  const startedAt = Date.now();
+  try {
+    await waitForGeoapifyRequestSlot();
+    await reserveGeoapifyCredits(input.clientUsageKey, 1);
+    const url = new URL("https://api.geoapify.com/v1/geocode/search");
+    url.searchParams.set("text", searchText);
+    url.searchParams.set("lang", "en");
+    url.searchParams.set("limit", "5");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("apiKey", key);
+    const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) {
+      await recordProviderEvent({ provider: "Geoapify", category: "Geocoding / starting point", eventType: "provider_error", outcome: "error", httpStatus: response.status, durationMs: Date.now() - startedAt });
+      throw new Error(response.status === 429 ? "GEOAPIFY_PROVIDER_RATE_LIMITED" : `GEOAPIFY_GEOCODE_HTTP_${response.status}`);
+    }
+    const payload = asRecord(await response.json());
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    const candidates = results.flatMap((raw) => {
+      const row = asRecord(raw);
+      const latitude = typeof row.lat === "number" ? row.lat : NaN;
+      const longitude = typeof row.lon === "number" ? row.lon : NaN;
+      const rank = asRecord(row.rank);
+      const confidence = typeof rank.confidence === "number" ? rank.confidence : 0;
+      const address = typeof row.formatted === "string" ? row.formatted.trim() : typeof row.address_line1 === "string" ? row.address_line1.trim() : "";
+      const label = typeof row.name === "string" && row.name.trim() ? row.name.trim() : address;
+      if (!label || !address || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 || confidence < 0.35) return [];
+      return [{ label: label.slice(0, 160), address: address.slice(0, 240), latitude, longitude, confidence: Math.min(1, Math.max(0, confidence)), resultType: typeof row.result_type === "string" ? row.result_type.slice(0, 60) : undefined }];
+    });
+    const best = candidates.sort((a, b) => b.confidence - a.confidence)[0];
+    if (!best) {
+      await recordProviderEvent({ provider: "Geoapify", category: "Geocoding / starting point", eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
+      return null;
+    }
+    await setProviderCache(cacheKey, { location: best }, 7 * 24 * 60 * 60);
+    await recordProviderEvent({ provider: "Geoapify", category: "Geocoding / starting point", eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
+    return { ...best, fromCache: false };
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "GEOAPIFY_GEOCODE_FAILED";
+    if (code.includes("DAILY_CAP") || code.includes("GATE_INCONSISTENT") || code === "GEOAPIFY_REQUEST_RATE_LIMITED" || code === "GEOAPIFY_PROVIDER_RATE_LIMITED") {
+      await recordProviderEvent({ provider: "Geoapify", category: "Geocoding / starting point", eventType: "request_blocked", outcome: "blocked", cacheStatus: "miss" }).catch(() => undefined);
+    }
+    throw error;
+  }
+}
