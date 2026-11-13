@@ -17,6 +17,10 @@ export type GeoapifyRoute = {
   duration: string;
   durationSeconds: number;
   distanceMeters: number;
+  /** GeoJSON coordinates in [longitude, latitude] order for map rendering. */
+  geometry: Array<[number, number]>;
+  /** Turn-by-turn instruction text supplied by the routing provider. */
+  directions: string[];
 };
 
 export type GeoapifyCreditCaps = { dailyCap: number; clientDailyCap: number };
@@ -133,10 +137,53 @@ export function buildGeoapifyRouteUrl(input: {
     waypoints: `${input.origin.latitude},${input.origin.longitude}|${input.destination.latitude},${input.destination.longitude}`,
     mode: "drive",
     units: "imperial",
-    format: "json",
+    format: "geojson",
+    details: "instruction_details",
     apiKey: input.apiKey.trim(),
   });
   return `https://api.geoapify.com/v1/routing?${params.toString()}`;
+}
+
+
+export function buildGeoapifyStaticMapUrl(input: {
+  geometry: Array<[number, number]>;
+  origin: GeoCoordinates;
+  destination: GeoCoordinates;
+  apiKey: string;
+  width?: number;
+  height?: number;
+}): string {
+  if (!input.apiKey.trim()) throw new Error("GEOAPIFY_NOT_CONFIGURED");
+  if (input.geometry.length < 2) throw new Error("INVALID_GEOAPIFY_ROUTE_GEOMETRY");
+  const points = input.geometry;
+  const maxPoints = 72;
+  const sampled = points.length <= maxPoints
+    ? points
+    : Array.from({ length: maxPoints }, (_, index) => points[Math.round(index * (points.length - 1) / (maxPoints - 1))]);
+  const longitudes = sampled.map(([longitude]) => longitude);
+  const latitudes = sampled.map(([, latitude]) => latitude);
+  const minLon = Math.min(...longitudes); const maxLon = Math.max(...longitudes);
+  const minLat = Math.min(...latitudes); const maxLat = Math.max(...latitudes);
+  const padLon = Math.max(0.004, (maxLon - minLon) * 0.14);
+  const padLat = Math.max(0.004, (maxLat - minLat) * 0.14);
+  const polyline = sampled.map(([longitude, latitude]) => `${longitude.toFixed(5)},${latitude.toFixed(5)}`).join(",");
+  const width = Math.max(320, Math.min(1200, Math.round(input.width ?? 700)));
+  const height = Math.max(220, Math.min(900, Math.round(input.height ?? 380)));
+  const params = new URLSearchParams({
+    style: "osm-carto",
+    width: String(width),
+    height: String(height),
+    format: "png",
+    attribution: "default",
+    area: `rect:${(minLon - padLon).toFixed(5)},${(maxLat + padLat).toFixed(5)},${(maxLon + padLon).toFixed(5)},${(minLat - padLat).toFixed(5)}`,
+    geometry: `polyline:${polyline};linecolor:#1b7655;linewidth:5;lineopacity:0.92`,
+    marker: [
+      `lonlat:${input.origin.longitude},${input.origin.latitude};type:circle;color:#1b7655;size:large;text:A;contentsize:12;shadow:no`,
+      `lonlat:${input.destination.longitude},${input.destination.latitude};type:circle;color:#bc5a3a;size:large;text:B;contentsize:12;shadow:no`,
+    ].join("|"),
+    apiKey: input.apiKey,
+  });
+  return `https://maps.geoapify.com/v1/staticmap?${params.toString()}`;
 }
 
 export function formatGeoapifyDuration(seconds: number): string {
@@ -150,20 +197,65 @@ export function formatGeoapifyDuration(seconds: number): string {
 
 export function parseGeoapifyRoute(payload: unknown): GeoapifyRoute | null {
   const root = record(payload);
-  const first = Array.isArray(root.results) ? record(root.results[0]) : {};
-  const distance = finite(first.distance);
-  const seconds = finite(first.time);
+  const feature = Array.isArray(root.features) ? record(root.features[0]) : {};
+  const featureProperties = record(feature.properties);
+  const featureGeometry = record(feature.geometry);
+  const jsonRoute = Array.isArray(root.results) ? record(root.results[0]) : {};
+  const route = Object.keys(featureProperties).length ? featureProperties : jsonRoute;
+  const distance = finite(route.distance);
+  const seconds = finite(route.time);
   if (distance === null || seconds === null || distance < 0 || seconds < 0) return null;
-  // Geoapify returns miles when units=imperial. If the response omits the
-  // unit marker, the API default is metric and distance is interpreted as m.
-  const unit = text(first.distance_units) || text(record(root.properties).units) || "m";
-  const miles = /mi|mile/i.test(unit) ? distance : distance / 1609.344;
-  const distanceMeters = /mi|mile/i.test(unit) ? distance * 1609.344 : distance;
+  // GeoJSON places the requested units in the top-level FeatureCollection
+  // properties; the legacy JSON shape places distance_units on the route.
+  // "imperial" means the distance value is already in miles.
+  const requestedUnits = text(record(root.properties).units).toLowerCase();
+  const unit = text(route.distance_units) || (/^imperial$/.test(requestedUnits) ? "mi" : /^metric$/.test(requestedUnits) ? "m" : "m");
+  const isMiles = /mi|mile/i.test(unit);
+  const miles = isMiles ? distance : distance / 1609.344;
+  const distanceMeters = isMiles ? distance * 1609.344 : distance;
+
+  const rawCoordinates: unknown[] = [];
+  const geometryCoordinates = featureGeometry.coordinates;
+  if (Array.isArray(geometryCoordinates)) {
+    const geometryType = text(featureGeometry.type);
+    const lines = geometryType === "LineString"
+      ? [geometryCoordinates]
+      : geometryCoordinates;
+    for (const line of lines) {
+      if (!Array.isArray(line)) continue;
+      for (const point of line) rawCoordinates.push(point);
+    }
+  }
+  // Backward compatibility for JSON route responses shaped as [{lat, lon}] or [[lon, lat]].
+  if (!rawCoordinates.length && Array.isArray(jsonRoute.geometry)) {
+    rawCoordinates.push(...jsonRoute.geometry);
+  }
+  const geometry: Array<[number, number]> = rawCoordinates.map((point) => {
+    if (Array.isArray(point) && point.length >= 2) {
+      const lon = finite(point[0]); const lat = finite(point[1]);
+      return lon !== null && lat !== null && Math.abs(lon) <= 180 && Math.abs(lat) <= 90 ? [lon, lat] : null;
+    }
+    const item = record(point);
+    const lon = finite(item.lon ?? item.longitude); const lat = finite(item.lat ?? item.latitude);
+    return lon !== null && lat !== null && Math.abs(lon) <= 180 && Math.abs(lat) <= 90 ? [lon, lat] : null;
+  }).filter((point): point is [number, number] => Boolean(point));
+
+  const legs = Array.isArray(route.legs) ? route.legs : [];
+  const directions = legs.flatMap((leg) => {
+    const steps = record(leg).steps;
+    return Array.isArray(steps) ? steps.map((step) => {
+      const instruction = record(record(step).instruction);
+      return text(instruction.text) || text(record(step).text);
+    }).filter(Boolean) : [];
+  }).slice(0, 12);
+
   return {
     distance: `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi`,
     duration: formatGeoapifyDuration(seconds),
     durationSeconds: Math.round(seconds),
     distanceMeters,
+    geometry,
+    directions,
   };
 }
 

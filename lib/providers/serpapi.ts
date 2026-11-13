@@ -840,31 +840,6 @@ async function searchPlacesWithFallback(
 ): Promise<ProviderResponse> {
   const airport = AIRPORT_COORDINATES[destinationAirportCode];
   const area = getDestinationAreaGeo(destinationName);
-  if (process.env.GEOAPIFY_API_KEY?.trim()) {
-    const center = area
-      ? { latitude: area.latitude, longitude: area.longitude }
-      : airport ? { latitude: airport.latitude, longitude: airport.longitude } : null;
-    if (center) {
-      const radiusMiles = area
-        ? (kind === "restaurant" ? area.restaurantRadiusMiles : area.activityRadiusMiles)
-        : (kind === "restaurant" ? 45 : 60);
-      const result = await searchGeoapifyPlaces({
-        center,
-        radiusMeters: Math.round(radiusMiles * 1609.344),
-        kind,
-        clientUsageKey,
-        forceRefresh,
-      });
-      return {
-        data: result.data,
-        fetchedAt: result.fetchedAt,
-        fromCache: result.fromCache,
-        isStale: result.isStale,
-      };
-    }
-    // Geoapify needs a spatial anchor. If the internal destination/airport
-    // catalog has no coordinates, retain the existing location-aware Maps path.
-  }
   const mapsParams: Record<string, string> = {
     engine: "google_maps",
     type: "search",
@@ -872,74 +847,84 @@ async function searchPlacesWithFallback(
     hl: "en",
     gl: googleCountryCode(destinationName),
   };
-  if (area) mapsParams.ll = `@${area.latitude},${area.longitude},10z`;
+  if (area) mapsParams.ll = `@${area.latitude},${area.longitude},12z`;
   else if (airport) mapsParams.ll = `@${airport.latitude},${airport.longitude},12z`;
 
   let mapsResult: ProviderResponse | null = null;
   let mapsError: unknown = null;
-  let mapEntries: unknown[] = [];
-  let localCount = 0;
+  let googleEntries: unknown[] = [];
+
+  // Use one Google Maps query as the rich listing source. It already includes
+  // place links, photos, ratings, review counts and coordinates when available.
+  // Do not issue a second Google Local query just to pad the list; Geoapify is
+  // the lower-cost structured fallback for sparse Google results.
   try {
     mapsResult = await querySerpApi(mapsParams, clientUsageKey, forceRefresh);
-    mapEntries = [
+    googleEntries = [
       ...arr(mapsResult.data.local_results),
       ...arr(mapsResult.data.place_results),
       ...arr(mapsResult.data.discover_more_places),
     ];
-    localCount = filterDestinationExperiences(
-      normalizeExperiences(mapsResult.data, destinationName, kind),
+    const mapsCount = filterDestinationExperiences(
+      normalizeExperiences({ local_results: googleEntries }, destinationName, kind),
       destinationName,
       destinationAirportCode,
       kind,
     ).length;
-    // One or two local hits usually means Maps interpreted the query as a
-    // tour operator/service search. Fall back unless it found a useful list.
-    if (localCount >= 6) return mapsResult;
+    if (mapsCount >= 6) return { ...mapsResult, data: { ...mapsResult.data, local_results: googleEntries } };
   } catch (error) {
     mapsError = error;
     const code = error instanceof Error ? error.message : "";
-    if (["SERPAPI_MONTHLY_CAP_REACHED", "SERPAPI_HOURLY_CAP_REACHED", "SERPAPI_PROVIDER_QUOTA_LOW", "SERPAPI_PROVIDER_HOURLY_LIMIT", "SERPAPI_QUOTA_CHECK_FAILED", "SERPAPI_CLIENT_RATE_LIMITED", "DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED", "SERPAPI_NOT_CONFIGURED"].includes(code)) throw error;
+    // Geoapify can keep place discovery working when SerpApi is not configured
+    // or has reached its provider quota. Neon failures still stop the request,
+    // because the shared Geoapify safety gate and cache also depend on Neon.
+    if (["DATABASE_UNAVAILABLE", "DATABASE_NOT_CONFIGURED"].includes(code)) throw error;
   }
 
-  try {
-    // Keep the locality in the query and location parameter. This second
-    // provider view can surface actual destination attractions when Maps
-    // returns only a thin set or a tour operator located outside the area.
-    const fallbackResult = await querySerpApi({
-      engine: "google_local",
-      q: `${query} in ${destinationName}`,
-      location: destinationName,
-      hl: "en",
-      gl: googleCountryCode(destinationName),
-    }, clientUsageKey, forceRefresh);
-    const fallbackEntries = [
-      ...arr(fallbackResult.data.local_results),
-      ...arr(fallbackResult.data.place_results),
-      ...arr(fallbackResult.data.discover_more_places),
-    ];
-    if (mapsResult) {
-      // The combined list is only as fresh as its least-fresh contributing
-      // provider response. Preserve that state so the UI cannot label stale
-      // Maps entries as live just because the Google Local fallback was fresh.
-      const isStale = Boolean(mapsResult.isStale || fallbackResult.isStale);
-      const fetchedAt = [mapsResult.fetchedAt, fallbackResult.fetchedAt]
-        .filter(Boolean)
-        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0]
-        || fallbackResult.fetchedAt;
-      return {
-        ...fallbackResult,
-        fetchedAt,
-        fromCache: Boolean(mapsResult.fromCache && fallbackResult.fromCache),
-        isStale,
-        data: { ...fallbackResult.data, local_results: [...mapEntries, ...fallbackEntries] },
-      };
+  const googleCount = filterDestinationExperiences(
+    normalizeExperiences({ local_results: googleEntries }, destinationName, kind),
+    destinationName,
+    destinationAirportCode,
+    kind,
+  ).length;
+
+  // Geoapify remains a structured OSM fallback for gaps in the richer Google
+  // listing set. It is not queried when Google already found a healthy list.
+  if (googleCount < 6 && process.env.GEOAPIFY_API_KEY?.trim()) {
+    const center = area
+      ? { latitude: area.latitude, longitude: area.longitude }
+      : airport ? { latitude: airport.latitude, longitude: airport.longitude } : null;
+    if (center) {
+      try {
+        const radiusMiles = area
+          ? (kind === "restaurant" ? area.restaurantRadiusMiles : area.activityRadiusMiles)
+          : (kind === "restaurant" ? 45 : 60);
+        const geo = await searchGeoapifyPlaces({
+          center,
+          radiusMeters: Math.round(radiusMiles * 1609.344),
+          kind,
+          clientUsageKey,
+          forceRefresh,
+        });
+        const mergedEntries = [...googleEntries, ...geo.data.local_results];
+        const timestamps = [mapsResult?.fetchedAt, geo.fetchedAt].filter(Boolean).sort((a, b) => new Date(a!).getTime() - new Date(b!).getTime());
+        return {
+          data: { ...(mapsResult?.data ?? {}), local_results: mergedEntries },
+          fetchedAt: timestamps[0] || geo.fetchedAt,
+          fromCache: Boolean((!mapsResult || mapsResult.fromCache) && geo.fromCache),
+          isStale: Boolean(mapsResult?.isStale || geo.isStale),
+        };
+      } catch (geoError) {
+        // Keep any useful Google results. Provider quota failures should be
+        // visible only when there is no usable data at all.
+        if (!googleEntries.length && !mapsResult) throw geoError;
+      }
     }
-    return fallbackResult;
-  } catch (fallbackError) {
-    if (mapsResult && localCount > 0) return mapsResult;
-    if (mapsError) throw mapsError;
-    throw fallbackError;
   }
+
+  if (mapsResult) return { ...mapsResult, data: { ...mapsResult.data, local_results: googleEntries } };
+  if (mapsError) throw mapsError;
+  throw new Error("LOCAL_PLACE_SEARCH_UNAVAILABLE");
 }
 
 export async function searchLiveTravel(input: TripSearchInput, destinationAirportCode: string, destinationName: string, clientUsageKey = "shared", forceRefresh = false): Promise<LiveTravelSearchResult> {
@@ -951,9 +936,6 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   const normalizedDestinationName = cleanDestinationSearchName(destinationName);
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
   const destinationCode = input.destinationAirportCode || destinationAirportCode;
-  const geoapifyPlacesActive = Boolean(process.env.GEOAPIFY_API_KEY?.trim() && (
-    getDestinationAreaGeo(normalizedDestinationName) || AIRPORT_COORDINATES[destinationCode || destinationAirportCode]
-  ));
   if (components.includes("flights") && !originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (components.includes("flights") && (!destinationCode || !/^[A-Z]{3}$/.test(destinationCode))) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
 
@@ -1080,7 +1062,9 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     status,
     provider: [
       "SerpApi / Google Travel",
-      components.includes("activities") && geoapifyPlacesActive ? "Geoapify / OpenStreetMap Places" : components.includes("activities") ? "Google Maps/Local via SerpApi" : "",
+      components.includes("activities") && [...experiences, ...restaurants].some((item) => item.source?.includes("SerpApi")) ? "Google Maps/Local via SerpApi" : "",
+      components.includes("activities") && [...experiences, ...restaurants].some((item) => item.source?.includes("Geoapify")) ? "Geoapify / OpenStreetMap Places" : "",
+      components.includes("activities") && process.env.GEOAPIFY_API_KEY?.trim() ? "Geoapify Routing (on demand)" : "",
       bookingResult?.hotels.length ? "Booking.com" : "",
     ].filter(Boolean).join(" + "),
     checkedAt: new Date().toISOString(),
@@ -1120,7 +1104,7 @@ export async function getHotelBookingOptions(propertyToken: string, input: TripS
   return [...new Map(offers.map((offer) => [`${offer.seller}:${offer.url ?? offer.price}`, offer])).values()].slice(0, 12);
 }
 
-export type DrivingRouteResult = { distance: string; duration: string; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string };
+export type DrivingRouteResult = { distance: string; duration: string; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string; mapImageDataUrl?: string; directions?: string[] };
 export type RouteCoordinates = { latitude: number; longitude: number };
 
 export async function getDrivingRoute(
@@ -1149,6 +1133,8 @@ export async function getDrivingRoute(
       endAddress: route.endAddress,
       source: route.source,
       checkedAt: route.checkedAt,
+      ...(route.mapImageDataUrl ? { mapImageDataUrl: route.mapImageDataUrl } : {}),
+      ...(route.directions.length ? { directions: route.directions } : {}),
     };
   }
   const result = await querySerpApi({

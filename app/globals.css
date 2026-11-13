@@ -776,9 +776,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .hotel-proximity { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 9px; padding-top: 10px; border-top: 1px solid #edf0ec; }
 .hotel-proximity > span, .hotel-proximity > a { color: #576b60; font-size: 11px; line-height: 1.4; }
 .hotel-proximity strong { color: #334c3e; }
-.route-lookup { display: inline-flex; flex-wrap: wrap; gap: 5px 8px; align-items: center; margin-left: 5px; }
+.route-lookup { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin: 6px 0 0; min-width: 0; width: 100%; }
 .route-lookup button { border: 1px solid #d5e0d7; background: #f5f8f5; border-radius: 7px; padding: 4px 7px; color: #2d5b44; font-size: 10px; font-weight: 650; }
-.route-lookup small { color: #355944; font-size: 10px; font-variant-numeric: tabular-nums; }
+.route-lookup small { display: block; color: #355944; font-size: 10px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .route-lookup .route-error { color: #a43f31; }
 .hotel-booking-options { margin-top: 12px; padding-top: 9px; border-top: 1px solid #e8ede8; }
 .hotel-booking-options > div { padding: 9px 0; border-bottom: 1px solid #edf0ed; }
@@ -891,7 +891,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .hotel-provider-links a { display:inline-flex; align-items:center; gap:5px; color:#984b34; font-size:11px; font-weight:650; text-decoration:underline; text-decoration-color:#dfc0b5; text-underline-offset:3px; }
 .hotel-provider-links a:hover { color:#713321; }
 .experience-distances { display:flex; flex-direction:column; align-items:flex-start; gap:7px; margin-top:9px; }
-.experience-distances > span { display:flex; flex-wrap:wrap; align-items:center; gap:5px 8px; color:#4d6256; font-size:11px; }
+.experience-distances > div { display:flex; flex-direction:column; align-items:flex-start; gap:4px; color:#4d6256; font-size:11px; line-height:1.45; width:100%; }
 .experience-distances .route-lookup { margin-left:0; }
 .experience-actions a { min-height:34px; padding:7px 10px; border:1px solid #e0e7e1; border-radius:8px; background:#fff; color:#83442f; }
 .experience-actions a:hover { border-color:#c68a73; background:#fcf5f1; }
@@ -1630,3 +1630,15 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
 .experience-attribution { display:block; margin-top:5px; color:#7f8c82; font-size:9px; line-height:1.45; }
 .experience-attribution a { color:#647a69; text-decoration:underline; text-underline-offset:2px; }
 .route-source-note { display:block; color:#829087; font-size:8px; line-height:1.45; }
+.route-result { display:grid; gap:7px; width:min(100%,620px); padding:9px; border:1px solid #e0e8e0; border-radius:10px; background:#fbfcfa; }
+.route-result > strong { color:#244333; font-size:12px; font-variant-numeric:tabular-nums; }
+.route-map-preview { display:grid; gap:4px; width:100%; }
+.route-map-preview img { display:block; width:100%; max-width:700px; height:auto; aspect-ratio:700 / 380; object-fit:contain; border:1px solid #e2e8e2; border-radius:8px; background:#eef2ed; }
+.route-map-preview small { color:#6e7f73; font-size:9px; }
+.route-open-maps { display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:100%; color:#88442f; font-size:10px; font-weight:700; text-decoration:underline; text-underline-offset:3px; }
+.route-directions { border-top:1px solid #e4ebe4; padding-top:7px; color:#40584a; font-size:10px; }
+.route-directions summary { cursor:pointer; font-weight:700; }
+.route-directions ol { margin:7px 0 0; padding-left:20px; display:grid; gap:5px; }
+.route-directions li { line-height:1.45; }
+.hotel-activity-distance { display:flex; flex-direction:column; align-items:flex-start; gap:4px; width:100%; color:#4d6256; font-size:11px; line-height:1.45; }
+.experience-booking-link-note { grid-column:1 / -1; color:#718076; font-size:9px; line-height:1.4; }
