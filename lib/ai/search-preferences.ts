@@ -26,6 +26,7 @@ export type SearchPreferenceDraft = {
   budgetMode?: "total" | "per_person";
   currency?: "USD" | "CAD" | "EUR" | "GBP";
   components?: TripComponent[];
+  restaurantsRequested?: boolean;
   tripStyle?: TripStyle;
   stayTypes?: StayType[];
   staySpaceType?: StaySpaceType;
@@ -125,11 +126,14 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   const destinationArea = cleanText(raw.destinationArea, 100);
   const originAirportCode = cleanText(raw.originAirportCode, 3)?.toUpperCase();
   const destinationAirportCode = cleanText(raw.destinationAirportCode, 3)?.toUpperCase();
+  const flightIntent = /\b(flights?|fly|flying|airfare|air travel|plane tickets?)\b/i.test(sourceText);
   if (origin) draft.origin = origin;
-  if (originAirportCode && /^[A-Z]{3}$/.test(originAirportCode)) draft.originAirportCode = originAirportCode;
+  // Validate airport-looking tokens against the real directory. Ordinary
+  // words such as "the" must never become an invented IATA code.
+  if (flightIntent && originAirportCode && /^[A-Z]{3}$/.test(originAirportCode) && airportCountry(originAirportCode)) draft.originAirportCode = originAirportCode;
   if (destination) draft.destination = destination;
   if (destinationArea) draft.destinationArea = destinationArea;
-  if (destinationAirportCode && /^[A-Z]{3}$/.test(destinationAirportCode)) draft.destinationAirportCode = destinationAirportCode;
+  if (flightIntent && destinationAirportCode && /^[A-Z]{3}$/.test(destinationAirportCode) && airportCountry(destinationAirportCode)) draft.destinationAirportCode = destinationAirportCode;
 
   const departureDate = validDate(raw.departureDate, todayLocal);
   const returnDate = validDate(raw.returnDate, todayLocal);
@@ -151,6 +155,8 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   const currency = enumValue(raw.currency, currencies) as SearchPreferenceDraft["currency"];
   let components = enumList(raw.components, tripComponents, 3);
   const tripStyle = enumValue(raw.tripStyle, tripStyles);
+  const restaurantsRequested = raw.restaurantsRequested === true || /\b(restaurants?|dining|places to eat|where to eat|food options)\b/i.test(sourceText);
+  if (restaurantsRequested) draft.restaurantsRequested = true;
   const parsedStayTypes = enumList(raw.stayTypes, stayTypes, 2);
   let staySpaceType = enumValue(raw.staySpaceType, spaceTypes);
   const explicitEntirePhrase = /\b(entire|whole)\s+(?:house|home|property|place|cabin|condo|villa)\b|\b(?:rent|book|looking for)\s+(?:a|an)\s+(?:whole|entire)\s+(?:house|home|property|place|cabin|condo|villa)\b|\bprivate\s+(?:house|home|property|cabin|condo|villa)\b/i.test(source);
@@ -236,6 +242,7 @@ const KNOWN_DESTINATION_AREAS: Array<{ aliases: string[]; destination: string; d
   { aliases: ["lake harmony"], destination: "Pennsylvania", destinationArea: "Lake Harmony" },
   { aliases: ["jim thorpe"], destination: "Pennsylvania", destinationArea: "Jim Thorpe" },
   { aliases: ["stroudsburg", "east stroudsburg"], destination: "Pennsylvania", destinationArea: "Stroudsburg" },
+  { aliases: ["seneca falls", "seneca falls ny", "seneca falls new york"], destination: "New York", destinationArea: "Seneca Falls" },
 ];
 
 function normalizedPhrase(value: string): string {
@@ -264,6 +271,16 @@ function collectDateTokens(source: string): ParsedDateToken[] {
   const monthFirst = new RegExp(`\\b(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(20\\d{2}))?\\b`, "gi");
   for (const match of source.matchAll(monthFirst)) {
     found.push({ index: match.index ?? 0, month: MONTHS[match[1].toLowerCase()], day: Number(match[2]), year: match[3] ? Number(match[3]) : undefined, raw: match[0] });
+  }
+  // In ranges such as "Dec 25th to the 27th", inherit the month and any
+  // explicit year for the second day instead of silently dropping it.
+  const monthRange = new RegExp(`\\b(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(20\\d{2}))?\\s+(?:to|through|until|[-–])\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(20\\d{2}))?\\b`, "gi");
+  for (const match of source.matchAll(monthRange)) {
+    const startIndex = match.index ?? 0;
+    const month = MONTHS[match[1].toLowerCase()];
+    const startYear = match[3] ? Number(match[3]) : undefined;
+    found.push({ index: startIndex, month, day: Number(match[2]), year: startYear, raw: match[0] });
+    found.push({ index: startIndex + match[0].lastIndexOf(match[4]), month, day: Number(match[4]), year: match[5] ? Number(match[5]) : startYear, raw: match[4] });
   }
   const dayFirst = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthNames})(?:,?\\s+(20\\d{2}))?\\b`, "gi");
   for (const match of source.matchAll(dayFirst)) {
@@ -354,10 +371,11 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
   const source = description.trim();
   const raw: Record<string, unknown> = {};
 
-  // Treat the airport immediately after "to" as the flight endpoint, while
-  // finding the human destination/area anywhere in the sentence. Travelers
-  // commonly write "JFK to STI for an Airbnb in Las Terrenas, Dominican Republic".
-  const destinationClause = source.match(/\bto\s+(.+?)(?=\s+\b(?:on|depart(?:ing)?|return(?:ing)?|back|budget|avoid|prefer|premium|eco|business|economy|with)\b|[,;]|$)/i)?.[1]?.trim();
+  const wantsFlights = /\b(flights?|fly|flying|airfare|air travel|plane tickets?)\b/i.test(source);
+  const drivingIntent = /\b(driving|drive|by car|road trip|car trip)\b/i.test(source);
+  // Keep the destination phrase separate from an origin stated after it,
+  // e.g. "driving to Seneca Falls, New York from NYC".
+  const destinationClause = source.match(/\bto\s+(?:the\s+)?(.+?)(?=\s+\b(?:from|on|depart(?:ing)?|return(?:ing)?|back|budget|avoid|prefer|premium|eco|business|economy|with|for)\b|[,;]|$)/i)?.[1]?.trim();
   const knownAreas = [...KNOWN_DESTINATION_AREAS, { aliases: ["tirana", "tirane"], destination: "Albania", destinationArea: "Tirana" }]
     .sort((a, b) => Math.max(...b.aliases.map((item) => normalizedPhrase(item).length)) - Math.max(...a.aliases.map((item) => normalizedPhrase(item).length)));
   const area = knownAreas.find((item) => item.aliases.some((alias) => containsPhrase(source, alias)));
@@ -365,7 +383,7 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
     raw.destination = area.destination;
     raw.destinationArea = area.destinationArea;
   } else {
-    const countries = [...new Set<string>([...LAYOVER_COUNTRY_OPTIONS, "Dominican Republic", "Puerto Rico", "United States", "United Kingdom", "Mexico", "Portugal", "Jamaica", "Aruba", "Canada", "France", "Italy", "Spain", "Japan"] )];
+    const countries = [...new Set<string>([...LAYOVER_COUNTRY_OPTIONS, "Dominican Republic", "Puerto Rico", "United States", "United Kingdom", "Mexico", "Portugal", "Jamaica", "Aruba", "Canada", "France", "Italy", "Spain", "Japan", "New York"] )];
     const countryText = ` ${normalizedPhrase(destinationClause || source)} `;
     const fallbackText = ` ${normalizedPhrase(source)} `;
     const country = countries
@@ -376,26 +394,32 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
     if (country) raw.destination = country;
   }
 
-  const fromTo = source.match(/\bfrom\s+(.+?)\s+to\s+/i);
-  if (fromTo?.[1]) {
-    const requestedOrigin = fromTo[1].trim().replace(/[,.]+$/, "");
-    const originCode = resolveAirportCode(requestedOrigin);
-    if (requestedOrigin) raw.origin = /^[a-z]{3}$/i.test(requestedOrigin) ? requestedOrigin.toUpperCase() : originCode ? `${requestedOrigin} (${originCode})` : requestedOrigin;
-    if (originCode) raw.originAirportCode = originCode;
+  const fromAnywhere = source.match(/\bfrom\s+(.+?)(?=\s+\b(?:to|on|depart(?:ing)?|return(?:ing)?|back|budget|with|for|and|then)\b|[,;.!?]|$)/i);
+  if (fromAnywhere?.[1]) {
+    const requestedOrigin = fromAnywhere[1].trim().replace(/[,.]+$/, "");
+    const originCode = wantsFlights ? resolveAirportCode(requestedOrigin) : null;
+    if (requestedOrigin) raw.origin = originCode && /^[a-z]{3}$/i.test(requestedOrigin) ? requestedOrigin.toUpperCase() : originCode ? `${requestedOrigin} (${originCode})` : requestedOrigin;
+    if (originCode && airportCountry(originCode)) raw.originAirportCode = originCode;
+    if (drivingIntent && !wantsFlights) raw.notes = [...(Array.isArray(raw.notes) ? raw.notes as string[] : []), `Driving trip: from ${requestedOrigin}; flights are not requested.`];
   }
-  const directDestinationCode = source.match(/\bto\s+([a-z]{3})\b/i)?.[1]?.toUpperCase();
-  const clauseAirportCode = [...(destinationClause || "").matchAll(/\b([a-z]{3})\b/gi)]
-    .map((match) => match[1].toUpperCase()).find((code) => Boolean(airportCountry(code)));
-  const trailingDestinationCode = destinationClause?.match(/\b([a-z]{3})\)?\s*$/i)?.[1]?.toUpperCase();
-  const explicitDestinationCode = directDestinationCode || clauseAirportCode || trailingDestinationCode;
-  if (explicitDestinationCode && /^[A-Z]{3}$/.test(explicitDestinationCode)) raw.destinationAirportCode = explicitDestinationCode;
-  if (!raw.destination && typeof raw.destinationAirportCode === "string") {
-    const inferredCountry = airportCountry(raw.destinationAirportCode);
-    if (inferredCountry) raw.destination = inferredCountry;
-  }
-  if (!raw.destinationAirportCode && typeof raw.destination === "string") {
-    const destinationCode = resolveAirportCode(String(raw.destinationArea || raw.destination));
-    if (destinationCode) raw.destinationAirportCode = destinationCode;
+
+  // Only parse airport gateways for an explicit flight request, and verify
+  // each candidate against the supported airport/metro directory.
+  if (wantsFlights) {
+    const directDestinationCode = source.match(/\bto\s+(?:the\s+)?([a-z]{3})\b/i)?.[1]?.toUpperCase();
+    const clauseAirportCode = [...(destinationClause || "").matchAll(/\b([a-z]{3})\b/gi)]
+      .map((match) => match[1].toUpperCase()).find((code) => Boolean(airportCountry(code)));
+    const trailingDestinationCode = destinationClause?.match(/\b([a-z]{3})\)?\s*$/i)?.[1]?.toUpperCase();
+    const explicitDestinationCode = [directDestinationCode, clauseAirportCode, trailingDestinationCode].find((code) => Boolean(code && airportCountry(code)));
+    if (explicitDestinationCode) raw.destinationAirportCode = explicitDestinationCode;
+    if (!raw.destination && typeof raw.destinationAirportCode === "string") {
+      const inferredCountry = airportCountry(raw.destinationAirportCode);
+      if (inferredCountry) raw.destination = inferredCountry;
+    }
+    if (!raw.destinationAirportCode && typeof raw.destination === "string") {
+      const destinationCode = resolveAirportCode(String(raw.destinationArea || raw.destination));
+      if (destinationCode && airportCountry(destinationCode)) raw.destinationAirportCode = destinationCode;
+    }
   }
   if (raw.destination === "Albania" && raw.destinationAirportCode === "TIA" && !raw.destinationArea) raw.destinationArea = "Tirana";
 
@@ -405,8 +429,10 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
     raw.stayTypes = asksRental && asksHotel ? ["vacation_rentals", "hotels"] : asksRental ? ["vacation_rentals"] : ["hotels"];
     raw.components = ["stays"];
   }
-  if (/\b(flights?|fly|flying|airfare|air travel|plane tickets?)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "flights"])];
-  if (/\b(activities|things to do|attractions|excursions|tours|restaurants|dining)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "activities"])];
+  if (wantsFlights) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "flights"])];
+  const requestsActivitiesOrDining = /\b(activities|things to do|attractions|excursions|tours|restaurants?|dining|places to eat|where to eat)\b/i.test(source);
+  if (requestsActivitiesOrDining) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "activities"])];
+  if (/\b(restaurants?|dining|places to eat|where to eat|food options)\b/i.test(source)) raw.restaurantsRequested = true;
 
   if (/\b(beachfront|on the beach|oceanfront|steps from the beach|direct beach access)\b/i.test(source)) {
     raw.tripStyle = "beach";
@@ -531,12 +557,14 @@ export const SEARCH_PREFERENCE_SYSTEM_PROMPT = [
   "Translate amenities only to these IDs: private_pool, shared_pool, pool, indoor_pool, heated_pool, outdoor_pool, hot_tub, sauna, outdoor_grill, kitchen, kitchenette, fireplace, washer_dryer, balcony_terrace, free_parking, pet_friendly, beach_access, gym, wifi, air_conditioning. Do not infer private_pool from a generic pool. If the traveler says private pool, use private_pool. If community/shared pool, use shared_pool. If simply pool, use pool.",
   "Features phrased as must-have, need, require, or a direct 'with X' condition go into mustHaveAmenities. Features phrased as prefer, ideally, would like, or nice-to-have go into preferredAmenities. Never put the same amenity in both.",
   "Recognize components: airfare/flight => flights; lodging/stay/hotel/rental => stays; sightseeing/tours/activities/restaurants => activities. Do not add unrelated components.",
-  "Recognize route endpoints and explicit three-letter airport codes; populate origin, originAirportCode, destination, destinationArea, and destinationAirportCode when stated. For example, from NYC to Albania TIA means originAirportCode=NYC, destination=Albania, destinationAirportCode=TIA.",
+  "Recognize ground trips explicitly: driving, drive, road trip, or by car does not enable flights unless the traveler separately asks for flights. For a driving trip, preserve the text origin for context but do not create airport codes. Recognize origins whether they appear before or after the destination, e.g. driving to Seneca Falls, New York from NYC.",
+  "Recognize route endpoints and explicit three-letter airport codes only when the traveler asks for flights; never treat ordinary words such as 'the' as IATA codes. Validate airport codes against known passenger-airport codes. For example, from NYC to Albania TIA means originAirportCode=NYC, destination=Albania, destinationAirportCode=TIA.",
+  "For restaurants and dining requests, include the activities search category and indicate restaurantsRequested=true; Tripfinder displays activities and restaurant results as separate groups.",
   "Recognize avoid/prefer connection-country instructions and populate avoidLayoverCountries and preferredLayoverCountries using canonical country names from the available country options. An avoid instruction must never be put in the preferred list.",
   "Recognize premium eco, premium economy, or premium coach as cabinClass=premium_economy. A phrase like 'flight for 2' means adults=2 unless children are explicitly mentioned.",
   "Allowed tripStyle: any, beach, city, food, nature, romantic, family, adventure, culture. Allowed cabinClass: economy, premium_economy, business, first. Allowed stops: any, nonstop, one_stop, two_stops. Allowed currency: USD, CAD, EUR, GBP. Allowed staySpaceType: any, entire_place, private_room, shared_room.",
   "Dates must be YYYY-MM-DD using the supplied local current date. If a date is ambiguous, omit it and add a short note asking the traveler to confirm. Do not invent missing years or dates.",
   "Budget must be a number without a currency symbol. Distinguish total budget from per-person budget. Adults 1-9, childrenAges 1-17, rooms 1-8.",
-  "JSON keys: origin,originAirportCode,destination,destinationArea,destinationAirportCode,departureDate,returnDate,adults,childrenAges,rooms,budget,budgetMode,currency,components,tripStyle,stayTypes,staySpaceType,mustHaveAmenities,preferredAmenities,cabinClass,stops,preferredLayoverCountries,avoidLayoverCountries,minimumHotelRating,freeCancellation,temperatureMin,temperatureMax,temperatureUnit,notes.",
+  "JSON keys: origin,originAirportCode,destination,destinationArea,destinationAirportCode,departureDate,returnDate,adults,childrenAges,rooms,budget,budgetMode,currency,components,restaurantsRequested,tripStyle,stayTypes,staySpaceType,mustHaveAmenities,preferredAmenities,cabinClass,stops,preferredLayoverCountries,avoidLayoverCountries,minimumHotelRating,freeCancellation,temperatureMin,temperatureMax,temperatureUnit,notes.",
   "For fields not requested, return null. For arrays with no requested values, return null rather than an empty array.",
 ].join(" ");

@@ -1,11 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 
-const { parseDeterministicSearchPreferenceDraft } = require("../../.test-build/lib/ai/search-preferences.js");
+const { parseDeterministicSearchPreferenceDraft, sanitizeSearchPreferenceDraft } = require("../../.test-build/lib/ai/search-preferences.js");
+const { getLocationSuggestions } = require("../../.test-build/lib/trip-planner/location-suggestions.js");
 const { airportCountry, airportTimeZone, formatFlightTimeAtAirport, flightLayoverDuration, flightTimeSortTimestamp } = require("../../.test-build/lib/trip-planner/flight-routing.js");
 const { makeFlightParams, makeReturnFlightParams, makeFlightBookingParams } = require("../../.test-build/lib/trip-planner/flight-search-params.js");
 const { applyLayoverPreferences } = require("../../.test-build/lib/trip-planner/flight-search-policy.js");
 const { safeGoogleBookingUrl } = require("../../.test-build/lib/trip-planner/flight-booking-url.js");
+const { parseTripSearch } = require("../../.test-build/lib/trip-planner/validation.js");
 
 function baseInput(overrides = {}) {
   return {
@@ -54,6 +57,56 @@ test("Las Terrenas request separates destination area from flight airport and ca
   assert.equal(draft.cabinClass, undefined, "an unspecified cabin is left unset so the form's Economy default applies");
   assert.equal(draft.avoidLayoverCountries, undefined, "no old avoid-country choice should be inferred from this prompt");
   assert.ok(draft.notes.some((note) => /within 5 minutes of the selected Airbnb/i.test(note)));
+});
+
+
+test("Seneca Falls driving request keeps destination, dates, party, budget and restaurants without inventing flights", () => {
+  const draft = parseDeterministicSearchPreferenceDraft(
+    "i am driving to the Seneca Falls, New York from NYC on dec 25th to the 27th. total of 2 people and would like to know what activities and restaurants i could go to. my budget is 1k",
+    "2026-11-13",
+  );
+  assert.equal(draft.destination, "New York");
+  assert.equal(draft.destinationArea, "Seneca Falls");
+  assert.equal(draft.origin, "NYC");
+  assert.equal(draft.originAirportCode, undefined);
+  assert.equal(draft.destinationAirportCode, undefined);
+  assert.deepEqual(draft.components, ["activities"]);
+  assert.equal(draft.restaurantsRequested, true);
+  assert.equal(draft.departureDate, "2026-12-25");
+  assert.equal(draft.returnDate, "2026-12-27");
+  assert.equal(draft.adults, 2);
+  assert.equal(draft.budget, 1000);
+  assert.equal(draft.budgetMode, "total");
+  assert.ok(draft.notes.some((note) => /Driving trip: from NYC; flights are not requested/i.test(note)));
+  assert.ok(draft.notes.some((note) => /No year was specified/i.test(note)));
+});
+
+test("ordinary word THE is never accepted as a destination airport code", () => {
+  const draft = sanitizeSearchPreferenceDraft({ destination: "New York", destinationAirportCode: "THE", components: ["activities"] }, "2026-11-13", "Driving to Seneca Falls from NYC");
+  assert.equal(draft.destinationAirportCode, undefined);
+  assert.equal(draft.components.includes("flights"), false);
+});
+
+test("Seneca Falls is available as a New York state-scoped destination area", () => {
+  const results = getLocationSuggestions("Seneca Falls", "destination", true, false, "New York");
+  assert.ok(results.some((item) => item.label === "Seneca Falls" && item.value === "Seneca Falls, New York"));
+});
+
+
+test("ground-only search preserves parent state and city area without inheriting a default airport", () => {
+  const parsed = parseTripSearch(new URLSearchParams({
+    origin: "NYC", originAirportCode: "", destination: "New York", destinationArea: "Seneca Falls",
+    destinationAirportCode: "", components: "activities", depart: "2026-12-25", return: "2026-12-27",
+    adults: "2", rooms: "1", budget: "1000", budgetMode: "total", currency: "USD",
+    style: "any", flexibleDays: "0", cabin: "economy", stops: "any", hotelRating: "0",
+  }));
+  assert.deepEqual(parsed.errors, []);
+  assert.equal(parsed.input.destination, "New York");
+  assert.equal(parsed.input.destinationArea, "Seneca Falls");
+  assert.equal(parsed.input.origin, "NYC");
+  assert.equal(parsed.input.originAirportCode, "");
+  assert.equal(parsed.input.destinationAirportCode, "");
+  assert.deepEqual(parsed.input.components, ["activities"]);
 });
 
 test("round-trip request builder sends both dates, traveler count, cabin and stops", () => {
@@ -137,4 +190,14 @@ test("Google booking redirect accepts only the exact HTTPS Google flight redirec
   assert.equal(safeGoogleBookingUrl("https://evil.example/travel/clk/f?u=x"), undefined);
   assert.equal(safeGoogleBookingUrl("https://www.google.com/travel/flights?q=NYC-TIA"), undefined);
   assert.equal(safeGoogleBookingUrl("not-a-url"), undefined);
+});
+
+test("Seneca Falls review displays driving origin, start/end dates, and both requested place categories", () => {
+  const source = fs.readFileSync("components/trip-search.tsx", "utf8");
+  assert.match(source, /preferenceDraft\.notes\?\.some\(\(note\) => \/\^Driving trip:\/i\.test\(note\)\) \? "Driving from" : "Leaving from"/);
+  assert.match(source, /preferenceDraft\.restaurantsRequested \? "Activities & attractions \+ Restaurants & dining"/);
+  assert.match(source, /components\?\.includes\("flights"\) \? "Depart" : "Start"/);
+  assert.match(source, /components\?\.includes\("flights"\) \? "Return" : "End"/);
+  assert.match(source, /const selectedOriginCode = searchingFlights \?/);
+  assert.match(source, /destinationAirportCode: searchingFlights \?/);
 });

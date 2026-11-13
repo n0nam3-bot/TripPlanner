@@ -292,13 +292,16 @@ export function TripSearch() {
     resetSearchFields(false);
     setPlanningNotes(draft.notes || []);
     if (draft.origin) setOrigin(draft.origin);
-    if (draft.originAirportCode) setOriginAirportCode(draft.originAirportCode);
-    else if (draft.origin) setOriginAirportCode(resolveAirportCode(draft.origin) || "");
+    const includesFlights = Boolean(draft.components?.includes("flights"));
+    if (includesFlights && draft.originAirportCode) setOriginAirportCode(draft.originAirportCode);
+    else if (includesFlights && draft.origin) setOriginAirportCode(resolveAirportCode(draft.origin) || "");
+    else setOriginAirportCode("");
     if (draft.destination) setDestination(draft.destination);
     if (draft.destinationArea !== undefined) setDestinationArea(draft.destinationArea);
     else if (draft.destination) setDestinationArea("");
-    if (draft.destinationAirportCode) setDestinationAirportCode(draft.destinationAirportCode);
-    else if (draft.destination || draft.destinationArea) setDestinationAirportCode(resolveAirportCode(draft.destinationArea || draft.destination || "") || "");
+    if (includesFlights && draft.destinationAirportCode) setDestinationAirportCode(draft.destinationAirportCode);
+    else if (includesFlights && (draft.destination || draft.destinationArea)) setDestinationAirportCode(resolveAirportCode(draft.destinationArea || draft.destination || "") || "");
+    else setDestinationAirportCode("");
     if (draft.departureDate) setDepart(draft.departureDate);
     if (draft.returnDate) setReturnDate(draft.returnDate);
     if (draft.adults !== undefined) setAdults(String(draft.adults));
@@ -336,14 +339,18 @@ export function TripSearch() {
 
   const parsedPreferenceSummary = preferenceDraft ? [
     preferenceDraft.destinationArea ? `Area: ${preferenceDraft.destinationArea}${preferenceDraft.destination ? `, ${preferenceDraft.destination}` : ""}` : preferenceDraft.destination ? `Destination: ${preferenceDraft.destination}` : "",
-    preferenceDraft.origin ? `Leaving from: ${preferenceDraft.origin}${preferenceDraft.originAirportCode ? ` (${preferenceDraft.originAirportCode})` : ""}` : "",
+    preferenceDraft.origin ? `${preferenceDraft.notes?.some((note) => /^Driving trip:/i.test(note)) ? "Driving from" : "Leaving from"}: ${preferenceDraft.origin}${preferenceDraft.originAirportCode ? ` (${preferenceDraft.originAirportCode})` : ""}` : "",
     preferenceDraft.destinationAirportCode ? `Arrival airport: ${preferenceDraft.destinationAirportCode}` : "",
-    preferenceDraft.departureDate || preferenceDraft.returnDate ? `Depart: ${preferenceDraft.departureDate || "keep current date"} · Return: ${preferenceDraft.returnDate || "keep current date"}` : "",
+    preferenceDraft.departureDate || preferenceDraft.returnDate ? `${preferenceDraft.components?.includes("flights") ? "Depart" : "Start"}: ${preferenceDraft.departureDate || "keep current date"} · ${preferenceDraft.components?.includes("flights") ? "Return" : "End"}: ${preferenceDraft.returnDate || "keep current date"}` : "",
     preferenceDraft.adults !== undefined ? `${preferenceDraft.adults} travelers` : "",
     preferenceDraft.childrenAges ? `Children's ages: ${preferenceDraft.childrenAges.join(", ")}` : "",
     preferenceDraft.budget !== undefined ? `Budget: ${preferenceDraft.currency || currency} ${preferenceDraft.budget.toLocaleString()}${preferenceDraft.budgetMode === "per_person" ? " per person" : preferenceDraft.budgetMode === "total" ? " total" : ""}` : "",
     preferenceDraft.rooms !== undefined ? `${preferenceDraft.rooms} rooms` : "",
-    preferenceDraft.components ? `Search: ${preferenceDraft.components.join(" + ")}` : "",
+    preferenceDraft.components ? `Search: ${[
+      ...(preferenceDraft.components.includes("flights") ? ["Flights"] : []),
+      ...(preferenceDraft.components.includes("stays") ? ["Places to stay"] : []),
+      ...(preferenceDraft.components.includes("activities") ? [preferenceDraft.restaurantsRequested ? "Activities & attractions + Restaurants & dining" : "Activities & attractions"] : []),
+    ].join(" + ")}` : "",
     preferenceDraft.staySpaceType && preferenceDraft.staySpaceType !== "any" ? `Space: ${preferenceDraft.staySpaceType.replaceAll("_", " ")}` : "",
     preferenceDraft.mustHaveAmenities?.length ? `Must have: ${preferenceDraft.mustHaveAmenities.join(", ").replaceAll("_", " ")}` : "",
     preferenceDraft.preferredAmenities?.length ? `Prefer: ${preferenceDraft.preferredAmenities.join(", ").replaceAll("_", " ")}` : "",
@@ -357,7 +364,7 @@ export function TripSearch() {
     preferenceDraft.minimumHotelRating !== undefined && preferenceDraft.minimumHotelRating > 0 ? `${preferenceDraft.minimumHotelRating}-star minimum` : "",
     preferenceDraft.freeCancellation ? "Free cancellation preferred" : "",
     preferenceDraft.temperatureMin !== undefined || preferenceDraft.temperatureMax !== undefined ? `Typical daytime high: ${preferenceDraft.temperatureMin ?? "no minimum"} to ${preferenceDraft.temperatureMax ?? "no maximum"}°${preferenceDraft.temperatureUnit || temperatureUnit}` : "",
-    ...(preferenceDraft.notes || []).map((note) => /^Restaurant proximity:/i.test(note) ? note : `Please confirm: ${note}`),
+    ...(preferenceDraft.notes || []).map((note) => /^(Restaurant proximity:|Driving trip:)/i.test(note) ? note : `Please confirm: ${note}`),
   ].filter(Boolean) : [];
 
   function changeTemperatureUnit(nextUnit: "F" | "C") {
@@ -379,11 +386,12 @@ export function TripSearch() {
     setError("");
     if (submitting) return;
     if (components.length === 0) return setError("Choose at least one search: flights, places to stay or things to do.");
-    const selectedOriginCode = originAirportCode || resolveAirportCode(origin) || "";
+    const searchingFlights = components.includes("flights");
+    const selectedOriginCode = searchingFlights ? (originAirportCode || resolveAirportCode(origin) || "") : "";
     const typedArea = destinationArea.trim();
-    const selectedDestination = typedArea
-      ? (typedArea.includes(",") || typedArea.toLocaleLowerCase() === destination.trim().toLocaleLowerCase() ? typedArea : `${typedArea}, ${destination.trim()}`)
-      : destination.trim();
+    const parentSuffix = destination.trim() ? new RegExp(`,\\s*${destination.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i") : null;
+    const normalizedArea = parentSuffix && parentSuffix.test(typedArea) ? typedArea.replace(parentSuffix, "").trim() : typedArea;
+    const selectedDestination = normalizedArea ? `${normalizedArea}, ${destination.trim()}` : destination.trim();
     const hasLocalTravelComponents = components.includes("stays") || components.includes("activities");
     if (destinationScope && hasLocalTravelComponents && !typedArea) {
       return setError(`Choose a city or area within ${destinationScope} so Tripfinder can return nearby stays, attractions and restaurants instead of unrelated results across the entire region.`);
@@ -412,7 +420,7 @@ export function TripSearch() {
     setSubmitting(true);
     const params = new URLSearchParams({
       origin: origin.trim(), originAirportCode: selectedOriginCode,
-      destination: selectedDestination, destinationArea: destinationArea.trim(), destinationAirportCode: destinationAirportCode || resolveAirportCode(selectedDestination) || "",
+      destination: destination.trim(), destinationArea: normalizedArea, destinationAirportCode: searchingFlights ? (destinationAirportCode || resolveAirportCode(selectedDestination) || "") : "",
       depart, return: returnDate, adults, childrenAges: ages.join(","), rooms, budget, budgetMode, currency, style,
       flexibleDays, cabin, stops, hotelRating, freeCancellation: String(freeCancellation),
       preferLayovers: preferredLayoverCountries.join(","), avoidLayovers: avoidLayoverCountries.join(","),
@@ -508,7 +516,7 @@ export function TripSearch() {
       <div className={`search-fields ${components.includes("flights") ? "has-origin" : "no-origin"}`}>
         {components.includes("flights") && <LocationField field="origin" label="Leaving from" value={origin} airportCode={originAirportCode} placeholder="City or airport" onChange={(value) => { setOrigin(value); setOriginAirportCode(resolveAirportCode(value) || ""); }} onSelect={(item) => { setOrigin(item.value); setOriginAirportCode(item.airportCode); }}/ >}
         <LocationField field="destination" label="Going to" value={destination} airportCode={components.includes("flights") ? destinationAirportCode : ""} placeholder="Country, state, city or area" includeAttractions={components.includes("activities")} includeAirports={components.includes("flights")} onChange={(value) => { setDestination(value); setDestinationArea(""); setDestinationAirportCode(""); }} onSelect={(item) => { setDestination(item.value); setDestinationArea(""); setDestinationAirportCode(item.airportCode); }}/>
-        {destinationScope && <LocationField field="destination" label={`City or area in ${destinationScope}`} value={destinationArea} airportCode="" placeholder="Choose or type a city, town, resort or nearby area" scope={destinationScope} onChange={(value) => { setDestinationArea(value); setDestinationAirportCode(""); }} onSelect={(item) => { setDestinationArea(item.value); if (item.airportCode) setDestinationAirportCode(item.airportCode); }}/ >}
+        {destinationScope && <LocationField field="destination" label={`City or area in ${destinationScope}`} value={destinationArea} airportCode="" placeholder="Choose or type a city, town, resort or nearby area" scope={destinationScope} onChange={(value) => { setDestinationArea(value); setDestinationAirportCode(""); }} onSelect={(item) => { setDestinationArea(item.label || item.value.split(",")[0]); if (components.includes("flights") && item.airportCode) setDestinationAirportCode(item.airportCode); }}/ >}
         {components.includes("flights") && destinationGateways.length > 0 && <label className="search-field gateway-field"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">Suggested arrival airports</span><select value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value)} aria-label="Choose suggested arrival airport"><option value="">Choose a gateway</option>{destinationAirportCode && !destinationGateways.some((gateway) => gateway.code === destinationAirportCode) && <option value={destinationAirportCode}>Custom airport · {destinationAirportCode}</option>}{destinationGateways.map((gateway) => <option value={gateway.code} key={gateway.code}>{gateway.label}</option>)}</select></span><ChevronDown className="select-chevron" size={14}/></label>}
         {components.includes("flights") && (destinationArea || destination).trim().toLowerCase() !== "anywhere" && <label className="search-field gateway-field airport-code-entry"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">{destinationGateways.length ? "Or enter a different arrival airport" : "Arrival airport code"}</span><input value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3))} placeholder="3-letter IATA code (e.g. TIA)" maxLength={3} autoCapitalize="characters" spellCheck={false} aria-label="Arrival airport three-letter IATA code"/><small className="location-code">You can type or edit the three-letter airport code here. This field remains visible after typing.</small></span></label>}
 

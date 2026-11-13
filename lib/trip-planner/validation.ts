@@ -26,12 +26,13 @@ function validDate(value: string): boolean {
 
 export function parseTripSearch(params: URLSearchParams): { input?: TripSearchInput; errors: string[] } {
   const errors: string[] = [];
-  const origin = read(params, "origin", "New York (NYC)");
-  const originAirportCode = read(params, "originAirportCode", "NYC").toUpperCase();
+  const rawComponents = read(params, "components", "flights,stays,activities").split(",").filter(Boolean) as TripComponent[];
+  const requestsFlights = rawComponents.includes("flights");
+  const origin = read(params, "origin", requestsFlights ? "New York (NYC)" : "");
+  const originAirportCode = requestsFlights ? read(params, "originAirportCode", "NYC").toUpperCase() : "";
   const destination = read(params, "destination", "Anywhere");
   const destinationArea = read(params, "destinationArea", "");
-  const destinationAirportCode = read(params, "destinationAirportCode", "").toUpperCase();
-  const rawComponents = read(params, "components", "flights,stays,activities").split(",").filter(Boolean) as TripComponent[];
+  const destinationAirportCode = requestsFlights ? read(params, "destinationAirportCode", "").toUpperCase() : "";
   const components = [...new Set(rawComponents.filter((item) => tripComponents.has(item)))];
   const rawStayTypes = read(params, "stayTypes", "hotels,vacation_rentals").split(",").filter(Boolean) as StayType[];
   const selectedStayTypes = [...new Set(rawStayTypes.filter((item) => stayTypes.has(item)))];

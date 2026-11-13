@@ -463,6 +463,7 @@ const US_CITY_AREAS: LocationSuggestion[] = [
   { value: "Albuquerque, New Mexico", label: "Albuquerque", detail: "New Mexico · city", kind: "city", airportCode: "ABQ", country: "New Mexico" },
   { value: "Santa Fe, New Mexico", label: "Santa Fe", detail: "New Mexico · historic city", kind: "city", airportCode: "ABQ", country: "New Mexico" },
   { value: "New York City, New York", label: "New York City", detail: "New York · city", kind: "city", airportCode: "NYC", country: "New York" },
+  { value: "Seneca Falls, New York", label: "Seneca Falls", detail: "New York · Finger Lakes town", kind: "area", airportCode: "", country: "New York" },
   { value: "Buffalo, New York", label: "Buffalo", detail: "New York · city", kind: "city", airportCode: "BUF", country: "New York" },
   { value: "Adirondacks, New York", label: "Adirondacks", detail: "New York · mountain region", kind: "area", airportCode: "ALB", country: "New York" },
   { value: "Charlotte, North Carolina", label: "Charlotte", detail: "North Carolina · city", kind: "city", airportCode: "CLT", country: "North Carolina" },
