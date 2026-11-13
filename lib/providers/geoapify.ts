@@ -240,7 +240,7 @@ export async function getGeoapifyDrivingRoute(input: {
       // geometry, without spending credits on another routing request. Newer
       // failures observe their retry window to protect the Geoapify allowance.
       const retryWindowElapsed = !retryTime || !Number.isFinite(retryTime) || Date.now() >= retryTime;
-      if (!mapImageDataUrl && route.geometry.length >= 2 && (legacyMapFailure || retryWindowElapsed)) {
+      if (!mapImageDataUrl && route.geometry.length >= 2 && (input.forceMapRefresh || legacyMapFailure || retryWindowElapsed)) {
         const map = await attemptGeoapifyMapPreview({
           route, origin: input.origin, destination: input.destination,
           clientUsageKey: input.clientUsageKey, apiKey: key,

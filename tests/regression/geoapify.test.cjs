@@ -170,8 +170,14 @@ test("Map refresh explicitly retries a failed cached map image without recalcula
   const path = require("node:path");
   const provider = fs.readFileSync(path.resolve(__dirname, "../../lib/providers/geoapify.ts"), "utf8");
   const workspace = fs.readFileSync(path.resolve(__dirname, "../../components/trips/results-workspace.tsx"), "utf8");
+  const routeApi = fs.readFileSync(path.resolve(__dirname, "../../app/api/travel/directions/route.ts"), "utf8");
+  const serpApi = fs.readFileSync(path.resolve(__dirname, "../../lib/providers/serpapi.ts"), "utf8");
   assert.match(provider, /legacyMapFailure \|\| retryWindowElapsed/);
-  assert.match(workspace, /forceMapRefresh: Boolean\(state\?\.duration && !state\.mapImageDataUrl\)/);
+  assert.match(provider, /input\.forceMapRefresh \|\| legacyMapFailure \|\| retryWindowElapsed/);
+  assert.match(workspace, /onClick=\{\(\) => load\(Boolean\(state\?\.duration && !state\?\.mapImageDataUrl\)\)\}/);
+  assert.match(workspace, /destinationCoordinates, forceMapRefresh \}/);
+  assert.match(routeApi, /body\.forceMapRefresh === true/);
+  assert.match(serpApi, /forceMapRefresh: options\.forceMapRefresh === true/);
 });
 
 test("legacy cached map failures are retried once with cached route geometry after the map-preview version changes", () => {

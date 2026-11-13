@@ -226,10 +226,10 @@ function RouteLookup({ origin, destination, label, originCoordinates, destinatio
   destinationCoordinates?: { latitude: number; longitude: number };
 }) {
   const [state, setState] = useState<RouteState | null>(null);
-  async function load() {
-    setState({ loading: true });
+  async function load(forceMapRefresh = false) {
+    setState((current) => ({ ...current, loading: true, error: undefined }));
     try {
-      const response = await fetch("/api/travel/directions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ origin, destination, originCoordinates, destinationCoordinates }) });
+      const response = await fetch("/api/travel/directions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ origin, destination, originCoordinates, destinationCoordinates, forceMapRefresh }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Driving route unavailable.");
       setState({
@@ -249,7 +249,7 @@ function RouteLookup({ origin, destination, label, originCoordinates, destinatio
     }
   }
   return <div className="route-lookup">
-    <button type="button" onClick={load} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={11} className="spin"/> Calculating route</> : state?.duration ? "Refresh route" : label}</button>
+    <button type="button" onClick={() => load(Boolean(state?.duration && !state?.mapImageDataUrl))} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={11} className="spin"/> Calculating route</> : state?.duration ? "Refresh route" : label}</button>
     {state?.duration && <div className="route-result">
       <strong>{state.distance} · {state.duration}{state.durationInTraffic ? ` · ${state.durationInTraffic} in traffic` : ""}</strong>
       {state.startAddress && state.endAddress && <small>{state.startAddress} → {state.endAddress}</small>}

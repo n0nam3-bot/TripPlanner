@@ -87,6 +87,18 @@ export function describeGeoapifyMapFailure(code: string, usage?: GeoapifyCreditU
       blocked: true, retryDelayMs: 5 * 60 * 1000,
     };
   }
+  if (code === "GEOAPIFY_DAILY_GATE_INCONSISTENT") return {
+    warning: usage
+      ? `Tripfinder could not complete its shared database credit reservation even though its UTC-day counter shows ${usage.sharedUsed.toLocaleString()} of ${usage.sharedCap.toLocaleString()} app credits used. This is a database reservation inconsistency, not an exhausted allowance; no map-image request was sent.`
+      : "Tripfinder could not complete its shared database credit reservation. The current counter could not be verified, so no map-image request was sent.",
+    blocked: true, retryDelayMs: 30 * 1000,
+  };
+  if (code === "GEOAPIFY_CLIENT_GATE_INCONSISTENT") return {
+    warning: usage
+      ? `Tripfinder could not complete this visitor's database credit reservation even though the visitor counter shows ${usage.clientUsed.toLocaleString()} of ${usage.clientCap.toLocaleString()} app credits used. This is a database reservation inconsistency, not an exhausted allowance; no map-image request was sent.`
+      : "Tripfinder could not complete this visitor's database credit reservation. The current counter could not be verified, so no map-image request was sent.",
+    blocked: true, retryDelayMs: 30 * 1000,
+  };
   if (code === "GEOAPIFY_REQUEST_RATE_LIMITED") return {
     warning: "Tripfinder's shared Geoapify request pacing delayed this map request. Retry shortly; no provider quota was consumed by this blocked map attempt.",
     blocked: true, retryDelayMs: 60 * 1000,

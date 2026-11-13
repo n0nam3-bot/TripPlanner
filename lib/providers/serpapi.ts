@@ -1114,6 +1114,7 @@ export async function getDrivingRoute(
   destination: string,
   clientUsageKey = "shared",
   coordinates?: { origin?: RouteCoordinates; destination?: RouteCoordinates },
+  options: { forceMapRefresh?: boolean } = {},
 ): Promise<DrivingRouteResult | null> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   const cleanOrigin = origin.trim().slice(0, 300);
@@ -1126,6 +1127,7 @@ export async function getDrivingRoute(
       originLabel: cleanOrigin,
       destinationLabel: cleanDestination,
       clientUsageKey,
+      forceMapRefresh: options.forceMapRefresh === true,
     });
     if (!route) return null;
     return {

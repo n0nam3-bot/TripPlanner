@@ -30,6 +30,7 @@
 - WeatherAPI one-hour Neon cache with explicit call/cache telemetry.
 - Recent sanitized request log, response timing, provider breakdown, 24-hour trend and Neon cache health.
 - Telemetry retention cleanup after 90 days; logs omit search text, keys, booking tokens and raw addresses.
+- [x] Integrate Vercel Web Analytics for page/referrer trends and Speed Insights for field performance. Exclude `/admin` and `/api`, strip all query strings/fragments to avoid recording trip-search parameters, and sample Speed Insights at 25%. Dashboard activation and production data verification remain operator steps.
 
 ## Release 3 — AI-assisted planning and search efficiency (implemented; pending production verification)
 - Optional OpenRouter free-model router with data-collection denial and zero-data-retention endpoint requirements.
@@ -56,6 +57,8 @@
 - Add flexible-date searches in a controlled way that respects provider quotas.
 - Improve airport autocomplete and multi-airport coverage.
 - [x] Add a no-API-credit regression suite for parser examples, inclusive date/duration handling, outbound/return/seller token stages, connection-country filtering, airport-local time zones/DST, round-trip price basis, currency-safe cost totals, room/guest validation, and Google booking redirect URL validation.
+
+**Next Release 4 focus:** controlled flexible-date flight search with explicit per-search query limits and clear SerpApi quota estimates, followed by broader airport gateway coverage. Exact-date search remains the default.
 
 ## Release 5 — persistence and trip workspace
 - Neon persistence for anonymous shareable trip drafts and saved searches.
