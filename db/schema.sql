@@ -85,3 +85,27 @@ CREATE TABLE IF NOT EXISTS tripfinder_geoapify_request_gate (
   next_allowed_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+
+-- Anonymous saved trip drafts. Share and owner tokens are stored only as SHA-256 hashes.
+-- The public share link is read-only; owner tokens authorize updates from the original browser.
+CREATE TABLE IF NOT EXISTS tripfinder_saved_trips (
+  id uuid PRIMARY KEY,
+  share_token_hash text NOT NULL UNIQUE,
+  owner_token_hash text NOT NULL,
+  search jsonb NOT NULL,
+  snapshot jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tripfinder_saved_trips_expiry_idx
+  ON tripfinder_saved_trips (expires_at);
+
+CREATE TABLE IF NOT EXISTS tripfinder_saved_trip_daily_usage (
+  client_key text NOT NULL,
+  usage_date date NOT NULL,
+  save_count integer NOT NULL DEFAULT 0 CHECK (save_count >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (client_key, usage_date)
+);

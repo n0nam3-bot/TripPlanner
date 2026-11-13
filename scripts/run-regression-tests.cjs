@@ -17,6 +17,7 @@ const sourceFiles = [
   "lib/trip-planner/location-suggestions.ts",
   "lib/trip-planner/cost-ledger.ts",
   "lib/trip-planner/validation.ts",
+  "lib/trip-planner/saved-trips.ts",
   "lib/ai/search-preferences.ts",
 ];
 

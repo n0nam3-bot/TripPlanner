@@ -116,6 +116,24 @@ async function ensureTravelTables() {
         next_allowed_at timestamptz NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now()
       )`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_saved_trips (
+        id uuid PRIMARY KEY,
+        share_token_hash text NOT NULL UNIQUE,
+        owner_token_hash text NOT NULL,
+        search jsonb NOT NULL,
+        snapshot jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        expires_at timestamptz NOT NULL
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS tripfinder_saved_trips_expiry_idx ON tripfinder_saved_trips (expires_at)`;
+      await sql`CREATE TABLE IF NOT EXISTS tripfinder_saved_trip_daily_usage (
+        client_key text NOT NULL,
+        usage_date date NOT NULL,
+        save_count integer NOT NULL DEFAULT 0 CHECK (save_count >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (client_key, usage_date)
+      )`;
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -140,9 +158,11 @@ export async function initializeTravelDatabase(): Promise<void> {
     to_regclass('public.tripfinder_ai_client_daily_usage') IS NOT NULL AS ai_client_daily_ready,
     to_regclass('public.tripfinder_geoapify_daily_usage') IS NOT NULL AS geoapify_daily_ready,
     to_regclass('public.tripfinder_geoapify_client_daily_usage') IS NOT NULL AS geoapify_client_daily_ready,
-    to_regclass('public.tripfinder_geoapify_request_gate') IS NOT NULL AS geoapify_gate_ready`;
+    to_regclass('public.tripfinder_geoapify_request_gate') IS NOT NULL AS geoapify_gate_ready,
+    to_regclass('public.tripfinder_saved_trips') IS NOT NULL AS saved_trips_ready,
+    to_regclass('public.tripfinder_saved_trip_daily_usage') IS NOT NULL AS saved_trip_usage_ready`;
   const row = rows[0] as unknown as Record<string, boolean> | undefined;
-  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready || !row.ai_provider_daily_ready || !row.ai_provider_minute_ready || !row.ai_client_daily_ready || !row.geoapify_daily_ready || !row.geoapify_client_daily_ready || !row.geoapify_gate_ready) {
+  if (!row || !row.cache_ready || !row.monthly_usage_ready || !row.hourly_usage_ready || !row.client_usage_ready || !row.event_log_ready || !row.admin_auth_ready || !row.ai_provider_daily_ready || !row.ai_provider_minute_ready || !row.ai_client_daily_ready || !row.geoapify_daily_ready || !row.geoapify_client_daily_ready || !row.geoapify_gate_ready || !row.saved_trips_ready || !row.saved_trip_usage_ready) {
     throw new Error("DATABASE_SCHEMA_UNAVAILABLE");
   }
 }

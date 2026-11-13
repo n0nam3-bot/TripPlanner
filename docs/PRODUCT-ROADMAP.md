@@ -69,14 +69,17 @@
 - [x] Preserve hotel offer price basis (total stay, per night, or unknown) rather than presenting an unclassified provider amount as a stay total.
 - [ ] Verify supplier-declared inventory/availability and complete passenger/room basis with approved supplier responses; a refreshed quote is not a booking hold or a checkout guarantee.
 
-**Next Release 4 focus:** improve supplier-data quality and availability confirmation using approved supplier responses. Keep hard budget enforcement advisory until each requested cost component has comparable, current, all-in totals. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
+**Release 4 partner-dependent items:** supplier-declared inventory confirmation, verified passenger/room basis, and complete all-in checkout totals require approved supplier responses. Keep hard budget enforcement advisory until each requested cost component has comparable, current, all-in totals. These items are intentionally deferred rather than simulated. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
 
 
 ## Release 5 — persistence and trip workspace
-- [ ] Neon persistence for anonymous shareable trip drafts and saved searches.
-- [ ] Optional user accounts only if needed.
-- [ ] Shareable itinerary links, traveler edits and feedback capture.
+- [x] Add Neon persistence for anonymous saved trip drafts and saved searches. Create short, random share tokens and store only SHA-256 token hashes; share pages are read-only, expire after 180 days, and exclude provider booking tokens and private API data.
+- [x] Add a Save trip action to persist the validated search criteria and a selected-item snapshot; allow the original browser to update its saved draft using a separate owner token that is not placed in the URL.
+- [ ] Add traveler edits and feedback capture with explicit edit permissions and conflict-safe updates; public share links remain read-only in the current release.
+- [ ] Optional user accounts only if needed; the first saved-trip version does not require accounts.
 - [ ] Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
+
+**Next Release 5 focus:** collaborative traveler edits and feedback capture, followed by admin quality reporting. Keep saved trip links as private bearer URLs and do not expose owner tokens or supplier booking credentials.
 
 
 ## Release 6 — supplier depth and monetization
@@ -85,7 +88,7 @@
 - [ ] Next: configure approved sandbox credentials and `BOOKING_COM_API_BASE=https://demandapi-sandbox.booking.com/3.3`, validate accommodation types, price/redirect data and cache telemetry, then switch to production credentials and the production base URL. Confirm public display, caching and commercial data rights for each source.
 - [ ] Obtain approved live supplier access for broader airline and official package inventory.
 - [ ] Confirm public display, caching and commercial data rights for each source.
-- [ ] Add supplier price/availability revalidation.
+- [x] Add user-triggered supplier quote revalidation with freshness labels and short cache windows; this does not independently confirm inventory, checkout totals or booking holds.
 - [ ] Add a direct airline/NDC source (evaluate Duffel) alongside Google Flights, without removing broad Google Flights discovery.
 - [ ] Add affiliate network integrations after approval.
 - [ ] Add compliant disclosures and click/conversion reporting.

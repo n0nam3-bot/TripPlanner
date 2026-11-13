@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain, ClipboardList, type LucideIcon } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, Copy, ExternalLink, Hotel, MapPin, Plane, RefreshCw, Save, ShieldAlert, Star, Users, Wallet, Wind, CloudRain, ClipboardList, type LucideIcon } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
 import type { StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
 import { formatDestinationLabel, formatTripDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
@@ -14,6 +14,7 @@ import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssi
 import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-ledger";
 import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
+import type { SavedTripSnapshot, SavedTripItem } from "@/lib/trip-planner/saved-trips";
 
 type Props = {
   search: TripSearchInput;
@@ -117,6 +118,94 @@ function directionsUrl(origin: string, destination: string): string {
   const url = new URL("https://www.google.com/maps/dir/");
   url.searchParams.set("api", "1"); url.searchParams.set("origin", origin); url.searchParams.set("destination", destination); url.searchParams.set("travelmode", "driving");
   return url.toString();
+}
+
+function buildSavedTripSnapshot(
+  search: TripSearchInput,
+  recommendations: TripRecommendation[],
+  states: Record<string, SearchState>,
+  selections: Record<string, DestinationSelection>,
+): SavedTripSnapshot {
+  const destinations = recommendations.map((recommendation) => {
+    const destination = recommendation.destination;
+    const selection = selections[destination.id] ?? emptySelection();
+    const result = states[destination.id]?.result;
+    const items: SavedTripItem[] = [];
+
+    const addFlight = (flight: LiveFlight, kind: "outbound-flight" | "return-flight", date: string) => {
+      const first = flight.segments[0];
+      const last = flight.segments[flight.segments.length - 1];
+      const details = [
+        `Departs ${flight.from} · ${formatFlightTimeAtAirport(flight.departure, first?.fromAirportCode)}`,
+        `Arrives ${flight.to} · ${formatFlightTimeAtAirport(flight.arrival, last?.toAirportCode)}`,
+        `Duration ${duration(flight.durationMinutes)} · ${flight.stops === 0 ? "Nonstop" : `${flight.stops} stop${flight.stops === 1 ? "" : "s"}`}`,
+        ...flight.segments.map((segment, index) => `Leg ${index + 1}: ${segment.airline}${segment.flightNumber ? ` ${segment.flightNumber}` : ""} · ${segment.from} ${formatFlightTimeAtAirport(segment.departure, segment.fromAirportCode)} → ${segment.to} ${formatFlightTimeAtAirport(segment.arrival, segment.toAirportCode)}`),
+      ].filter(Boolean);
+      items.push({
+        kind,
+        title: kind === "outbound-flight" ? "Outbound flight" : "Return flight",
+        subtitle: `${flight.airlines.join(" / ")} · ${flight.from} → ${flight.to}`,
+        date,
+        price: flight.price,
+        currency: flight.currency || search.currency,
+        priceLabel: "Provider-displayed reference price · not a confirmed fare",
+        details,
+      });
+    };
+
+    if (selection.outbound) addFlight(selection.outbound, "outbound-flight", search.departureDate);
+    if (selection.returnFlight) addFlight(selection.returnFlight, "return-flight", search.returnDate);
+    if (selection.flightSeller) {
+      const offer = selection.flightSeller.option;
+      items.push({
+        kind: "flight-fare",
+        title: "Selected seller fare",
+        subtitle: offer.seller,
+        price: offer.price,
+        currency: offer.currency || search.currency,
+        priceLabel: "Provider-displayed seller quote · verify at checkout",
+        details: [offer.type, offer.separateTickets ? "Outbound and return are separate tickets" : "Combined-ticket status must be confirmed", ...(offer.departingPrice != null ? [`Outbound: ${money(offer.departingPrice, offer.currency)}`] : []), ...(offer.returningPrice != null ? [`Return: ${money(offer.returningPrice, offer.currency)}`] : [])].filter(Boolean),
+      });
+    }
+    if (selection.hotel) {
+      const hotel = selection.hotel;
+      items.push({
+        kind: "stay",
+        title: hotel.name,
+        subtitle: hotel.address || `${hotel.source} · ${hotel.propertyType}`,
+        date: search.departureDate,
+        price: hotel.totalPrice ?? hotel.nightlyPrice,
+        currency: hotel.currency || search.currency,
+        priceLabel: hotel.totalPrice !== null ? "Provider-displayed stay total · verify taxes and fees" : hotel.nightlyPrice !== null ? "Provider-displayed nightly price · not the stay total" : "Provider price basis unavailable",
+        details: [
+          `${search.returnDate} check-out · ${Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000))} nights`,
+          `${hotel.source} · ${hotel.propertyType}`,
+          ...(selection.checkInTime ? [`Check-in note: ${selection.checkInTime}`] : []),
+          ...(selection.checkOutTime ? [`Check-out note: ${selection.checkOutTime}`] : []),
+        ],
+      });
+    }
+    for (const [experienceId, plan] of Object.entries(selection.experiences)) {
+      const experience = result?.experiences.find((item) => item.id === experienceId);
+      if (!experience) continue;
+      items.push({
+        kind: experience.kind,
+        title: experience.name,
+        subtitle: experience.address || experience.category,
+        date: plan.date,
+        time: plan.time || plan.slot,
+        details: [experience.category, ...(experience.openingHours ? [`Listed hours: ${experience.openingHours}`] : [])],
+      });
+    }
+    return { label: formatDestinationLabel(destination.city, destination.country), items };
+  });
+
+  const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
+  return {
+    version: 1,
+    title: search.destination.toLowerCase() === "anywhere" ? "Trip ideas worth comparing" : `Trip to ${destinationLabel}`,
+    destinations,
+  };
 }
 
 function nearestKnownAirport(latitude: number, longitude: number, preferredCode = "") {
@@ -900,10 +989,72 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const [flightAirlineFilters, setFlightAirlineFilters] = useState<Record<string, string>>({});
   const [activeNavSection, setActiveNavSection] = useState("");
   const [navOpenState, setNavOpenState] = useState<Record<string, boolean>>({});
+  const [savingTrip, setSavingTrip] = useState(false);
+  const [saveTripMessage, setSaveTripMessage] = useState("");
+  const [savedShareUrl, setSavedShareUrl] = useState("");
+  const [savedTripCredentials, setSavedTripCredentials] = useState<{ shareToken: string; ownerToken: string } | null>(null);
+  const [savedTripStorageKey, setSavedTripStorageKey] = useState("");
   const people = search.adults + search.childrenAges.length;
   const nights = Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000));
   const totalBudget = search.budgetMode === "per_person" ? search.budget * people : search.budget;
   const singleDestination = recommendations.length === 1;
+
+  useEffect(() => {
+    const key = `tripfinder:saved-trip-owner:v1:${window.location.pathname}${window.location.search}`;
+    setSavedTripStorageKey(key);
+    try {
+      const stored = window.localStorage.getItem(key);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as { shareToken?: unknown; ownerToken?: unknown };
+      if (typeof parsed.shareToken === "string" && typeof parsed.ownerToken === "string") {
+        setSavedTripCredentials({ shareToken: parsed.shareToken, ownerToken: parsed.ownerToken });
+      }
+    } catch { /* Saved-link ownership is a convenience; creating a new share link remains available. */ }
+  }, []);
+
+  async function saveCurrentTrip() {
+    if (savingTrip) return;
+    setSavingTrip(true);
+    setSaveTripMessage("");
+    try {
+      const snapshot = buildSavedTripSnapshot(search, recommendations, states, selections);
+      const payload: Record<string, unknown> = { search, snapshot };
+      if (savedTripCredentials) {
+        payload.shareToken = savedTripCredentials.shareToken;
+        payload.ownerToken = savedTripCredentials.ownerToken;
+      }
+      const response = await fetch("/api/trips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json() as { error?: string; shareToken?: string; ownerToken?: string; shareUrl?: string; updated?: boolean };
+      if (!response.ok || !data.shareToken || !data.shareUrl) {
+        if (response.status === 403 && savedTripCredentials) {
+          setSavedTripCredentials(null);
+          try { if (savedTripStorageKey) window.localStorage.removeItem(savedTripStorageKey); } catch { /* ignore storage failures */ }
+        }
+        throw new Error(data.error || "Tripfinder couldn't save this trip right now.");
+      }
+      const credentials = { shareToken: data.shareToken, ownerToken: data.ownerToken || savedTripCredentials?.ownerToken || "" };
+      if (!credentials.ownerToken) throw new Error("The saved trip was created, but this browser did not receive its update permission. Keep the share link below.");
+      setSavedTripCredentials(credentials);
+      setSavedShareUrl(data.shareUrl);
+      try {
+        if (savedTripStorageKey) window.localStorage.setItem(savedTripStorageKey, JSON.stringify(credentials));
+      } catch { /* The public link remains usable when browser storage is unavailable. */ }
+      try {
+        await navigator.clipboard.writeText(data.shareUrl);
+        setSaveTripMessage(data.updated ? "Saved trip updated · link copied" : "Trip saved · share link copied");
+      } catch {
+        setSaveTripMessage(data.updated ? "Saved trip updated · copy the link below" : "Trip saved · copy the link below");
+      }
+    } catch (error) {
+      setSaveTripMessage(error instanceof Error ? error.message : "Tripfinder couldn't save this trip right now.");
+    } finally {
+      setSavingTrip(false);
+    }
+  }
 
   async function checkLiveOffers(recommendation: TripRecommendation, forceRefresh = false) {
     const id = recommendation.destination.id;
@@ -1155,6 +1306,16 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     {search.rooms > 1 && search.components.includes("stays") && <p className="accuracy-note">Room count is shown in your request. Confirm the exact room allocation with the property before booking.</p>}
 
     <div className="planner-results-list">
+      <div className="saved-trip-toolbar">
+        <div className="saved-trip-toolbar-copy"><strong>Keep this trip handy</strong><span>Save your search and selected items, then share a private read-only link.</span></div>
+        <div className="saved-trip-toolbar-actions">
+          <button type="button" className="saved-trip-save-button" onClick={() => void saveCurrentTrip()} disabled={!databaseConfigured || savingTrip} title={!databaseConfigured ? "Neon database must be configured to save trips." : "Save this search and its selected itinerary."}>
+            {savingTrip ? <><RefreshCw size={14} className="spin"/> Saving</> : <><Save size={14}/> {savedTripCredentials ? "Update saved trip" : "Save trip"}</>}
+          </button>
+          {savedShareUrl && <a className="saved-trip-share-link" href={savedShareUrl} target="_blank" rel="noreferrer">Open share link <ArrowUpRight size={12}/></a>}
+        </div>
+        {saveTripMessage && <p className={`saved-trip-message ${savedShareUrl ? "is-success" : "is-error"}`} role="status">{saveTripMessage}{savedShareUrl && <><span> · </span><button type="button" onClick={() => void navigator.clipboard?.writeText(savedShareUrl)}><Copy size={12}/> Copy link</button></>}</p>}
+      </div>
       {recommendations.map((recommendation, index) => {
         const destination = recommendation.destination;
         const state = states[destination.id];
