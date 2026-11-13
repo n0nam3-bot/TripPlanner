@@ -30,7 +30,7 @@ type BookingState = { loading: boolean; error: string; options: FlightBookingOpt
 type HotelBookingState = { loading: boolean; error: string; options: HotelBookingOption[] | null };
 type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null };
 type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attribution?: string };
-type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string; source?: string; mapImageDataUrl?: string; directions?: string[]; startAddress?: string; endAddress?: string };
+type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string; source?: string; mapImageDataUrl?: string; mapWarning?: string; directions?: string[]; startAddress?: string; endAddress?: string };
 type ExperienceSlot = "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening";
 type SelectedExperience = { date: string; slot: ExperienceSlot; time?: string };
 type SelectedFlightSeller = { flightId: string; option: FlightBookingOption };
@@ -239,7 +239,8 @@ function RouteLookup({ origin, destination, label, originCoordinates, destinatio
         durationInTraffic: typeof data.durationInTraffic === "string" ? data.durationInTraffic : undefined,
         source: typeof data.source === "string" ? data.source : undefined,
         mapImageDataUrl: typeof data.mapImageDataUrl === "string" && data.mapImageDataUrl.startsWith("data:image/") ? data.mapImageDataUrl : undefined,
-        directions: Array.isArray(data.directions) ? data.directions.filter((item: unknown): item is string => typeof item === "string").slice(0, 12) : [],
+        mapWarning: typeof data.mapWarning === "string" ? data.mapWarning : undefined,
+        directions: Array.isArray(data.directions) ? data.directions.filter((item: unknown): item is string => typeof item === "string" && Boolean(item.trim())).slice(0, 16) : [],
         startAddress: typeof data.startAddress === "string" ? data.startAddress : undefined,
         endAddress: typeof data.endAddress === "string" ? data.endAddress : undefined,
       });
@@ -254,10 +255,10 @@ function RouteLookup({ origin, destination, label, originCoordinates, destinatio
       {state.startAddress && state.endAddress && <small>{state.startAddress} → {state.endAddress}</small>}
       {state.mapImageDataUrl
         ? <div className="route-map-preview"><img src={state.mapImageDataUrl} alt={`Driving route map from ${origin} to ${destination}`} loading="lazy"/><small>Route preview · A = start · B = destination · Powered by Geoapify · © OpenStreetMap contributors</small></div>
-        : <small className="route-source-note">A map preview was not returned for this route. Open Google Maps for the interactive map and turn-by-turn directions.</small>}
+        : <small className="route-source-note">{state.mapWarning ? `Map preview unavailable: ${state.mapWarning}. ` : "A map preview was not returned for this route. "}Open Google Maps for the interactive map and turn-by-turn directions.</small>}
       {state.source?.includes("Geoapify") && <small className="route-source-note">Estimated route · no live traffic</small>}
       <a href={directionsUrl(origin, destination)} target="_blank" rel="noreferrer" className="route-open-maps">Open turn-by-turn navigation in Google Maps <ArrowUpRight size={12}/></a>
-      {Boolean(state.directions?.length) && <details className="route-directions"><summary>Turn-by-turn steps</summary><ol>{state.directions?.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol></details>}
+      {Boolean(state.directions?.length) ? <details className="route-directions"><summary>Turn-by-turn steps</summary><ol>{state.directions?.filter((step) => Boolean(step.trim())).map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol></details> : state.source?.includes("Geoapify") ? <small className="route-source-note">Turn-by-turn step text was not supplied for this route. Open Google Maps for navigation instructions.</small> : null}
     </div>}
     {state?.error && <><small className="route-error">{state.error}</small><a href={directionsUrl(origin, destination)} target="_blank" rel="noreferrer">Open route in Maps</a></>}
   </div>;

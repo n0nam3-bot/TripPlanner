@@ -17,10 +17,25 @@ export type GeoapifyRoute = {
   duration: string;
   durationSeconds: number;
   distanceMeters: number;
-  /** GeoJSON coordinates in [longitude, latitude] order for map rendering. */
+  /** Road geometry as [longitude, latitude] pairs. */
   geometry: Array<[number, number]>;
-  /** Turn-by-turn instruction text supplied by the routing provider. */
+  /** Non-empty, human-readable route instructions. */
   directions: string[];
+  /** Precision-6 encoded polyline returned by Geoapify when requested. */
+  polyline6?: string;
+};
+
+export type GeoapifyStaticMapRequest = {
+  url: string;
+  body: {
+    style: string;
+    width: number;
+    height: number;
+    scaleFactor: number;
+    format: string;
+    geometries: Array<Record<string, unknown>>;
+    markers: Array<Record<string, unknown>>;
+  };
 };
 
 export type GeoapifyCreditCaps = { dailyCap: number; clientDailyCap: number };
@@ -137,53 +152,12 @@ export function buildGeoapifyRouteUrl(input: {
     waypoints: `${input.origin.latitude},${input.origin.longitude}|${input.destination.latitude},${input.destination.longitude}`,
     mode: "drive",
     units: "imperial",
-    format: "geojson",
-    details: "instruction_details",
+    format: "json",
+    details: "instruction_details,polyline6",
+    lang: "en",
     apiKey: input.apiKey.trim(),
   });
   return `https://api.geoapify.com/v1/routing?${params.toString()}`;
-}
-
-
-export function buildGeoapifyStaticMapUrl(input: {
-  geometry: Array<[number, number]>;
-  origin: GeoCoordinates;
-  destination: GeoCoordinates;
-  apiKey: string;
-  width?: number;
-  height?: number;
-}): string {
-  if (!input.apiKey.trim()) throw new Error("GEOAPIFY_NOT_CONFIGURED");
-  if (input.geometry.length < 2) throw new Error("INVALID_GEOAPIFY_ROUTE_GEOMETRY");
-  const points = input.geometry;
-  const maxPoints = 72;
-  const sampled = points.length <= maxPoints
-    ? points
-    : Array.from({ length: maxPoints }, (_, index) => points[Math.round(index * (points.length - 1) / (maxPoints - 1))]);
-  const longitudes = sampled.map(([longitude]) => longitude);
-  const latitudes = sampled.map(([, latitude]) => latitude);
-  const minLon = Math.min(...longitudes); const maxLon = Math.max(...longitudes);
-  const minLat = Math.min(...latitudes); const maxLat = Math.max(...latitudes);
-  const padLon = Math.max(0.004, (maxLon - minLon) * 0.14);
-  const padLat = Math.max(0.004, (maxLat - minLat) * 0.14);
-  const polyline = sampled.map(([longitude, latitude]) => `${longitude.toFixed(5)},${latitude.toFixed(5)}`).join(",");
-  const width = Math.max(320, Math.min(1200, Math.round(input.width ?? 700)));
-  const height = Math.max(220, Math.min(900, Math.round(input.height ?? 380)));
-  const params = new URLSearchParams({
-    style: "osm-carto",
-    width: String(width),
-    height: String(height),
-    format: "png",
-    attribution: "default",
-    area: `rect:${(minLon - padLon).toFixed(5)},${(maxLat + padLat).toFixed(5)},${(maxLon + padLon).toFixed(5)},${(minLat - padLat).toFixed(5)}`,
-    geometry: `polyline:${polyline};linecolor:#1b7655;linewidth:5;lineopacity:0.92`,
-    marker: [
-      `lonlat:${input.origin.longitude},${input.origin.latitude};type:circle;color:#1b7655;size:large;text:A;contentsize:12;shadow:no`,
-      `lonlat:${input.destination.longitude},${input.destination.latitude};type:circle;color:#bc5a3a;size:large;text:B;contentsize:12;shadow:no`,
-    ].join("|"),
-    apiKey: input.apiKey,
-  });
-  return `https://maps.geoapify.com/v1/staticmap?${params.toString()}`;
 }
 
 export function formatGeoapifyDuration(seconds: number): string {
@@ -195,67 +169,116 @@ export function formatGeoapifyDuration(seconds: number): string {
   return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
 }
 
+function normalizeRouteGeometry(value: unknown): Array<[number, number]> {
+  const output: Array<[number, number]> = [];
+  const addPair = (candidate: unknown) => {
+    if (!Array.isArray(candidate) || candidate.length < 2) return false;
+    const lon = finite(candidate[0]);
+    const lat = finite(candidate[1]);
+    if (lon === null || lat === null || lon < -180 || lon > 180 || lat < -90 || lat > 90) return false;
+    output.push([lon, lat]);
+    return true;
+  };
+  const visit = (candidate: unknown, depth = 0) => {
+    if (depth > 5 || !Array.isArray(candidate)) return;
+    if (addPair(candidate)) return;
+    for (const child of candidate) visit(child, depth + 1);
+  };
+  const geometry = record(value);
+  if (Array.isArray(geometry.coordinates)) visit(geometry.coordinates);
+  else visit(value);
+  return output.filter((point, index) => index === 0 || point[0] !== output[index - 1][0] || point[1] !== output[index - 1][1]);
+}
+
+function extractRouteDirections(route: UnknownRecord): string[] {
+  const legs = Array.isArray(route.legs) ? route.legs : [];
+  const instructions: string[] = [];
+  for (const legValue of legs) {
+    const leg = record(legValue);
+    const steps = Array.isArray(leg.steps) ? leg.steps : [];
+    for (const stepValue of steps) {
+      const step = record(stepValue);
+      const instruction = record(step.instruction);
+      const candidates = [
+        instruction.text,
+        step.instruction,
+        step.instruction_text,
+        step.transition_instruction,
+        step.text,
+      ];
+      const line = candidates.find((candidate) => typeof candidate === "string" && candidate.trim());
+      if (typeof line === "string") instructions.push(line.trim());
+    }
+  }
+  const topLevel = Array.isArray(route.steps) ? route.steps : [];
+  if (!instructions.length) {
+    for (const stepValue of topLevel) {
+      const step = record(stepValue);
+      const instruction = record(step.instruction);
+      const line = [instruction.text, step.instruction, step.instruction_text, step.text]
+        .find((candidate) => typeof candidate === "string" && candidate.trim());
+      if (typeof line === "string") instructions.push(line.trim());
+    }
+  }
+  return [...new Set(instructions.filter(Boolean))].slice(0, 16);
+}
+
 export function parseGeoapifyRoute(payload: unknown): GeoapifyRoute | null {
   const root = record(payload);
   const feature = Array.isArray(root.features) ? record(root.features[0]) : {};
   const featureProperties = record(feature.properties);
-  const featureGeometry = record(feature.geometry);
-  const jsonRoute = Array.isArray(root.results) ? record(root.results[0]) : {};
-  const route = Object.keys(featureProperties).length ? featureProperties : jsonRoute;
+  const result = Array.isArray(root.results) ? record(root.results[0]) : {};
+  const route = Object.keys(featureProperties).length ? featureProperties : result;
   const distance = finite(route.distance);
   const seconds = finite(route.time);
   if (distance === null || seconds === null || distance < 0 || seconds < 0) return null;
-  // GeoJSON places the requested units in the top-level FeatureCollection
-  // properties; the legacy JSON shape places distance_units on the route.
-  // "imperial" means the distance value is already in miles.
-  const requestedUnits = text(record(root.properties).units).toLowerCase();
-  const unit = text(route.distance_units) || (/^imperial$/.test(requestedUnits) ? "mi" : /^metric$/.test(requestedUnits) ? "m" : "m");
-  const isMiles = /mi|mile/i.test(unit);
+  const unit = text(route.distance_units) || text(record(root.properties).units) || "m";
+  const isMiles = /mi|mile|imperial/i.test(unit);
   const miles = isMiles ? distance : distance / 1609.344;
   const distanceMeters = isMiles ? distance * 1609.344 : distance;
-
-  const rawCoordinates: unknown[] = [];
-  const geometryCoordinates = featureGeometry.coordinates;
-  if (Array.isArray(geometryCoordinates)) {
-    const geometryType = text(featureGeometry.type);
-    const lines = geometryType === "LineString"
-      ? [geometryCoordinates]
-      : geometryCoordinates;
-    for (const line of lines) {
-      if (!Array.isArray(line)) continue;
-      for (const point of line) rawCoordinates.push(point);
-    }
-  }
-  // Backward compatibility for JSON route responses shaped as [{lat, lon}] or [[lon, lat]].
-  if (!rawCoordinates.length && Array.isArray(jsonRoute.geometry)) {
-    rawCoordinates.push(...jsonRoute.geometry);
-  }
-  const geometry: Array<[number, number]> = rawCoordinates.map((point) => {
-    if (Array.isArray(point) && point.length >= 2) {
-      const lon = finite(point[0]); const lat = finite(point[1]);
-      return lon !== null && lat !== null && Math.abs(lon) <= 180 && Math.abs(lat) <= 90 ? [lon, lat] : null;
-    }
-    const item = record(point);
-    const lon = finite(item.lon ?? item.longitude); const lat = finite(item.lat ?? item.latitude);
-    return lon !== null && lat !== null && Math.abs(lon) <= 180 && Math.abs(lat) <= 90 ? [lon, lat] : null;
-  }).filter((point): point is [number, number] => Boolean(point));
-
-  const legs = Array.isArray(route.legs) ? route.legs : [];
-  const directions = legs.flatMap((leg) => {
-    const steps = record(leg).steps;
-    return Array.isArray(steps) ? steps.map((step) => {
-      const instruction = record(record(step).instruction);
-      return text(instruction.text) || text(record(step).text);
-    }).filter(Boolean) : [];
-  }).slice(0, 12);
-
+  const geometry = normalizeRouteGeometry(feature.geometry ?? route.geometry);
+  const polyline6 = text(route.polyline6) || undefined;
   return {
     distance: `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi`,
     duration: formatGeoapifyDuration(seconds),
     durationSeconds: Math.round(seconds),
     distanceMeters,
     geometry,
-    directions,
+    directions: extractRouteDirections(route),
+    ...(polyline6 ? { polyline6 } : {}),
+  };
+}
+
+/** Build a server-side Static Maps POST request; the API key is never exposed to the browser. */
+export function buildGeoapifyStaticMapRequest(input: {
+  geometry: Array<[number, number]>;
+  polyline6?: string;
+  origin: GeoCoordinates;
+  destination: GeoCoordinates;
+  apiKey: string;
+}): GeoapifyStaticMapRequest {
+  const valid = (point: GeoCoordinates) => Number.isFinite(point.latitude) && point.latitude >= -90 && point.latitude <= 90 && Number.isFinite(point.longitude) && point.longitude >= -180 && point.longitude <= 180;
+  if (!valid(input.origin) || !valid(input.destination)) throw new Error("INVALID_GEOAPIFY_COORDINATES");
+  if (!input.apiKey.trim()) throw new Error("GEOAPIFY_NOT_CONFIGURED");
+  const geometry = input.geometry.filter(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat) && Math.abs(lon) <= 180 && Math.abs(lat) <= 90);
+  const line = input.polyline6?.trim();
+  if (!line && geometry.length < 2) throw new Error("GEOAPIFY_ROUTE_GEOMETRY_MISSING");
+  return {
+    url: `https://maps.geoapify.com/v1/staticmap?apiKey=${encodeURIComponent(input.apiKey.trim())}&attribution=default`,
+    body: {
+      style: "osm-bright",
+      width: 800,
+      height: 450,
+      scaleFactor: 1,
+      format: "jpeg",
+      geometries: [line
+        ? { type: "polyline6", value: line, linecolor: "#2563eb", lineopacity: 0.95, linewidth: 6, linestyle: "solid" }
+        : { type: "polyline", value: geometry.map(([lon, lat]) => ({ lat, lon })), linecolor: "#2563eb", lineopacity: 0.95, linewidth: 6, linestyle: "solid" }],
+      markers: [
+        { lat: input.origin.latitude, lon: input.origin.longitude, type: "circle", color: "#15803d", size: 42, contentsize: 24, text: "A" },
+        { lat: input.destination.latitude, lon: input.destination.longitude, type: "circle", color: "#dc2626", size: 42, contentsize: 24, text: "B" },
+      ],
+    },
   };
 }
 

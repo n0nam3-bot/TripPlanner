@@ -2,7 +2,7 @@ import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordPro
 import {
   buildGeoapifyPlacesUrl,
   buildGeoapifyRouteUrl,
-  buildGeoapifyStaticMapUrl,
+  buildGeoapifyStaticMapRequest,
   estimateGeoapifyRouteCredits,
   normalizeGeoapifyPlaces,
   parseGeoapifyRoute,
@@ -26,6 +26,7 @@ export type GeoapifyDrivingRouteResponse = GeoapifyRoute & {
   startAddress?: string;
   endAddress?: string;
   mapImageDataUrl?: string;
+  mapWarning?: string;
 };
 
 function apiKey(): string {
@@ -60,45 +61,6 @@ function placesFromCached(payload: RecordValue): GeoapifyPlace[] {
     const place = asRecord(row);
     return typeof place.title === "string" && typeof place.latitude === "number" && typeof place.longitude === "number";
   }) as GeoapifyPlace[];
-}
-
-/** Draws a cached route as a static map without exposing the Geoapify key to the browser. */
-async function renderGeoapifyRouteMap(input: {
-  geometry: Array<[number, number]>;
-  origin: GeoCoordinates;
-  destination: GeoCoordinates;
-  apiKey: string;
-  clientUsageKey: string;
-}): Promise<string | undefined> {
-  if (input.geometry.length < 2) return undefined;
-  try {
-    // A 700x380 image, two endpoint markers and a route line are reserved
-    // at five credits to round up the provider's tile-based usage estimate.
-    await reserveGeoapifyCredits(input.clientUsageKey, 5);
-    const mapUrl = buildGeoapifyStaticMapUrl({
-      geometry: input.geometry,
-      origin: input.origin,
-      destination: input.destination,
-      apiKey: input.apiKey,
-      width: 700,
-      height: 380,
-    });
-    await waitForGeoapifyRequestSlot();
-    const response = await fetch(mapUrl, {
-      headers: { Accept: "image/png" },
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!response.ok) return undefined;
-    const contentType = response.headers.get("content-type")?.split(";")[0] || "image/png";
-    if (!contentType.startsWith("image/")) return undefined;
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (!bytes.length || bytes.length > 1_500_000) return undefined;
-    return `data:${contentType};base64,${bytes.toString("base64")}`;
-  } catch {
-    // A map preview is an enhancement. A valid distance/time result should
-    // still be returned when the optional static-map allowance is exhausted.
-    return undefined;
-  }
 }
 
 export async function searchGeoapifyPlaces(input: {
@@ -163,6 +125,38 @@ export async function searchGeoapifyPlaces(input: {
   }
 }
 
+async function renderGeoapifyRouteMap(input: {
+  route: GeoapifyRoute;
+  origin: GeoCoordinates;
+  destination: GeoCoordinates;
+  clientUsageKey: string;
+  apiKey: string;
+}): Promise<string> {
+  const request = buildGeoapifyStaticMapRequest({
+    geometry: input.route.geometry,
+    polyline6: input.route.polyline6,
+    origin: input.origin,
+    destination: input.destination,
+    apiKey: input.apiKey,
+  });
+  // An 800x450 map with two endpoint markers is conservatively reserved at
+  // five credits (request + rendered tiles + two markers).
+  await waitForGeoapifyRequestSlot();
+  await reserveGeoapifyCredits(input.clientUsageKey, 5);
+  const response = await fetch(request.url, {
+    method: "POST",
+    headers: { Accept: "image/jpeg,image/png", "Content-Type": "application/json" },
+    body: JSON.stringify(request.body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`GEOAPIFY_STATIC_MAP_HTTP_${response.status}`);
+  const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() || "";
+  if (contentType !== "image/jpeg" && contentType !== "image/png") throw new Error("GEOAPIFY_STATIC_MAP_NOT_IMAGE");
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > 2_500_000) throw new Error("GEOAPIFY_STATIC_MAP_INVALID_SIZE");
+  return `data:${contentType};base64,${bytes.toString("base64")}`;
+}
+
 export async function getGeoapifyDrivingRoute(input: {
   origin: GeoCoordinates;
   destination: GeoCoordinates;
@@ -178,18 +172,12 @@ export async function getGeoapifyDrivingRoute(input: {
   });
   const cached = await getProviderCache(cacheKey);
   if (cached) {
-    const routeFeature = asRecord(cached.payload.route);
-    const route = parseGeoapifyRoute({ features: [routeFeature] });
+    const route = parseGeoapifyRoute({ results: [cached.payload.route] });
     if (route) {
       await recordProviderEvent({ provider: "Geoapify", category: "Driving directions", eventType: "cache_hit", outcome: "success", cacheStatus: "hit" });
-      return {
-        ...route,
-        source: "Geoapify Routing / OpenStreetMap (estimated; no live traffic)",
-        checkedAt: cached.fetchedAt,
-        startAddress: input.originLabel,
-        endAddress: input.destinationLabel,
-        ...(typeof cached.payload.mapImageDataUrl === "string" ? { mapImageDataUrl: cached.payload.mapImageDataUrl } : {}),
-      };
+      const mapImageDataUrl = typeof cached.payload.mapImageDataUrl === "string" && cached.payload.mapImageDataUrl.startsWith("data:image/") ? cached.payload.mapImageDataUrl : undefined;
+      const cachedDirections = Array.isArray(cached.payload.directions) ? cached.payload.directions.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 16) : route.directions;
+      return { ...route, directions: cachedDirections, ...(mapImageDataUrl ? { mapImageDataUrl } : {}), ...(typeof cached.payload.mapWarning === "string" ? { mapWarning: cached.payload.mapWarning } : {}), source: "Geoapify Routing / OpenStreetMap (estimated; no live traffic)", checkedAt: cached.fetchedAt, startAddress: input.originLabel, endAddress: input.destinationLabel };
     }
   }
 
@@ -199,7 +187,7 @@ export async function getGeoapifyDrivingRoute(input: {
     await waitForGeoapifyRequestSlot();
     await reserveGeoapifyCredits(input.clientUsageKey, estimatedCredits);
     const url = buildGeoapifyRouteUrl({ origin: input.origin, destination: input.destination, apiKey: key });
-    const response = await fetch(url, { headers: { Accept: "application/geo+json, application/json" }, signal: AbortSignal.timeout(12_000) });
+    const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(12_000) });
     if (!response.ok) {
       await recordProviderEvent({ provider: "Geoapify", category: "Driving directions", eventType: "provider_error", outcome: "error", httpStatus: response.status, durationMs: Date.now() - startedAt });
       throw new Error(response.status === 429 ? "GEOAPIFY_PROVIDER_RATE_LIMITED" : `GEOAPIFY_HTTP_${response.status}`);
@@ -207,27 +195,31 @@ export async function getGeoapifyDrivingRoute(input: {
     const payload = await response.json() as unknown;
     const route = parseGeoapifyRoute(payload);
     if (!route) return null;
-    const root = asRecord(payload);
-    const feature = Array.isArray(root.features) ? asRecord(root.features[0]) : {};
-    if (!Object.keys(feature).length) return null;
-    const mapImageDataUrl = await renderGeoapifyRouteMap({
-      geometry: route.geometry,
-      origin: input.origin,
-      destination: input.destination,
-      apiKey: key,
-      clientUsageKey: input.clientUsageKey,
-    });
-    await setProviderCache(cacheKey, { route: feature, ...(mapImageDataUrl ? { mapImageDataUrl } : {}) }, 12 * 60 * 60);
+    const record = asRecord(payload);
+    const first = Array.isArray(record.results) ? asRecord(record.results[0]) : {};
+    let mapImageDataUrl: string | undefined;
+    let mapWarning: string | undefined;
+    if (route.polyline6 || route.geometry.length >= 2) {
+      try {
+        mapImageDataUrl = await renderGeoapifyRouteMap({
+          route,
+          origin: input.origin,
+          destination: input.destination,
+          clientUsageKey: input.clientUsageKey,
+          apiKey: key,
+        });
+        await recordProviderEvent({ provider: "Geoapify", category: "Route map preview", eventType: "provider_request", outcome: "success", cacheStatus: "miss" });
+      } catch (mapError) {
+        mapWarning = mapError instanceof Error ? mapError.message.replace(/^GEOAPIFY_STATIC_MAP_/, "Map preview ").replace(/_/g, " ").toLowerCase() : "Map preview could not be generated";
+        await recordProviderEvent({ provider: "Geoapify", category: "Route map preview", eventType: "provider_error", outcome: "error" }).catch(() => undefined);
+      }
+    } else {
+      mapWarning = "route geometry was not supplied by the routing response";
+    }
+    await setProviderCache(cacheKey, { route: first, mapImageDataUrl: mapImageDataUrl ?? null, directions: route.directions, mapWarning: mapWarning ?? null }, 12 * 60 * 60).catch(() => undefined);
     const checkedAt = new Date().toISOString();
     await recordProviderEvent({ provider: "Geoapify", category: "Driving directions", eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
-    return {
-      ...route,
-      source: "Geoapify Routing / OpenStreetMap (estimated; no live traffic)",
-      checkedAt,
-      startAddress: input.originLabel,
-      endAddress: input.destinationLabel,
-      ...(mapImageDataUrl ? { mapImageDataUrl } : {}),
-    };
+    return { ...route, ...(mapImageDataUrl ? { mapImageDataUrl } : {}), ...(mapWarning ? { mapWarning } : {}), source: "Geoapify Routing / OpenStreetMap (estimated; no live traffic)", checkedAt, startAddress: input.originLabel, endAddress: input.destinationLabel };
   } catch (error) {
     const code = error instanceof Error ? error.message : "GEOAPIFY_ROUTE_FAILED";
     if (code.startsWith("GEOAPIFY_DAILY_CAP") || code.startsWith("GEOAPIFY_CLIENT_DAILY_CAP") || code === "GEOAPIFY_REQUEST_RATE_LIMITED") {
