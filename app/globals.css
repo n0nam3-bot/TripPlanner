@@ -2254,3 +2254,201 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
   }
   .results-left-sidebar .results-section-rail-toggle { min-height: 32px; }
 }
+
+/* Landing page and shared-trip readability pass.
+   Keep small decorative labels subordinate, but bring all instructional,
+   descriptive, form and action text to comfortable reading sizes. */
+.landing-copy .eyebrow,
+.landing-inspiration .eyebrow {
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 1px;
+}
+.landing-copy > p:not(.landing-note) {
+  font-size: 17px;
+  line-height: 1.7;
+}
+.landing-note {
+  color: #52645a;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.landing-inspiration-heading h2 {
+  font-size: clamp(28px, 2.8vw, 36px);
+  line-height: 1.18;
+}
+.inspiration-feature-tag,
+.inspiration-feature-copy > span,
+.inspiration-feature-copy small,
+.inspiration-feature-cta,
+.inspiration-option-copy small,
+.inspiration-disclaimer {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.inspiration-feature-copy strong { font-size: clamp(26px, 2.9vw, 36px); }
+.inspiration-option-copy strong { font-size: 17px; }
+.inspiration-option-copy small { letter-spacing: .45px; }
+.inspiration-disclaimer { color: #53675b; }
+
+/* Main landing search: labels, selections, helper copy and preset controls. */
+.search-card-top .eyebrow { font-size: 12px; }
+.search-card h2,
+.search-card-top h2 { font-size: clamp(25px, 2.4vw, 30px); }
+.search-step-note { font-size: 14px; line-height: 1.5; }
+.component-option-copy strong { font-size: 15px; }
+.component-option-copy small { font-size: 13px; line-height: 1.45; }
+.component-option { min-height: 82px; }
+.stay-type-row { font-size: 14px; }
+.stay-preferences-panel > summary { font-size: 14px; }
+.stay-preferences-panel > summary span { font-size: 12px; }
+.stay-space-select { font-size: 13px; }
+.stay-space-select small,
+.stay-verification-note { font-size: 12px; line-height: 1.55; }
+.stay-amenity-heading > span { font-size: 12px; }
+.stay-amenity-row > span { font-size: 12px; }
+.search-presets button { min-height: 38px; padding-inline: 14px; font-size: 13px; }
+.field-label { color: #4f6256; font-size: 12px; letter-spacing: .55px; }
+.search-field input,
+.search-field select { font-size: 15px; }
+.search-field input[type="date"] { font-size: 14px; }
+.location-code,
+.location-no-suggestions,
+.suggestion-heading,
+.suggestion-group-heading,
+.suggestion-kind,
+.suggestion-detail,
+.suggestion-code { font-size: 12px; }
+.suggestion-main { font-size: 14px; }
+.location-suggestion { min-height: 62px; }
+.search-footnote { color: #52645a; font-size: 12px; line-height: 1.5; }
+.preference-select { color: #52645a; font-size: 13px; }
+.preference-select select { font-size: 14px; }
+.flexible-toggle { color: #405448; font-size: 13px; }
+.advanced-search > summary { color: #405448; font-size: 14px; }
+.advanced-search > summary span { color: #596d60; font-size: 12px; }
+.advanced-search-grid > label { color: #405448; font-size: 12px; }
+.advanced-search-grid > label input:not([type="checkbox"]),
+.advanced-search-grid > label select { font-size: 14px; }
+.advanced-search-grid > label small { color: #596d60; font-size: 11px; }
+.search-submit { font-size: 15px; }
+.form-error { font-size: 14px; }
+.footer-top p,
+.footer-links a,
+.footer-bottom { color: #52645a; font-size: 12px; line-height: 1.55; }
+
+/* Public shared-trip pages are frequently opened by guests on desktop and
+   phones; increase the full information hierarchy, not just the title. */
+.saved-trip-toolbar-copy strong { font-size: 14px; }
+.saved-trip-toolbar-copy span { color: #53675b; font-size: 13px; line-height: 1.55; }
+.saved-trip-save-button,
+.saved-trip-share-link { font-size: 13px; }
+.saved-trip-save-button { min-height: 42px; padding-inline: 16px; }
+.saved-trip-message { font-size: 13px; line-height: 1.55; }
+.saved-trip-intro { color: #53675b; font-size: 15px; line-height: 1.7; }
+.saved-trip-overview > div > span { color: #596d60; font-size: 11px; letter-spacing: .7px; }
+.saved-trip-overview > div > strong { font-size: 14px; line-height: 1.5; }
+.saved-trip-notice { color: #405448; }
+.saved-trip-notice p { font-size: 13px; line-height: 1.65; }
+.saved-trip-content-heading > span { color: #53675b; font-size: 12px; }
+.saved-trip-destination > h3 { color: #354d3f; font-size: 14px; }
+.saved-trip-item-heading > span { color: #53675b; font-size: 11px; letter-spacing: .55px; }
+.saved-trip-item-heading time { color: #40594a; font-size: 13px; line-height: 1.45; }
+.saved-trip-item h4 { font-size: 22px; line-height: 1.25; }
+.saved-trip-item > p { color: #52645a; font-size: 14px; line-height: 1.6; }
+.saved-trip-item ul { color: #405448; font-size: 13px; line-height: 1.65; }
+.saved-trip-item-rating,
+.saved-trip-item-rating strong { color: #655027; font-size: 13px; }
+.saved-trip-item-rating span { color: #52645a; font-size: 12px; }
+.saved-trip-item-source { color: #53675b; font-size: 11px; line-height: 1.5; }
+.saved-trip-item-price strong { font-size: 15px; }
+.saved-trip-item-price span { color: #52645a; font-size: 12px; }
+.saved-trip-item-links a { color: #365c43; font-size: 13px; line-height: 1.5; text-decoration: underline; text-underline-offset: 3px; }
+.saved-trip-empty { color: #52645a; font-size: 14px; line-height: 1.6; }
+.saved-trip-print-button { min-height: 42px; padding-inline: 16px; font-size: 13px; }
+.saved-trip-actions > span { color: #53675b; font-size: 13px; line-height: 1.6; }
+.saved-trip-expiry { color: #53675b; font-size: 12px; line-height: 1.6; }
+.saved-trip-footer .footer-top p,
+.saved-trip-footer .footer-bottom { color: #52645a; font-size: 12px; }
+
+@media (max-width: 900px) {
+  .landing-copy > p:not(.landing-note) { font-size: 16px; }
+}
+@media (max-width: 680px) {
+  .landing-copy .eyebrow,
+  .landing-inspiration .eyebrow { font-size: 11px; }
+  .landing-copy > p:not(.landing-note) { font-size: 16px; line-height: 1.65; }
+  .landing-note { font-size: 12px; }
+  .landing-inspiration-heading h2 { font-size: 27px; }
+  .inspiration-feature-copy > span,
+  .inspiration-feature-copy small,
+  .inspiration-feature-cta,
+  .inspiration-feature-tag,
+  .inspiration-option-copy small,
+  .inspiration-disclaimer { font-size: 10px; }
+  .inspiration-option-copy strong { font-size: 16px; }
+  .search-card.search-card-product { padding: 18px 14px; }
+  .search-card-top h2,
+  .search-card h2 { font-size: 23px; }
+  .search-step-note { font-size: 13px; }
+  .component-option { min-height: 72px; padding: 11px; }
+  .component-option-copy strong { font-size: 14px; }
+  .component-option-copy small { font-size: 12px; }
+  .search-presets button { min-height: 36px; padding-inline: 11px; font-size: 12px; }
+  .field-label { font-size: 11px; }
+  .search-field input,
+  .search-field select { font-size: 15px; }
+  .search-footnote { font-size: 11px; }
+  .stay-amenity-heading > span,
+  .stay-amenity-row > span { font-size: 11px; }
+  .advanced-search-grid > label { font-size: 12px; }
+  .advanced-search-grid > label small { font-size: 11px; }
+  .footer-top p,
+  .footer-links a,
+  .footer-bottom { font-size: 12px; }
+
+  .saved-trip-shell { padding-top: 22px; padding-bottom: 38px; }
+  .saved-trip-header { margin: 20px 0 18px; }
+  .saved-trip-header h1 { font-size: clamp(30px, 8vw, 42px); line-height: 1.12; }
+  .saved-trip-intro { font-size: 14px; }
+  .saved-trip-overview > div { min-height: 82px; padding: 12px 11px; }
+  .saved-trip-overview > div > span { font-size: 10px; }
+  .saved-trip-overview > div > strong { font-size: 13px; }
+  .saved-trip-notice { margin: 13px 0 25px; padding: 12px; }
+  .saved-trip-notice p { font-size: 12px; }
+  .saved-trip-content-heading h2 { font-size: 24px; }
+  .saved-trip-content-heading > span { font-size: 11px; }
+  .saved-trip-destination > h3 { font-size: 13px; }
+  .saved-trip-item { padding: 14px; }
+  .saved-trip-item-heading > span { font-size: 10px; }
+  .saved-trip-item-heading time { font-size: 12px; }
+  .saved-trip-item h4 { font-size: 21px; }
+  .saved-trip-item > p { font-size: 13px; }
+  .saved-trip-item ul { font-size: 12px; }
+  .saved-trip-item-links a { font-size: 12px; }
+  .saved-trip-actions > span { font-size: 12px; }
+  .saved-trip-expiry { font-size: 11px; }
+}
+
+@media (prefers-contrast: more) {
+  .landing-copy > p:not(.landing-note),
+  .landing-note,
+  .inspiration-disclaimer,
+  .saved-trip-intro,
+  .saved-trip-notice,
+  .saved-trip-item > p,
+  .saved-trip-item ul,
+  .saved-trip-actions > span,
+  .saved-trip-expiry { color: #263d31; }
+}
+
+.saved-trip-page .eyebrow { color: #53675b; font-size: 12px; letter-spacing: .85px; }
+.saved-trip-page .back-link { color: #365c43; font-size: 14px; }
+.site-header .desktop-nav a { color: #405448; font-size: 14px; }
+.site-header .header-cta { font-size: 14px; }
+@media (max-width: 680px) {
+  .saved-trip-page .eyebrow { font-size: 11px; }
+  .saved-trip-page .back-link { font-size: 13px; }
+  .site-header .desktop-nav a,
+  .site-header .header-cta { font-size: 13px; }
+}
