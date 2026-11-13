@@ -106,7 +106,8 @@ test("product roadmap uses visible checkmarks for completed work and unchecked b
   }
   assert.match(roadmap, /## Release 4[\s\S]*?- \[ \] Enforce hard budget constraints/);
   assert.match(roadmap, /## Release 5[\s\S]*?- \[x\] Add Neon persistence for anonymous saved trip drafts and saved searches/);
-  assert.match(roadmap, /## Release 5[\s\S]*?- \[ \] Add traveler edits and feedback capture/);
+  assert.match(roadmap, /## Release 5[\s\S]*?- \[x\] Add invite-only traveler feedback links/);
+  assert.match(roadmap, /## Release 5[\s\S]*?- \[ \] Let owners apply a suggested itinerary edit/);
   assert.match(roadmap, /## Release 6[\s\S]*?- \[x\] Initial Booking\.com/);
 });
 

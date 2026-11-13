@@ -109,3 +109,35 @@ CREATE TABLE IF NOT EXISTS tripfinder_saved_trip_daily_usage (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (client_key, usage_date)
 );
+
+-- Invite-only traveler feedback. These tokens authorize suggestions only;
+-- owner credentials remain private and public share tokens remain read-only.
+CREATE TABLE IF NOT EXISTS tripfinder_trip_feedback_invites (
+  id uuid PRIMARY KEY,
+  saved_trip_id uuid NOT NULL REFERENCES tripfinder_saved_trips(id) ON DELETE CASCADE,
+  invite_token_hash text NOT NULL UNIQUE,
+  base_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  submission_count integer NOT NULL DEFAULT 0 CHECK (submission_count >= 0),
+  revoked_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS tripfinder_feedback_invites_trip_idx
+  ON tripfinder_trip_feedback_invites (saved_trip_id, expires_at);
+
+CREATE TABLE IF NOT EXISTS tripfinder_trip_feedback (
+  id uuid PRIMARY KEY,
+  saved_trip_id uuid NOT NULL REFERENCES tripfinder_saved_trips(id) ON DELETE CASCADE,
+  invite_id uuid NOT NULL REFERENCES tripfinder_trip_feedback_invites(id) ON DELETE CASCADE,
+  submitter_name text NOT NULL DEFAULT '',
+  category text NOT NULL,
+  item_title text NOT NULL DEFAULT '',
+  message text NOT NULL,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','reviewed','dismissed')),
+  base_updated_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  reviewed_at timestamptz,
+  reviewed_by_owner_hash text
+);
+CREATE INDEX IF NOT EXISTS tripfinder_feedback_trip_created_idx
+  ON tripfinder_trip_feedback (saved_trip_id, created_at DESC);

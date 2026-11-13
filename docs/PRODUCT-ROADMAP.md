@@ -82,11 +82,13 @@
 - [x] Display a round-trip flight reference or seller quote once in the saved itinerary; do not repeat the provider price on both outbound and return events. Separate-ticket outbound/return amounts remain distinct only when the seller explicitly supplies them.
 - [x] Add a safe "Make my own copy" action that forks a read-only shared trip into an independently owned draft with fresh share/owner tokens, preserves selected flights, stays, activities, restaurants and schedule notes, and restores only unique matches against refreshed provider results. Never copy supplier booking tokens; flag unavailable or ambiguous selections for review.
 - [x] Allow travelers to change departure/check-in and return/check-out dates from the frozen "Your Trip" overview. Refresh results for the new range, carry the copied itinerary and saved-trip owner access forward, shift activities by their original day offset, and flag flights or activities that require re-selection/rescheduling.
-- [ ] Add traveler edits and feedback capture with explicit edit permissions and conflict-safe updates; public share links remain read-only in the current release.
+- [x] Add invite-only traveler feedback links with separate hashed invitation tokens; collaborators can submit bounded suggestions but cannot change the trip or view owner credentials.
+- [x] Add an owner-only feedback inbox with reviewed/dismissed states, invitation expiry/submission limits, and optimistic revision checks to prevent stale concurrent review writes.
+- [ ] Let owners apply a suggested itinerary edit through an explicit preview-and-confirm workflow with a revision-aware saved-trip patch; feedback must never apply automatically.
 - [ ] Optional user accounts only if needed; the first saved-trip version does not require accounts.
 - [ ] Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
 
-**Next Release 5 focus:** invite-only traveler feedback and suggested edits with explicit permissions, owner approval, and conflict-safe saved-trip revisions. Trip copies preserve the selected itinerary and restore only exact current matches; travelers can revise dates from the frozen overview without changing the source share. Public share links remain read-only, each fork gets independent share/owner tokens, and supplier booking credentials remain excluded.
+**Next Release 5 focus:** owner-approved application of invited traveler suggestions through a preview-and-confirm workflow. The first feedback slice is complete: feedback-only invite links are separate from public read-only share links, suggestions appear only in the owner's browser inbox, and inbox status changes use saved-trip revision checks. Suggestions do not alter the itinerary; applying them remains a separate owner-controlled step. Trip copies preserve selected itineraries, and travelers can revise dates from the frozen overview without changing the source share.
 
 
 ## Release 6 — supplier depth and monetization

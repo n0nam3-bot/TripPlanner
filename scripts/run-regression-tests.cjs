@@ -18,6 +18,7 @@ const sourceFiles = [
   "lib/trip-planner/cost-ledger.ts",
   "lib/trip-planner/validation.ts",
   "lib/trip-planner/saved-trips.ts",
+  "lib/trip-planner/trip-feedback.ts",
   "lib/trip-planner/proximity.ts",
   "lib/ai/trip-assistant.ts",
   "tests/types/process-shim.d.ts",

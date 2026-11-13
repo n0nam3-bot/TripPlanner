@@ -271,7 +271,9 @@ test("saved trip selection references reject malformed identities without leakin
 
 test("database fork reads a public source and creates a new record without owner-update credentials", () => {
   const db = read("lib/db/saved-trips.ts");
-  const fork = db.slice(db.indexOf("export async function forkSavedTripFromShareToken"));
+  const forkStart = db.indexOf("export async function forkSavedTripFromShareToken");
+  const forkEnd = db.indexOf("/** Create a feedback-only invitation.", forkStart);
+  const fork = db.slice(forkStart, forkEnd > forkStart ? forkEnd : undefined);
   assert.match(fork, /getSavedTripByShareToken\(sourceShareToken\)/);
   assert.match(fork, /buildSavedTripForkDraft/);
   assert.match(fork, /return saveAnonymousTripDraft\(draft, options\)/);

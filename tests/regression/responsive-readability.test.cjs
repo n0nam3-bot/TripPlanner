@@ -54,3 +54,9 @@ test("date editor controls remain full-width, readable, and tappable on narrow s
   assert.match(narrow, /\.results-overview-date-fields\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
   assert.match(narrow, /\.results-overview-date-actions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
 });
+
+test("start and end date controls always stack vertically and expose the complete native date picker", () => {
+  const verticalRule = css.split("/* Keep the entire native date control visible")[1] || "";
+  assert.match(verticalRule, /\.results-overview-date-fields\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)\s*!important/s);
+  assert.match(verticalRule, /\.results-overview-date-editor input\[type="date"\]\s*\{[^}]*width:\s*100%[^}]*min-height:\s*48px[^}]*font-size:\s*15px/s);
+});
