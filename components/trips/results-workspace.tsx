@@ -986,6 +986,7 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
   const [feedbackUpdatedAt, setFeedbackUpdatedAt] = useState("");
   const [feedbackEditDraft, setFeedbackEditDraft] = useState<FeedbackEditDraft | null>(null);
   const [feedbackEditPreview, setFeedbackEditPreview] = useState<FeedbackEditPreview | null>(null);
+  const feedbackAutoOpenedRef = useRef(false);
   const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
   const travelerLabel = `${search.adults} adult${search.adults === 1 ? "" : "s"}${search.childrenAges.length ? ` · ${search.childrenAges.length} child${search.childrenAges.length === 1 ? "" : "ren"}` : ""}`;
   const budgetAmount = money(search.budget, search.currency);
@@ -1017,7 +1018,7 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
     } finally { setFeedbackLoading(false); }
   }
 
-  async function loadTripFeedback() {
+  const loadTripFeedback = useCallback(async () => {
     if (!feedbackCredentials || feedbackLoading) return;
     setFeedbackLoading(true);
     setFeedbackMessage("");
@@ -1034,7 +1035,7 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
     } catch (error) {
       setFeedbackMessage(error instanceof Error ? error.message : "Tripfinder could not load traveler feedback.");
     } finally { setFeedbackLoading(false); }
-  }
+  }, [feedbackCredentials, feedbackLoading]);
 
   const feedbackTargets = currentSnapshot.destinations.flatMap((destination, destinationIndex) =>
     destination.items.flatMap((item, itemIndex) => ["activity", "restaurant"].includes(item.kind)
@@ -1122,6 +1123,12 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
       setFeedbackMessage(error instanceof Error ? error.message : "Tripfinder could not update this feedback status.");
     } finally { setFeedbackLoading(false); }
   }
+
+  useEffect(() => {
+    if (!feedbackCredentials || feedbackAutoOpenedRef.current || typeof window === "undefined" || window.location.hash !== "#feedback") return;
+    feedbackAutoOpenedRef.current = true;
+    void loadTripFeedback();
+  }, [feedbackCredentials, loadTripFeedback]);
 
   function applyDateRange() {
     if (dateChangePending) return;
@@ -1231,17 +1238,28 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
       </div>
     </div>
     {saveMessage && <p className={`results-overview-save-message ${shareUrl ? "is-success" : "is-error"}`} role="status">{saveMessage}</p>}
-    <div className="results-feedback-tools">
-      <button type="button" onClick={() => void createFeedbackInvite()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading} title={!hasSavedTrip ? "Save your trip first to invite feedback." : "Create a separate feedback-only invitation."}>
-        {feedbackLoading ? "Working…" : "Invite traveler feedback"}
+    <section id="feedback" className="results-feedback-section" aria-label="Traveler feedback tools">
+      <button type="button" className="results-feedback-toggle" aria-expanded={feedbackOpen} aria-controls="results-feedback-content" onClick={() => feedbackOpen ? setFeedbackOpen(false) : void loadTripFeedback()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading} title={!hasSavedTrip ? "Save your trip first to invite feedback." : "Open the traveler feedback inbox and invitation controls."}>
+        <span>Traveler feedback</span>
+        <small>{feedbackLoading ? "Loading…" : feedbackEntries.filter((entry) => entry.status === "pending").length ? `${feedbackEntries.filter((entry) => entry.status === "pending").length} pending` : "View inbox"}</small>
+        <span className="results-feedback-toggle-chevron" aria-hidden="true">{feedbackOpen ? "−" : "+"}</span>
       </button>
-      <button type="button" onClick={() => feedbackOpen ? setFeedbackOpen(false) : void loadTripFeedback()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading}>
-        {feedbackOpen ? "Hide feedback" : "View feedback"}{feedbackEntries.filter((entry) => entry.status === "pending").length ? ` (${feedbackEntries.filter((entry) => entry.status === "pending").length})` : ""}
-      </button>
-    </div>
-    {feedbackInviteUrl && <div className="results-feedback-invite-link"><span>Feedback-only link</span><a href={feedbackInviteUrl} target="_blank" rel="noreferrer">Open invitation</a><button type="button" onClick={() => { try { void navigator.clipboard.writeText(feedbackInviteUrl).then(() => setFeedbackMessage("Feedback link copied.")).catch(() => setFeedbackMessage("Copy was blocked by this browser.")); } catch { setFeedbackMessage("Copy was blocked by this browser."); } }}>Copy invite link</button></div>}
-    {feedbackMessage && <p className="results-feedback-message" role="status">{feedbackMessage}</p>}
-    {feedbackOpen && <div className="results-feedback-inbox" aria-label="Traveler feedback">
+      {feedbackOpen && <div id="results-feedback-content" className="results-feedback-content">
+        <div className="results-feedback-tools">
+          <button type="button" onClick={() => void createFeedbackInvite()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading} title="Create a separate feedback-only invitation.">
+            {feedbackLoading ? "Working…" : "Invite a traveler"}
+          </button>
+          <button type="button" onClick={() => void loadTripFeedback()} disabled={!hasSavedTrip || !feedbackCredentials || feedbackLoading}>
+            Refresh inbox
+          </button>
+        </div>
+        {feedbackInviteUrl && <div className="results-feedback-invite-link">
+          <div className="results-feedback-invite-copy"><span>Feedback invitation</span><a href={feedbackInviteUrl} target="_blank" rel="noreferrer" title={feedbackInviteUrl}>Open invitation</a></div>
+          <button type="button" onClick={() => { try { void navigator.clipboard.writeText(feedbackInviteUrl).then(() => setFeedbackMessage("Feedback link copied.")).catch(() => setFeedbackMessage("Copy was blocked by this browser.")); } catch { setFeedbackMessage("Copy was blocked by this browser."); } }}>Copy link</button>
+        </div>}
+        {feedbackMessage && <p className="results-feedback-message" role="status">{feedbackMessage}</p>}
+        <div className="results-feedback-inbox" aria-label="Traveler feedback">
+
       {!feedbackEntries.length ? <p>No feedback has been submitted yet.</p> : feedbackEntries.map((entry) => <article key={entry.id} className="results-feedback-entry">
         <div><strong>{entry.category.replaceAll("-", " ")}{entry.itemTitle ? ` · ${entry.itemTitle}` : ""}</strong><small>{entry.name || "Traveler"} · {new Date(entry.createdAt).toLocaleString()}</small></div>
         <p>{entry.message}</p>
@@ -1258,7 +1276,9 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
           {feedbackEditPreview?.feedbackId === entry.id && <div className="results-feedback-edit-preview"><strong>Preview — nothing has changed yet</strong><p>{feedbackEditPreview.summary}</p><button type="button" onClick={() => void applyApprovedFeedbackEdit()} disabled={feedbackLoading}>{feedbackLoading ? "Applying…" : "Confirm and apply edit"}</button></div>}
         </div>}
       </article>)}
-    </div>}
+        </div>
+      </div>}
+    </section>
   </section>;
 }
 

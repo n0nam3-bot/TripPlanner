@@ -6,6 +6,7 @@ import { SiteHeader } from "@/components/site-header";
 import { SupportTipLink } from "@/components/support-tip-link";
 import { PrintTripButton } from "@/components/trips/print-trip-button";
 import { MakeTripCopyButton } from "@/components/trips/make-trip-copy-button";
+import { OwnerTripAccess } from "@/components/trips/my-trips-client";
 import { getSavedTripByShareToken } from "@/lib/db/saved-trips";
 import { formatTripDestinationLabel } from "@/lib/trip-planner/destinations";
 import { sortSavedTripItemsChronologically } from "@/lib/trip-planner/saved-trips";
@@ -69,6 +70,7 @@ export default async function SharedTripPage({ params }: { params: Promise<{ tok
         <div><span>BUDGET</span><strong>{money(search.budget, search.currency)} {search.budgetMode === "per_person" ? "per person" : "total"}</strong></div>
       </section>
       <div className="saved-trip-notice no-print"><MapPin size={15}/><p>Anyone with this private link can view this trip. Share it only with people you trust. Booking tokens, account credentials and private API data are not included. Photos, ratings and links are saved provider snapshots and may change.</p></div>
+      <OwnerTripAccess shareToken={token}/>
       <section className="saved-trip-content">
         <div className="saved-trip-content-heading"><div><span className="eyebrow">YOUR PLAN</span><h2>Selected trip details</h2></div><span>Saved {new Date(saved.updatedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span></div>
         {saved.snapshot.destinations.map((group, index) => <section className="saved-trip-destination" key={`${group.label}-${index}`}>
