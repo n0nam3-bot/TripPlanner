@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { ArrowRight, Copy, LoaderCircle } from "lucide-react";
+import type { SavedTripSnapshot } from "@/lib/trip-planner/saved-trips";
 
-type Props = { sourceShareToken: string; searchQuery: string };
+type Props = { sourceShareToken: string; searchQuery: string; snapshot: SavedTripSnapshot };
 
 type ForkResponse = { error?: string; shareToken?: string; ownerToken?: string; shareUrl?: string };
 
-export function MakeTripCopyButton({ sourceShareToken, searchQuery }: Props) {
+export function MakeTripCopyButton({ sourceShareToken, searchQuery, snapshot }: Props) {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [fallbackShareUrl, setFallbackShareUrl] = useState("");
@@ -30,8 +31,10 @@ export function MakeTripCopyButton({ sourceShareToken, searchQuery }: Props) {
 
       const returnPath = `/results?${searchQuery}`;
       const ownerStorageKey = `tripfinder:saved-trip-owner:v1:${returnPath}`;
+      const restoreStorageKey = `tripfinder:saved-trip-fork-restore:v1:${returnPath}`;
       try {
         window.localStorage.setItem(ownerStorageKey, JSON.stringify({ shareToken: data.shareToken, ownerToken: data.ownerToken }));
+        window.localStorage.setItem(restoreStorageKey, JSON.stringify({ snapshot }));
       } catch {
         setFallbackShareUrl(data.shareUrl);
         setMessage("Your copy was created, but this browser blocked local storage, so Tripfinder could not keep the edit permission on this device.");

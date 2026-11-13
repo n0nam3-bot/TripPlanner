@@ -178,15 +178,55 @@ test("Neon health and schema include anonymous saved-trip tables", () => {
 });
 
 
-test("safe shared-trip fork preserves validated search criteria but clears unverified provider selections", () => {
+test("safe shared-trip fork preserves selected itinerary items and safe re-match references", () => {
   const normalized = normalizeSavedTripSnapshot(snapshot);
   assert.ok(normalized);
   const fork = buildSavedTripForkDraft({ search, snapshot: normalized });
   assert.equal(fork.search, search);
   assert.equal(fork.snapshot.title, "Copy of Trip to Las Terrenas, Dominican Republic");
   assert.deepEqual(fork.snapshot.destinations.map((destination) => destination.label), ["Las Terrenas, Dominican Republic"]);
-  assert.deepEqual(fork.snapshot.destinations.map((destination) => destination.items), [[]]);
+  assert.deepEqual(fork.snapshot.destinations.map((destination) => destination.items), normalized.destinations.map((destination) => destination.items));
   assert.ok(validateSavedTripDraft(fork).draft);
+});
+
+test("saved itinerary re-match references preserve safe flight, hotel and experience identity without booking tokens", () => {
+  const selected = {
+    ...snapshot,
+    destinations: [{ label: "Las Terrenas, Dominican Republic", items: [
+      { kind: "outbound-flight", title: "Outbound flight", subtitle: "JetBlue · JFK → STI", date: "2026-12-26", details: [], selectionRef: { type: "flight", direction: "outbound", from: "JFK", to: "STI", departure: "2026-12-26 18:38", arrival: "2026-12-26 23:29", segmentKeys: ["JetBlue|B6123|New York|Santiago|2026-12-26 18:38|2026-12-26 23:29"] } },
+      { kind: "stay-check-in", title: "Hotel Example", subtitle: "Las Terrenas", date: "2026-12-26", details: [], selectionRef: { type: "stay", name: "Hotel Example", address: "Las Terrenas" } },
+      { kind: "activity", title: "Playa Punta Popy", subtitle: "Beach", date: "2026-12-27", details: [], selectionRef: { type: "experience", kind: "activity", name: "Playa Punta Popy", address: "Las Terrenas", category: "Beach", date: "2026-12-27", slot: "Morning", time: "10:30" } },
+    ] }],
+  };
+  const normalized = normalizeSavedTripSnapshot(selected);
+  assert.ok(normalized);
+  assert.equal(normalized.destinations[0].items[0].selectionRef.type, "flight");
+  assert.equal(normalized.destinations[0].items[1].selectionRef.type, "stay");
+  assert.equal(normalized.destinations[0].items[2].selectionRef.slot, "Morning");
+  const fork = buildSavedTripForkDraft({ search, snapshot: normalized });
+  assert.deepEqual(fork.snapshot.destinations[0].items, normalized.destinations[0].items);
+  assert.doesNotMatch(JSON.stringify(fork.snapshot), /departureToken|bookingToken|propertyToken|postData/);
+});
+
+test("older saved trip snapshots derive re-match references from itinerary text where possible", () => {
+  const legacy = normalizeSavedTripSnapshot({
+    ...snapshot,
+    destinations: [{ label: "Las Terrenas", items: [
+      { kind: "activity", title: "Playa Punta Popy", subtitle: "Beach", date: "2026-12-27", time: "11:00", details: ["Beach"] },
+      { kind: "stay-check-in", title: "Hotel Example", subtitle: "Las Terrenas", date: "2026-12-26", details: ["Check-in · 2 nights"] },
+      { kind: "outbound-flight", title: "Outbound flight", subtitle: "JetBlue · JFK → STI", date: "2026-12-26", details: ["Departs New York · 6:38 PM EST", "Arrives Santiago · 11:29 PM AST", "Duration 4h 51m · Nonstop", "Leg 1: JetBlue B6123 · New York 6:38 PM EST → Santiago 11:29 PM AST"] },
+    ] }],
+  });
+  assert.ok(legacy);
+  assert.equal(legacy.destinations[0].items[0].selectionRef.type, "experience");
+  assert.equal(legacy.destinations[0].items[1].selectionRef.type, "stay");
+  assert.equal(legacy.destinations[0].items[2].selectionRef.legacyDisplay, true);
+});
+
+test("saved trip selection references reject malformed identities without leaking unsafe content", () => {
+  const invalid = normalizeSavedTripSnapshot({ ...snapshot, destinations: [{ label: "x", items: [{ kind: "activity", title: "x", details: [], selectionRef: { type: "flight", direction: "outbound", from: "JFK", to: "STI", departure: "x", arrival: "y", segmentKeys: ["flight"] } }] }] });
+  assert.ok(invalid);
+  assert.equal(invalid.destinations[0].items[0].selectionRef, undefined);
 });
 
 test("database fork reads a public source and creates a new record without owner-update credentials", () => {
@@ -214,9 +254,30 @@ test("shared page offers a copy action while the original public share remains r
   const button = read("components/trips/make-trip-copy-button.tsx");
   assert.match(page, /MakeTripCopyButton/);
   assert.match(page, /Reopening this original link remains read-only/);
+  assert.match(page, /snapshot=\{saved\.snapshot\}/);
+  assert.match(page, /carries over your selected itinerary/);
   assert.match(button, /fetch\(\"\/api\/trips\/fork\"/);
   assert.match(button, /tripfinder:saved-trip-owner:v1:/);
   assert.match(button, /localStorage\.setItem/);
+  assert.match(button, /tripfinder:saved-trip-fork-restore:v1/);
   assert.match(button, /window\.location\.assign\(returnPath\)/);
   assert.doesNotMatch(button, /ownerToken.*searchParams|searchParams.*ownerToken/);
+});
+
+
+test("copied trip restores current matching flights, stays and scheduled experiences when live results load", () => {
+  const ui = read("components/trips/results-workspace.tsx");
+  assert.match(ui, /tripfinder:saved-trip-fork-restore:v1/);
+  assert.match(ui, /flightMatchesRestoreReference/);
+  assert.match(ui, /selectionRef/);
+  assert.match(ui, /returnFlight: match/);
+  assert.match(ui, /The original return flight is no longer an exact current match/);
+  assert.match(ui, /saved seller offer was rechecked and restored/);
+});
+
+test("shared link action controls use a non-overlapping responsive grid", () => {
+  const styles = read("app/globals.css");
+  assert.match(styles, /\.saved-trip-actions \{ display: grid/);
+  assert.match(styles, /grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(styles, /\.saved-trip-actions \.saved-trip-copy-button/);
 });

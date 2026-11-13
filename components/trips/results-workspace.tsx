@@ -14,7 +14,7 @@ import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssi
 import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-ledger";
 import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
-import { sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem } from "@/lib/trip-planner/saved-trips";
+import { normalizeSavedTripSnapshot, sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem, type SavedTripSelectionReference } from "@/lib/trip-planner/saved-trips";
 import { isValidProximityStartingPoint, type ProximityStartingPoint } from "@/lib/trip-planner/proximity";
 
 type Props = {
@@ -165,6 +165,12 @@ function buildSavedTripSnapshot(
         subtitle: `${flight.airlines.join(" / ")} · ${flight.from} → ${flight.to}`,
         date,
         sortTimestamp,
+        selectionRef: {
+          type: "flight",
+          direction: kind === "outbound-flight" ? "outbound" : "return",
+          from: flight.from, to: flight.to, departure: flight.departure, arrival: flight.arrival,
+          segmentKeys: flight.segments.map((segment) => [segment.airline, segment.flightNumber, segment.from, segment.to, segment.departure, segment.arrival].join("|")),
+        },
         details,
       });
     };
@@ -187,6 +193,7 @@ function buildSavedTripSnapshot(
         sortTimestamp: (outboundSortAt ?? fallbackSort(search.departureDate, "00:00")) + 1,
         price: offer ? offer.price : referencePrice,
         currency: offer?.currency || selection.outbound?.currency || selection.returnFlight?.currency || search.currency,
+        ...(offer ? { selectionRef: { type: "flight-seller" as const, seller: offer.seller, fareType: offer.type, price: offer.price, currency: offer.currency || search.currency } } : {}),
         priceLabel: offer
           ? "Provider-displayed seller quote for the selected round trip · confirm ticketing, passengers, taxes and fees at checkout"
           : "One round-trip search reference · not a separate price for each direction or a confirmed seller total",
@@ -223,6 +230,7 @@ function buildSavedTripSnapshot(
         ...(hotel.bookingUrl ? { websiteUrl: hotel.bookingUrl, websiteLabel: "View property listing" } : {}),
         ...(hotel.address || (hotel.latitude !== null && hotel.longitude !== null) ? { mapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : `${hotel.name} ${hotel.address}`)}` } : {}),
         sourceLabel: hotel.source,
+        selectionRef: { type: "stay", name: hotel.name, address: hotel.address },
         details: [`Check-in · ${nights} ${nights === 1 ? "night" : "nights"}`, `${search.returnDate} check-out`, `${hotel.source} · ${hotel.propertyType}`],
       });
       items.push({
@@ -252,6 +260,7 @@ function buildSavedTripSnapshot(
         ...(experience.website ? { websiteUrl: experience.website, websiteLabel: "Official website" } : {}),
         ...(experience.mapsUrl ? { mapsUrl: experience.mapsUrl } : {}),
         ...(experience.source ? { sourceLabel: experience.source } : {}),
+        selectionRef: { type: "experience", kind: experience.kind, name: experience.name, address: experience.address, category: experience.category, date: plan.date, slot: plan.slot, ...(plan.time ? { time: plan.time } : {}) },
         details: [experience.category, ...(experience.openingHours ? [`Listed hours: ${experience.openingHours}`] : [])],
       });
     }
@@ -1107,6 +1116,12 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const [savedShareUrl, setSavedShareUrl] = useState("");
   const [savedTripCredentials, setSavedTripCredentials] = useState<{ shareToken: string; ownerToken: string } | null>(null);
   const [savedTripStorageKey, setSavedTripStorageKey] = useState("");
+  const [pendingForkSnapshot, setPendingForkSnapshot] = useState<SavedTripSnapshot | null>(null);
+  const [forkRestoreNotice, setForkRestoreNotice] = useState("");
+  const forkRestoreStorageKeyRef = useRef("");
+  const forkRestoreProcessedRef = useRef<Set<string>>(new Set());
+  const forkReturnMatchesRef = useRef<Record<string, { destinationId: string; reference: Extract<SavedTripSelectionReference, { type: "flight" }> }>>({});
+  const forkSellerMatchesRef = useRef<Record<string, { destinationId: string; reference: Extract<SavedTripSelectionReference, { type: "flight-seller" }> }>>({});
   const [startingPoints, setStartingPoints] = useState<Record<string, ProximityStartingPoint>>({});
   const [startingPointDrafts, setStartingPointDrafts] = useState<Record<string, string>>({});
   const [startingPointLoading, setStartingPointLoading] = useState<Record<string, boolean>>({});
@@ -1128,6 +1143,23 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         setSavedShareUrl(new URL(`/trip/${parsed.shareToken}`, window.location.origin).toString());
       }
     } catch { /* Saved-link ownership is a convenience; creating a new share link remains available. */ }
+  }, []);
+
+  useEffect(() => {
+    const key = `tripfinder:saved-trip-fork-restore:v1:${window.location.pathname}${window.location.search}`;
+    forkRestoreStorageKeyRef.current = key;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { snapshot?: unknown };
+      const snapshot = normalizeSavedTripSnapshot(parsed.snapshot);
+      if (snapshot) {
+        setPendingForkSnapshot(snapshot);
+        setForkRestoreNotice("Your copied itinerary is being matched to current provider results. Exact matches will be selected automatically; anything unavailable will be flagged for review.");
+      } else {
+        window.localStorage.removeItem(key);
+      }
+    } catch { /* A copied trip can still be searched if local restore metadata is unavailable. */ }
   }, []);
 
   useEffect(() => {
@@ -1316,6 +1348,55 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     }
   }
 
+  function normalizeRestoreKey(value: string): string {
+    return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+
+  function flightMatchesRestoreReference(flight: LiveFlight, reference: Extract<SavedTripSelectionReference, { type: "flight" }>): boolean {
+    const segments = flight.segments.map((segment) => [segment.airline, segment.flightNumber, segment.from, segment.to, segment.departure, segment.arrival].join("|"));
+    if (reference.legacyDisplay) {
+      const first = flight.segments[0];
+      const last = flight.segments[flight.segments.length - 1];
+      const departure = `Departs ${flight.from} · ${formatFlightTimeAtAirport(flight.departure, first?.fromAirportCode)}`;
+      const arrival = `Arrives ${flight.to} · ${formatFlightTimeAtAirport(flight.arrival, last?.toAirportCode)}`;
+      const legacySegments = flight.segments.map((segment, index) => `Leg ${index + 1}: ${segment.airline}${segment.flightNumber ? ` ${segment.flightNumber}` : ""} · ${segment.from} ${formatFlightTimeAtAirport(segment.departure, segment.fromAirportCode)} → ${segment.to} ${formatFlightTimeAtAirport(segment.arrival, segment.toAirportCode)}`);
+      return normalizeRestoreKey(flight.from) === normalizeRestoreKey(reference.from)
+        && normalizeRestoreKey(flight.to) === normalizeRestoreKey(reference.to)
+        && normalizeRestoreKey(departure) === normalizeRestoreKey(`Departs ${reference.from} · ${reference.departure}`)
+        && normalizeRestoreKey(arrival) === normalizeRestoreKey(`Arrives ${reference.to} · ${reference.arrival}`)
+        && legacySegments.length === reference.segmentKeys.length
+        && legacySegments.every((segment, index) => normalizeRestoreKey(segment) === normalizeRestoreKey(reference.segmentKeys[index]));
+    }
+    return normalizeRestoreKey(flight.from) === normalizeRestoreKey(reference.from)
+      && normalizeRestoreKey(flight.to) === normalizeRestoreKey(reference.to)
+      && flight.departure === reference.departure && flight.arrival === reference.arrival
+      && segments.length === reference.segmentKeys.length
+      && segments.every((segment, index) => segment === reference.segmentKeys[index]);
+  }
+
+  function uniqueMatch<T>(items: T[], predicate: (item: T) => boolean): T | null {
+    const matches = items.filter(predicate);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function restoreClockTime(value?: string): string | undefined {
+    const match = /^(\d{1,2}):(\d{2})\s*([AP]M)$/i.exec(value || "");
+    if (!match) return undefined;
+    let hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour < 1 || hour > 12 || minute > 59) return undefined;
+    hour = (hour % 12) + (match[3].toUpperCase() === "PM" ? 12 : 0);
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  function matchSnapshotGroup(label: string): SavedTripSnapshot["destinations"][number] | null {
+    if (!pendingForkSnapshot) return null;
+    const key = normalizeRestoreKey(label);
+    const exact = pendingForkSnapshot.destinations.filter((destination) => normalizeRestoreKey(destination.label) === key);
+    if (exact.length === 1) return exact[0];
+    return pendingForkSnapshot.destinations.length === 1 && recommendations.length === 1 ? pendingForkSnapshot.destinations[0] : null;
+  }
+
   function updateSelection(destinationId: string, updater: (current: DestinationSelection) => DestinationSelection) {
     setSelections((current) => ({
       ...current,
@@ -1358,6 +1439,141 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       return { ...current, experiences: next };
     });
   }
+
+  useEffect(() => {
+    if (!pendingForkSnapshot) return;
+    for (const recommendation of recommendations) {
+      const destinationId = recommendation.destination.id;
+      if (forkRestoreProcessedRef.current.has(destinationId)) continue;
+      const result = states[destinationId]?.result;
+      if (!result) continue;
+      const destinationLabel = formatDestinationLabel(recommendation.destination.city, recommendation.destination.country);
+      const group = matchSnapshotGroup(destinationLabel);
+      if (!group) continue;
+      const items = group.items;
+      const outboundRef = items.find((item) => item.selectionRef?.type === "flight" && item.selectionRef.direction === "outbound")?.selectionRef;
+      const returnRef = items.find((item) => item.selectionRef?.type === "flight" && item.selectionRef.direction === "return")?.selectionRef;
+      const hotelRef = items.find((item) => item.selectionRef?.type === "stay")?.selectionRef;
+      const checkInTime = restoreClockTime(items.find((item) => item.kind === "stay-check-in")?.time);
+      const checkOutTime = restoreClockTime(items.find((item) => item.kind === "stay-check-out")?.time);
+      const sellerRef = items.find((item) => item.selectionRef?.type === "flight-seller")?.selectionRef;
+      const outbound = outboundRef?.type === "flight" ? uniqueMatch(result.flights, (flight) => flightMatchesRestoreReference(flight, outboundRef)) : null;
+      const hotel = hotelRef?.type === "stay" ? uniqueMatch(result.hotels, (candidate) => normalizeRestoreKey(candidate.name) === normalizeRestoreKey(hotelRef.name) && (!hotelRef.address || normalizeRestoreKey(candidate.address) === normalizeRestoreKey(hotelRef.address))) : null;
+      const experiences: Record<string, SelectedExperience> = {};
+      const experienceRefs = items.flatMap((item) => item.selectionRef?.type === "experience" ? [item.selectionRef] : []);
+      const missing: string[] = [];
+      for (const reference of experienceRefs) {
+        const experience = uniqueMatch(result.experiences, (candidate) => candidate.kind === reference.kind
+          && normalizeRestoreKey(candidate.name) === normalizeRestoreKey(reference.name)
+          && (!reference.address || normalizeRestoreKey(candidate.address) === normalizeRestoreKey(reference.address)));
+        if (experience) experiences[experience.id] = { date: reference.date, slot: reference.slot, ...(reference.time ? { time: reference.time } : {}) };
+        else missing.push(reference.name);
+      }
+      if (outboundRef?.type === "flight" && !outbound) missing.push(`${outboundRef.from} → ${outboundRef.to} flight`);
+      if (hotelRef?.type === "stay" && !hotel) missing.push(hotelRef.name);
+      setSelections((current) => {
+        const previous = current[destinationId] ?? emptySelection();
+        return { ...current, [destinationId]: { ...previous, ...(outbound ? { outbound } : {}), ...(hotel ? { hotel } : {}), ...(hotel && checkInTime ? { checkInTime } : {}), ...(hotel && checkOutTime ? { checkOutTime } : {}), experiences: { ...previous.experiences, ...experiences } } };
+      });
+      if (outbound && returnRef?.type === "flight") {
+        if (outbound.departureToken) {
+          forkReturnMatchesRef.current[outbound.id] = { destinationId, reference: returnRef };
+          void loadReturnFlights(outbound, search.destinationAirportCode || recommendation.destination.airportCode || "");
+        } else {
+          missing.push("return flight (no current return-search token)");
+        }
+      }
+      if (outbound && sellerRef?.type === "flight-seller") {
+        forkSellerMatchesRef.current[outbound.id] = { destinationId, reference: sellerRef };
+        if (returnRef?.type !== "flight" && outbound.bookingToken) {
+          void loadBookingOptions(destinationId, outbound, search.destinationAirportCode || recommendation.destination.airportCode || "");
+        } else if (returnRef?.type !== "flight") {
+          delete forkSellerMatchesRef.current[outbound.id];
+          missing.push("saved seller offer (provider recheck unavailable)");
+        }
+      }
+      forkRestoreProcessedRef.current.add(destinationId);
+      const restoredCount = (outbound ? 1 : 0) + (hotel ? 1 : 0) + Object.keys(experiences).length;
+      setForkRestoreNotice(`${restoredCount} itinerary selection${restoredCount === 1 ? "" : "s"} matched to current results${missing.length ? `. Needs review: ${missing.join(", ")}` : ". Checking the saved return flight and seller selection if included."}`);
+    }
+  }, [pendingForkSnapshot, recommendations, states, search.destinationAirportCode]);
+
+  useEffect(() => {
+    for (const [flightId, pending] of Object.entries(forkReturnMatchesRef.current)) {
+      const returnState = returnStates[flightId];
+      if (!returnState || returnState.loading) continue;
+      if (!returnState.result) {
+        if (returnState.error) {
+          setForkRestoreNotice((message) => `${message} Tripfinder could not recheck the previous return flight; choose a current return option manually.`);
+          delete forkSellerMatchesRef.current[flightId];
+          delete forkReturnMatchesRef.current[flightId];
+        }
+        continue;
+      }
+      const match = uniqueMatch(returnState.result.flights, (flight) => flightMatchesRestoreReference(flight, pending.reference));
+      if (match) {
+        setSelections((current) => {
+          const previous = current[pending.destinationId] ?? emptySelection();
+          return { ...current, [pending.destinationId]: { ...previous, returnFlight: match } };
+        });
+        const seller = forkSellerMatchesRef.current[flightId];
+        if (seller) {
+          delete forkSellerMatchesRef.current[flightId];
+          if (match.bookingToken) {
+            forkSellerMatchesRef.current[match.id] = seller;
+            const recommendation = recommendations.find((item) => item.destination.id === pending.destinationId);
+            if (recommendation) void loadBookingOptions(pending.destinationId, match, search.destinationAirportCode || recommendation.destination.airportCode || "");
+          } else {
+            setForkRestoreNotice((message) => `${message} The saved seller offer could not be rechecked for this return result; compare current offers manually.`);
+          }
+        }
+      } else {
+        setForkRestoreNotice((message) => `${message} The original return flight is no longer an exact current match; please choose a replacement.`);
+        delete forkSellerMatchesRef.current[flightId];
+      }
+      delete forkReturnMatchesRef.current[flightId];
+    }
+  }, [returnStates, recommendations, search.destinationAirportCode]);
+
+  useEffect(() => {
+    for (const [flightId, pending] of Object.entries(forkSellerMatchesRef.current)) {
+      const state = bookingStates[flightId];
+      if (!state || state.loading) continue;
+      if (!state.options) {
+        if (state.error) {
+          setForkRestoreNotice((message) => `${message} Tripfinder could not recheck the previous seller quote; compare current offers manually.`);
+          delete forkSellerMatchesRef.current[flightId];
+        }
+        continue;
+      }
+      const offer = uniqueMatch(state.options, (candidate) => normalizeRestoreKey(candidate.seller) === normalizeRestoreKey(pending.reference.seller)
+        && normalizeRestoreKey(candidate.type) === normalizeRestoreKey(pending.reference.fareType)
+        && (candidate.currency || "USD").toUpperCase() === pending.reference.currency);
+      if (offer) {
+        setSelections((current) => {
+          const previous = current[pending.destinationId] ?? emptySelection();
+          return { ...current, [pending.destinationId]: { ...previous, flightSeller: { flightId, option: offer } } };
+        });
+        setForkRestoreNotice((message) => `${message} The saved seller offer was rechecked and restored${offer.price !== pending.reference.price ? " at its refreshed price" : ""}.`);
+      } else {
+        setForkRestoreNotice((message) => `${message} The previous seller quote is no longer available; compare current seller offers.`);
+      }
+      delete forkSellerMatchesRef.current[flightId];
+    }
+  }, [bookingStates]);
+
+  useEffect(() => {
+    if (!pendingForkSnapshot) return;
+    const allLoadedAndProcessed = pendingForkSnapshot.destinations.every((group) => {
+      const destinationKey = normalizeRestoreKey(group.label);
+      const recommendation = recommendations.find((item) => normalizeRestoreKey(formatDestinationLabel(item.destination.city, item.destination.country)) === destinationKey)
+        ?? (pendingForkSnapshot.destinations.length === 1 && recommendations.length === 1 ? recommendations[0] : undefined);
+      return Boolean(recommendation && forkRestoreProcessedRef.current.has(recommendation.destination.id));
+    });
+    if (!allLoadedAndProcessed || Object.keys(forkReturnMatchesRef.current).length || Object.keys(forkSellerMatchesRef.current).length) return;
+    try { if (forkRestoreStorageKeyRef.current) window.localStorage.removeItem(forkRestoreStorageKeyRef.current); } catch { /* Restore data is also held in component state for this page. */ }
+    setPendingForkSnapshot(null);
+  }, [pendingForkSnapshot, recommendations, states, returnStates, bookingStates]);
 
   const navigationRecommendation = recommendations.find((item) => item.destination.id === expanded && Boolean(states[item.destination.id]?.result))
     ?? recommendations.find((item) => Boolean(states[item.destination.id]?.result))
@@ -1488,6 +1704,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   } : null;
 
   return <div className="planner-results-workspace">
+    {forkRestoreNotice && <p className="fork-restore-notice" role="status">{forkRestoreNotice}</p>}
     <aside className="results-left-sidebar" aria-label="Trip overview and section navigation">
       <ResultsTripOverview
         search={search} totalBudget={totalBudget} people={people} nights={nights}

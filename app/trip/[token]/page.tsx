@@ -93,7 +93,7 @@ export default async function SharedTripPage({ params }: { params: Promise<{ tok
           </div>}
         </section>)}
       </section>
-      <div className="saved-trip-actions no-print"><MakeTripCopyButton sourceShareToken={token} searchQuery={saved.searchQuery}/><Link href={openSearch} className="button button-outline">Reopen search <ArrowRight size={16}/></Link><span>Make your own copy creates a separate editable trip. Search preferences are copied, but saved selections are cleared until you choose from current provider results. Reopening this original link remains read-only.</span></div>
+      <div className="saved-trip-actions no-print"><MakeTripCopyButton sourceShareToken={token} searchQuery={saved.searchQuery} snapshot={saved.snapshot}/><Link href={openSearch} className="button button-outline">Reopen search <ArrowRight size={16}/></Link><span>Make your own copy creates a separate editable trip and carries over your selected itinerary. Tripfinder rechecks those selections against current provider results; unavailable or changed offers are flagged for review. Reopening this original link remains read-only.</span></div>
       <p className="saved-trip-expiry">This share link expires {dateLabel(saved.expiresAt.slice(0, 10))}. Saving an updated copy extends its expiry.</p>
     </section>
     <footer className="site-footer shell saved-trip-footer">

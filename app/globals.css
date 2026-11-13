@@ -2462,3 +2462,20 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
   .saved-trip-copy-control { width: 100%; }
   .saved-trip-copy-button { width: 100%; justify-content: center; }
 }
+
+
+/* Shared-trip action controls: reserve separate grid cells so long labels never overlap. */
+.saved-trip-actions { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); align-items: center; justify-content: start; gap: 12px; }
+.saved-trip-actions .saved-trip-copy-control { min-width: 0; max-width: 100%; }
+.saved-trip-actions .saved-trip-copy-button,
+.saved-trip-actions > a.button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; max-width: 100%; min-height: 44px; padding: 10px 16px; white-space: normal; line-height: 1.25; text-align: center; }
+.saved-trip-actions > span { grid-column: 1 / -1; max-width: 760px; }
+.saved-trip-copy-message { margin: 8px 0 0; overflow-wrap: anywhere; }
+.fork-restore-notice { margin: 12px 0 18px; padding: 12px 14px; border-left: 3px solid #839987; background: #eef2ed; color: #344c3b; font-size: 13px; line-height: 1.55; }
+@media (max-width: 760px) {
+  .saved-trip-actions { grid-template-columns: minmax(0, 1fr); align-items: stretch; width: 100%; }
+  .saved-trip-actions .saved-trip-copy-control { width: 100%; }
+  .saved-trip-actions .saved-trip-copy-button,
+  .saved-trip-actions > a.button { width: 100%; }
+  .saved-trip-actions > span { grid-column: 1; }
+}

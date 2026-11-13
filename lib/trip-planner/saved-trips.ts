@@ -3,6 +3,12 @@ import { validateTripSearchInput } from "./validation";
 
 export type SavedTripItemKind = "outbound-flight" | "return-flight" | "flight-fare" | "stay" | "stay-check-in" | "stay-check-out" | "activity" | "restaurant";
 
+export type SavedTripSelectionReference =
+  | { type: "flight"; direction: "outbound" | "return"; from: string; to: string; departure: string; arrival: string; segmentKeys: string[]; legacyDisplay?: boolean }
+  | { type: "stay"; name: string; address: string }
+  | { type: "experience"; kind: "activity" | "restaurant"; name: string; address: string; category: string; date: string; slot: "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening"; time?: string }
+  | { type: "flight-seller"; seller: string; fareType: string; price: number | null; currency: string };
+
 export type SavedTripItem = {
   kind: SavedTripItemKind;
   title: string;
@@ -21,6 +27,8 @@ export type SavedTripItem = {
   sourceLabel?: string;
   /** Absolute event ordering timestamp, calculated with the same airport/destination timezone rules as the live trip schedule. */
   sortTimestamp?: number;
+  /** Safe, non-token identifiers used to reselect matching live results when a traveler forks this itinerary. */
+  selectionRef?: SavedTripSelectionReference;
   details: string[];
 };
 
@@ -41,10 +49,9 @@ export type SavedTripDraft = {
 };
 
 /**
- * Fork a public snapshot into a new editable draft. Search preferences are safe to
- * reuse, but provider selections are deliberately cleared: a share snapshot has
- * no supplier identity/token with which to prove that a refreshed result is the
- * same offer. The traveler can select current results after reopening the search.
+ * Fork a public snapshot into a separate editable draft. Preserve the selected
+ * itinerary and its schedule; provider booking tokens are never stored in the
+ * snapshot, and live selections are re-matched against refreshed results.
  */
 export function buildSavedTripForkDraft(source: SavedTripDraft): SavedTripDraft {
   const copyPrefix = "Copy of ";
@@ -56,7 +63,7 @@ export function buildSavedTripForkDraft(source: SavedTripDraft): SavedTripDraft 
       title,
       destinations: source.snapshot.destinations.map((destination) => ({
         label: destination.label,
-        items: [],
+        items: destination.items.map((item) => ({ ...item, details: [...item.details] })),
       })),
     },
   };
@@ -143,6 +150,83 @@ export function serializeTripSearchInput(input: TripSearchInput): string {
   return params.toString();
 }
 
+function normalizeSelectionReference(value: unknown, itemKind: SavedTripItemKind): SavedTripSelectionReference | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const ref = value as Record<string, unknown>;
+  if (ref.type === "flight" && (itemKind === "outbound-flight" || itemKind === "return-flight")) {
+    const direction = ref.direction === "outbound" ? "outbound" : ref.direction === "return" ? "return" : null;
+    const from = cleanText(ref.from, 100); const to = cleanText(ref.to, 100);
+    const departure = cleanText(ref.departure, 100); const arrival = cleanText(ref.arrival, 100);
+    const segmentKeys = Array.isArray(ref.segmentKeys) ? ref.segmentKeys.slice(0, 8).map((entry) => cleanText(entry, 420)).filter(Boolean) : [];
+    if (!direction || !from || !to || !departure || !arrival || !segmentKeys.length) return undefined;
+    if ((itemKind === "outbound-flight") !== (direction === "outbound")) return undefined;
+    return { type: "flight", direction, from, to, departure, arrival, segmentKeys, ...(ref.legacyDisplay === true ? { legacyDisplay: true } : {}) };
+  }
+  if (ref.type === "stay" && (itemKind === "stay" || itemKind === "stay-check-in")) {
+    const name = cleanText(ref.name, 180); const address = cleanText(ref.address, 280);
+    return name ? { type: "stay", name, address } : undefined;
+  }
+  if (ref.type === "experience" && (itemKind === "activity" || itemKind === "restaurant")) {
+    const kind = ref.kind === "activity" || ref.kind === "restaurant" ? ref.kind : null;
+    const name = cleanText(ref.name, 180); const address = cleanText(ref.address, 280); const category = cleanText(ref.category, 140);
+    const date = cleanText(ref.date, 10); const slot = ["Morning", "Lunch", "Afternoon", "Dinner", "Evening"].includes(String(ref.slot)) ? ref.slot as "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening" : null;
+    const time = cleanText(ref.time, 24);
+    if (!kind || kind !== itemKind || !name || !date || !validIsoDate(date) || !slot) return undefined;
+    if (time && !/^(?:\d{1,2}:\d{2}(?:\s?[AP]M)?(?:\s+[A-Z]{2,5})?)$/i.test(time)) return undefined;
+    return { type: "experience", kind, name, address, category, date, slot, ...(time ? { time } : {}) };
+  }
+  if (ref.type === "flight-seller" && itemKind === "flight-fare") {
+    const seller = cleanText(ref.seller, 120); const fareType = cleanText(ref.fareType, 120);
+    const currency = cleanText(ref.currency, 3).toUpperCase();
+    const price = ref.price === null ? null : typeof ref.price === "number" && Number.isFinite(ref.price) && ref.price >= 0 && ref.price <= 10000000 ? Math.round(ref.price * 100) / 100 : undefined;
+    if (!seller || !fareType || !/^[A-Z]{3}$/.test(currency) || price === undefined) return undefined;
+    return { type: "flight-seller", seller, fareType, price, currency };
+  }
+  return undefined;
+}
+
+function deriveLegacySelectionReference(item: Record<string, unknown>, itemKind: SavedTripItemKind): SavedTripSelectionReference | undefined {
+  const title = cleanText(item.title, 180);
+  const date = cleanText(item.date, 10);
+  const time = cleanText(item.time, 24);
+  const details = Array.isArray(item.details) ? item.details.map((value) => cleanText(value, 300)).filter(Boolean) : [];
+  if ((itemKind === "stay-check-in" || itemKind === "stay") && title) {
+    return { type: "stay", name: title, address: "" };
+  }
+  if ((itemKind === "activity" || itemKind === "restaurant") && title && validIsoDate(date)) {
+    const explicitSlot = ["Morning", "Lunch", "Afternoon", "Dinner", "Evening"].includes(time) ? time as "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening" : null;
+    let slot = explicitSlot;
+    if (!slot) {
+      const match = /^(\d{1,2}):(\d{2})(?:\s*([AP]M))?/i.exec(time);
+      let hour = match ? Number(match[1]) : 9;
+      if (match?.[3]) hour = (hour % 12) + (match[3].toUpperCase() === "PM" ? 12 : 0);
+      slot = hour < 11 ? "Morning" : hour < 14 ? "Lunch" : hour < 17 ? "Afternoon" : hour < 20 ? "Dinner" : "Evening";
+    }
+    const customTime = time && !explicitSlot ? time : undefined;
+    return { type: "experience", kind: itemKind, name: title, address: "", category: details[0] || "", date, slot, ...(customTime ? { time: customTime } : {}) };
+  }
+  if ((itemKind === "outbound-flight" || itemKind === "return-flight") && title) {
+    const departureLine = details.find((detail) => detail.startsWith("Departs ")) || "";
+    const arrivalLine = details.find((detail) => detail.startsWith("Arrives ")) || "";
+    const from = departureLine.replace(/^Departs\s+/, "").split(" · ")[0]?.trim() || "";
+    const to = arrivalLine.replace(/^Arrives\s+/, "").split(" · ")[0]?.trim() || "";
+    const departure = departureLine.split(" · ").slice(1).join(" · ").trim();
+    const arrival = arrivalLine.split(" · ").slice(1).join(" · ").trim();
+    const segmentKeys = details.filter((detail) => /^Leg \d+:/i.test(detail));
+    if (from && to && departure && arrival && segmentKeys.length) {
+      return { type: "flight", direction: itemKind === "outbound-flight" ? "outbound" : "return", from, to, departure, arrival, segmentKeys, legacyDisplay: true };
+    }
+  }
+  if (itemKind === "flight-fare" && cleanText(item.title, 180) === "Selected seller fare") {
+    const seller = cleanText(item.subtitle, 120);
+    const fareType = details[0] || "";
+    const currency = cleanText(item.currency, 3).toUpperCase();
+    const price = item.price === null ? null : typeof item.price === "number" && Number.isFinite(item.price) && item.price >= 0 ? item.price : undefined;
+    if (seller && fareType && /^[A-Z]{3}$/.test(currency) && price !== undefined) return { type: "flight-seller", seller, fareType, price, currency };
+  }
+  return undefined;
+}
+
 export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -194,6 +278,8 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
       const details = Array.isArray(item.details)
         ? item.details.slice(0, 10).map((entry) => cleanText(entry, 300)).filter(Boolean)
         : [];
+      const selectionRef = normalizeSelectionReference(item.selectionRef, item.kind as SavedTripItemKind)
+        ?? deriveLegacySelectionReference(item, item.kind as SavedTripItemKind);
       items.push({
         kind: item.kind as SavedTripItemKind,
         title: itemTitle,
@@ -211,6 +297,7 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
         ...(mapsUrl ? { mapsUrl } : {}),
         ...(sourceLabel ? { sourceLabel } : {}),
         ...(sortTimestamp !== undefined ? { sortTimestamp } : {}),
+        ...(selectionRef ? { selectionRef } : {}),
         details,
       });
       totalItems += 1;
