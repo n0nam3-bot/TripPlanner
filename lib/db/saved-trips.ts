@@ -172,15 +172,45 @@ export async function getSavedTripByShareToken(token: string): Promise<SavedTrip
 }
 
 
-/** Create a fully independent owner/share record from a public read-only trip. */
-export async function forkSavedTripFromShareToken(
+/**
+ * Remove a legacy fork that was created by the previous copy flow but never
+ * explicitly saved by its owner. The exact source-derived snapshot and an
+ * unchanged created_at/updated_at pair are required; edited or saved copies
+ * are never removed. When removed, refund the corresponding UTC-day slot.
+ */
+export async function discardUnmodifiedSavedTripFork(
   sourceShareToken: string,
+  shareToken: string,
+  ownerToken: string,
   options: { clientAddress: string },
-): Promise<{ shareToken: string; ownerToken?: string; createdAt: string; updatedAt: string; expiresAt: string }> {
+): Promise<boolean> {
+  if (![sourceShareToken, shareToken, ownerToken].every((token) => TOKEN_PATTERN.test(token))) return false;
   const source = await getSavedTripByShareToken(sourceShareToken);
-  if (!source) throw new Error("SAVED_TRIP_SOURCE_NOT_FOUND");
-  const draft = buildSavedTripForkDraft({ search: source.search, snapshot: source.snapshot });
-  return saveAnonymousTripDraft(draft, options);
+  if (!source) return false;
+  const expected = buildSavedTripForkDraft({ search: source.search, snapshot: source.snapshot });
+  await ensureSavedTripTables();
+  const sql = getSql();
+  const clientKey = hashClientAddress(options.clientAddress || "unknown-client");
+  const rows = await sql`WITH removed AS (
+      DELETE FROM tripfinder_saved_trips
+      WHERE share_token_hash = ${tokenHash(shareToken, "share")}
+        AND owner_token_hash = ${tokenHash(ownerToken, "owner")}
+        AND expires_at > now()
+        AND created_at = updated_at
+        AND search = ${JSON.stringify(expected.search)}::jsonb
+        AND snapshot = ${JSON.stringify(expected.snapshot)}::jsonb
+      RETURNING (created_at AT TIME ZONE 'UTC')::date AS usage_date
+    ), decremented AS (
+      UPDATE tripfinder_saved_trip_daily_usage AS usage
+      SET save_count = GREATEST(usage.save_count - 1, 0), updated_at = now()
+      FROM removed
+      WHERE usage.client_key = ${clientKey}
+        AND usage.usage_date = removed.usage_date
+      RETURNING usage.client_key
+    )
+    SELECT COUNT(*)::int AS removed_count FROM removed`;
+  const row = rows[0] as unknown as { removed_count: number } | undefined;
+  return Number(row?.removed_count ?? 0) > 0;
 }
 
 

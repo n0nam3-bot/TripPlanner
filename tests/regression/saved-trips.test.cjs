@@ -269,26 +269,33 @@ test("saved trip selection references reject malformed identities without leakin
   assert.equal(invalid.destinations[0].items[0].selectionRef, undefined);
 });
 
-test("database fork reads a public source and creates a new record without owner-update credentials", () => {
+test("shared copies are not persisted in the database before an explicit Save trip action", () => {
   const db = read("lib/db/saved-trips.ts");
-  const forkStart = db.indexOf("export async function forkSavedTripFromShareToken");
-  const forkEnd = db.indexOf("/** Create a feedback-only invitation.", forkStart);
-  const fork = db.slice(forkStart, forkEnd > forkStart ? forkEnd : undefined);
-  assert.match(fork, /getSavedTripByShareToken\(sourceShareToken\)/);
-  assert.match(fork, /buildSavedTripForkDraft/);
-  assert.match(fork, /return saveAnonymousTripDraft\(draft, options\)/);
-  assert.doesNotMatch(fork, /shareToken:\s*sourceShareToken|ownerToken:/);
+  const button = read("components/trips/make-trip-copy-button.tsx");
+  assert.doesNotMatch(db, /export async function forkSavedTripFromShareToken/);
+  assert.doesNotMatch(button, /fetch\(\"\/api\/trips\/fork\"/);
+  assert.match(read("app/api/trips/route.ts"), /saveAnonymousTripDraft/);
+  assert.match(button, /tripfinder:saved-trip-fork-restore:v1/);
 });
 
-test("shared-trip fork endpoint validates a source token and returns independent credentials", () => {
+test("legacy fork endpoint no longer creates a saved trip or consumes the daily limit", () => {
   const route = read("app/api/trips/fork/route.ts");
-  assert.match(route, /sourceShareToken/);
-  assert.match(route, /A-Za-z0-9_-/);
-  assert.match(route, /forkSavedTripFromShareToken/);
-  assert.match(route, /status: 201/);
-  assert.match(route, /ownerToken: saved\.ownerToken/);
-  assert.match(route, /SAVED_TRIP_DAILY_LIMIT/);
-  assert.match(route, /SAVED_TRIP_SOURCE_NOT_FOUND/);
+  assert.match(route, /FORK_NOW_LOCAL_DRAFT/);
+  assert.match(route, /status: 410/);
+  assert.doesNotMatch(route, /forkSavedTripFromShareToken|SAVED_TRIP_DAILY_LIMIT/);
+});
+
+test("legacy abandoned copies can only be deleted when source snapshot and owner credentials match and the record was never updated", () => {
+  const db = read("lib/db/saved-trips.ts");
+  const start = db.indexOf("export async function discardUnmodifiedSavedTripFork");
+  const end = db.indexOf("/** Create a feedback-only invitation.", start);
+  const discard = db.slice(start, end);
+  assert.match(discard, /getSavedTripByShareToken\(sourceShareToken\)/);
+  assert.match(discard, /created_at = updated_at/);
+  assert.match(discard, /owner_token_hash/);
+  assert.match(discard, /snapshot = \$\{JSON\.stringify\(expected\.snapshot\)\}::jsonb/);
+  assert.match(discard, /save_count - 1/);
+  assert.match(read("app/api/trips/fork/discard/route.ts"), /discardUnmodifiedSavedTripFork/);
 });
 
 test("shared page offers a copy action while the original public share remains read-only", () => {
@@ -298,12 +305,28 @@ test("shared page offers a copy action while the original public share remains r
   assert.match(page, /Reopening this original link remains read-only/);
   assert.match(page, /snapshot=\{saved\.snapshot\}/);
   assert.match(page, /carries over your selected itinerary/);
-  assert.match(button, /fetch\(\"\/api\/trips\/fork\"/);
+  assert.doesNotMatch(button, /fetch\(\"\/api\/trips\/fork\"/);
   assert.match(button, /tripfinder:saved-trip-owner:v1:/);
-  assert.match(button, /localStorage\.setItem/);
   assert.match(button, /tripfinder:saved-trip-fork-restore:v1/);
+  assert.match(button, /tripfinder:pending-shared-copy:v1:/);
+  assert.match(button, /copyId/);
   assert.match(button, /window\.location\.assign\(returnPath\)/);
+  assert.match(button, /\/api\/trips\/fork\/discard/);
+  assert.match(button, /It only uses a daily saved-trip slot when you press Save trip/);
   assert.doesNotMatch(button, /ownerToken.*searchParams|searchParams.*ownerToken/);
+});
+
+test("copied trip stays an unsaved local draft until Save trip is explicitly pressed", () => {
+  const button = read("components/trips/make-trip-copy-button.tsx");
+  const ui = read("components/trips/results-workspace.tsx");
+  assert.match(button, /localStorage\.setItem\(restoreStorageKey/);
+  assert.match(button, /tripfinder:pending-shared-copy-session:v1:/);
+  assert.match(ui, /This is an unsaved draft/);
+  assert.match(ui, /closing this page before saving will not use a daily saved-trip slot/);
+  assert.match(ui, /clearPendingSharedCopySession\(\)/);
+  assert.match(ui, /restoringCopiedTrip/);
+  assert.match(ui, /Restoring selections/);
+  assert.match(ui, /const payload: Record<string, unknown> = \{ search, snapshot \}/);
 });
 
 

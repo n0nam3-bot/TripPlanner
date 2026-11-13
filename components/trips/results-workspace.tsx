@@ -953,13 +953,14 @@ type ResultSectionNavItem = { key: string; id: string; label: string; icon: Luci
 
 type TripFeedbackEntry = { id: string; name: string; category: string; itemTitle: string; message: string; status: "pending" | "reviewed" | "dismissed"; createdAt: string; stale: boolean };
 
-function ResultsTripOverview({ search, totalBudget, people, nights, databaseConfigured, savingTrip, hasSavedTrip, feedbackCredentials, shareUrl, saveMessage, currentSnapshot, onSaveTrip, onCopyShareLink }: {
+function ResultsTripOverview({ search, totalBudget, people, nights, databaseConfigured, savingTrip, restoringCopiedTrip, hasSavedTrip, feedbackCredentials, shareUrl, saveMessage, currentSnapshot, onSaveTrip, onCopyShareLink }: {
   search: TripSearchInput;
   totalBudget: number;
   people: number;
   nights: number;
   databaseConfigured: boolean;
   savingTrip: boolean;
+  restoringCopiedTrip: boolean;
   hasSavedTrip: boolean;
   feedbackCredentials: { shareToken: string; ownerToken: string } | null;
   shareUrl: string;
@@ -1080,6 +1081,21 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
       const ownerRaw = window.localStorage.getItem(`${ownerPrefix}${currentIdentity}`);
       const restoreRaw = window.localStorage.getItem(`${restorePrefix}${currentIdentity}`);
       if (ownerRaw) window.localStorage.setItem(`${ownerPrefix}${nextIdentity}`, ownerRaw);
+      const copyId = nextUrl.searchParams.get("copyId");
+      if (copyId) {
+        const sessionKey = `tripfinder:pending-shared-copy-session:v1:${copyId}`;
+        try {
+          const session = JSON.parse(window.localStorage.getItem(sessionKey) || "null") as { sourceSessionKey?: unknown; copyId?: unknown; returnPath?: unknown } | null;
+          if (session && session.copyId === copyId) {
+            const nextSession = { ...session, returnPath: nextIdentity };
+            window.localStorage.setItem(sessionKey, JSON.stringify(nextSession));
+            if (typeof session.sourceSessionKey === "string") {
+              const sourceSession = JSON.parse(window.localStorage.getItem(session.sourceSessionKey) || "null") as { copyId?: unknown; returnPath?: unknown } | null;
+              if (sourceSession?.copyId === copyId) window.localStorage.setItem(session.sourceSessionKey, JSON.stringify({ ...sourceSession, returnPath: nextIdentity }));
+            }
+          }
+        } catch { /* A missing session pointer does not block the date change. */ }
+      }
       let sourceSnapshot: SavedTripSnapshot | null = null;
       if (restoreRaw) {
         const parsed = JSON.parse(restoreRaw) as { snapshot?: unknown };
@@ -1131,8 +1147,8 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
       </div>
     </div>}
     <div className="results-trip-overview-save-actions">
-      <button type="button" className="results-overview-save-primary" onClick={onSaveTrip} disabled={!databaseConfigured || savingTrip} title={!databaseConfigured ? "Neon database must be configured to save trips." : "Save this search and its selected itinerary."}>
-        {savingTrip ? <><RefreshCw size={12} className="spin"/> Saving</> : <><Save size={12}/> {hasSavedTrip ? "Update saved trip" : "Save trip"}</>}
+      <button type="button" className="results-overview-save-primary" onClick={onSaveTrip} disabled={!databaseConfigured || savingTrip || restoringCopiedTrip} title={!databaseConfigured ? "Neon database must be configured to save trips." : restoringCopiedTrip ? "Tripfinder is still matching your copied selections to current provider results." : "Save this search and its selected itinerary."}>
+        {savingTrip ? <><RefreshCw size={12} className="spin"/> Saving</> : restoringCopiedTrip ? <><RefreshCw size={12} className="spin"/> Restoring selections</> : <><Save size={12}/> {hasSavedTrip ? "Update saved trip" : "Save trip"}</>}
       </button>
       <div className="results-overview-share-actions">
         <button type="button" onClick={onCopyShareLink} disabled={!shareUrl} title={shareUrl ? "Copy the private share link" : "Save this trip first to create a share link."}><Copy size={11}/> Copy share link</button>
@@ -1317,11 +1333,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     try {
       const raw = window.localStorage.getItem(key);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { snapshot?: unknown };
+      const parsed = JSON.parse(raw) as { snapshot?: unknown; releasedPreviousCopy?: unknown };
       const snapshot = normalizeSavedTripSnapshot(parsed.snapshot);
       if (snapshot) {
         setPendingForkSnapshot(snapshot);
-        setForkRestoreNotice("Your copied itinerary is being matched to current provider results. Exact matches will be selected automatically; anything unavailable will be flagged for review.");
+        setForkRestoreNotice(`${parsed.releasedPreviousCopy === true ? "Your previous unsaved copy was cleared and its saved-trip slot was released. " : ""}Your copied itinerary is being matched to current provider results. Exact matches will be selected automatically; anything unavailable will be flagged for review. This is an unsaved draft. Press Save trip to keep it; closing this page before saving will not use a daily saved-trip slot.`);
       } else {
         window.localStorage.removeItem(key);
       }
@@ -1391,6 +1407,20 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     try { window.localStorage.removeItem(`tripfinder:proximity-origin:v1:${destinationId}`); } catch { /* Ignore unavailable storage. */ }
   }
 
+  function clearPendingSharedCopySession() {
+    try {
+      const copyId = new URLSearchParams(window.location.search).get("copyId");
+      if (!copyId) return;
+      const sessionKey = `tripfinder:pending-shared-copy-session:v1:${copyId}`;
+      const session = JSON.parse(window.localStorage.getItem(sessionKey) || "null") as { sourceSessionKey?: unknown; copyId?: unknown } | null;
+      window.localStorage.removeItem(sessionKey);
+      if (typeof session?.sourceSessionKey === "string") {
+        const sourceSession = JSON.parse(window.localStorage.getItem(session.sourceSessionKey) || "null") as { copyId?: unknown } | null;
+        if (sourceSession?.copyId === copyId) window.localStorage.removeItem(session.sourceSessionKey);
+      }
+    } catch { /* Saving succeeds even when browser cleanup is unavailable. */ }
+  }
+
   async function saveCurrentTrip() {
     if (savingTrip) return;
     setSavingTrip(true);
@@ -1422,6 +1452,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       try {
         if (savedTripStorageKey) window.localStorage.setItem(savedTripStorageKey, JSON.stringify(credentials));
       } catch { /* The public link remains usable when browser storage is unavailable. */ }
+      clearPendingSharedCopySession();
       try {
         await navigator.clipboard.writeText(data.shareUrl);
         setSaveTripMessage(data.updated ? "Saved trip updated · link copied" : "Trip saved · share link copied");
@@ -1876,7 +1907,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     <aside className="results-left-sidebar" aria-label="Trip overview and section navigation">
       <ResultsTripOverview
         search={search} totalBudget={totalBudget} people={people} nights={nights}
-        databaseConfigured={databaseConfigured} savingTrip={savingTrip} hasSavedTrip={Boolean(savedTripCredentials)} feedbackCredentials={savedTripCredentials}
+        databaseConfigured={databaseConfigured} savingTrip={savingTrip} restoringCopiedTrip={Boolean(pendingForkSnapshot)} hasSavedTrip={Boolean(savedTripCredentials)} feedbackCredentials={savedTripCredentials}
         shareUrl={savedShareUrl} saveMessage={saveTripMessage} currentSnapshot={buildSavedTripSnapshot(search, recommendations, states, selections)}
         onSaveTrip={() => void saveCurrentTrip()} onCopyShareLink={() => void copySavedTripLink()}
       />
