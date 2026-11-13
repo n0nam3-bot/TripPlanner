@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, ExternalLink, Hotel, MapPin, Plane, RefreshCw, ShieldAlert, Star, Users, Wallet, Wind, CloudRain, ClipboardList, type LucideIcon } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
 import type { StayAmenity, TripRecommendation, TripSearchInput } from "@/lib/trip-planner/types";
 import { formatDestinationLabel, normalizeDestinationQuery } from "@/lib/trip-planner/destinations";
@@ -12,6 +12,7 @@ import { inferStaySpaceType, poolAccessLabel, STAY_AMENITY_LABELS, stayAmenityCo
 import { AITripAssistant } from "@/components/trips/ai-trip-assistant";
 import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssistantContext } from "@/lib/ai/trip-assistant";
 import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-ledger";
+import type { FlexibleFlightDateOption, FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 
 type Props = {
   search: TripSearchInput;
@@ -729,6 +730,112 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
   </section>;
 }
 
+type ResultSectionNavItem = { key: string; id: string; label: string; icon: LucideIcon };
+
+function ResultsSectionNavigation({
+  sections,
+  activeKey,
+  openState,
+  onNavigate,
+  onToggle,
+}: {
+  sections: ResultSectionNavItem[];
+  activeKey: string;
+  openState: Record<string, boolean>;
+  onNavigate: (item: ResultSectionNavItem) => void;
+  onToggle: (item: ResultSectionNavItem) => void;
+}) {
+  if (!sections.length) return null;
+  return <nav className="results-section-rail" aria-label="Trip section navigation">
+    <div className="results-section-rail-heading"><span>QUICK NAVIGATION</span><small>Jump · expand · collapse</small></div>
+    <div className="results-section-rail-list">
+      {sections.map((section) => {
+        const Icon = section.icon;
+        const isOpen = openState[section.id] ?? true;
+        return <div className={`results-section-rail-item ${activeKey === section.key ? "is-active" : ""}`} key={section.key}>
+          <button type="button" className="results-section-rail-link" onClick={() => onNavigate(section)} aria-current={activeKey === section.key ? "location" : undefined} title={`Jump to ${section.label}`}>
+            <Icon size={15} aria-hidden="true"/><span>{section.label}</span>
+          </button>
+          <button type="button" className="results-section-rail-toggle" onClick={() => onToggle(section)} aria-label={`${isOpen ? "Collapse" : "Expand"} ${section.label}`} aria-expanded={isOpen} title={`${isOpen ? "Collapse" : "Expand"} ${section.label}`}>
+            <ChevronDown size={13} aria-hidden="true"/>
+          </button>
+        </div>;
+      })}
+    </div>
+  </nav>;
+}
+
+function FlexibleFlightDatePanel({ search, destinationAirportCode, hasSelections }: {
+  search: TripSearchInput;
+  destinationAirportCode: string;
+  hasSelections: boolean;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<FlexibleFlightDateSearchResult | null>(null);
+
+  if (search.flexibleDays < 1) return null;
+
+  async function compareDates() {
+    if (loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/travel/flexible-dates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ search, destinationAirportCode }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to compare flexible flight dates.");
+      setResult(data as FlexibleFlightDateSearchResult);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Flexible-date comparison failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function chooseDates(option: FlexibleFlightDateOption) {
+    if (hasSelections && !window.confirm("Changing dates will reload flights, stays, activities and weather for the new trip dates. Current selections on this results page will be cleared. Continue?")) return;
+    try {
+      const key = "tripfinder:search-draft:v2";
+      const current = JSON.parse(window.sessionStorage.getItem(key) || "{}") as Record<string, unknown>;
+      current.depart = option.departureDate;
+      current.returnDate = option.returnDate;
+      window.sessionStorage.setItem(key, JSON.stringify(current));
+    } catch { /* Draft restoration is optional; the URL remains the source of truth. */ }
+    const url = new URL(window.location.href);
+    url.searchParams.set("depart", option.departureDate);
+    url.searchParams.set("return", option.returnDate);
+    window.location.assign(url.toString());
+  }
+
+  const rankedOptions = result ? [...result.options].sort((a, b) => a.price - b.price) : [];
+  return <section className="flexible-date-compare" aria-label="Flexible flight date comparison">
+    <div className="flexible-date-compare-heading">
+      <div><strong>Compare nearby dates</strong><p>One calendar lookup compares the same trip length within ±{search.flexibleDays} {search.flexibleDays === 1 ? "day" : "days"}.</p></div>
+      <button type="button" className="flexible-date-compare-button" onClick={() => void compareDates()} disabled={loading}>
+        {loading ? <><RefreshCw size={13} className="spin"/> Comparing</> : <><CalendarDays size={13}/> {result ? "Refresh comparison" : "Compare dates"}</>}
+      </button>
+    </div>
+    {error && <p className="flexible-date-error" role="alert">{error}</p>}
+    {result && <>
+      {result.stale && <p className="flexible-date-meta">Showing saved provider data from {new Date(result.dataAsOf).toLocaleString()}.</p>}
+      {!rankedOptions.length && <p className="empty-inline">No date-level price indications were returned for this window.</p>}
+      <div className="flexible-date-options">
+        {rankedOptions.map((option, index) => <article className="flexible-date-option" key={`${option.departureDate}-${option.returnDate}`}>
+          <div><strong>{dateShort(option.departureDate)}</strong><span>Return · {dateShort(option.returnDate)}</span></div>
+          <b>{money(option.price, option.currency || search.currency)}</b>
+          {option.lowPrice && <small className="flexible-date-low">Near the lowest price in this window</small>}
+          <button type="button" onClick={() => chooseDates(option)}>Use these dates</button>
+        </article>)}
+      </div>
+      <p className="flexible-date-disclaimer">Calendar prices are indicative, not confirmed itineraries or seller fares. Selecting dates reloads all requested trip categories. Flight stop and connection-country preferences are applied during the exact flight search after you choose a date pair.{result.servedFromCache ? " This comparison was served from cache." : " This comparison used one SerpApi request."}</p>
+    </>}
+  </section>;
+}
+
 export function ResultsWorkspace({ search, recommendations, liveSearchConfigured, providerKeyConfigured, databaseConfigured, weatherKeyConfigured, aiProviderConfigured, geminiProviderConfigured, openRouterProviderConfigured }: Props) {
   const [expanded, setExpanded] = useState<string | null>(recommendations.length === 1 ? recommendations[0]?.destination.id ?? null : null);
   const [states, setStates] = useState<Record<string, SearchState>>({});
@@ -737,6 +844,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const [hotelBookingStates, setHotelBookingStates] = useState<Record<string, HotelBookingState>>({});
   const [selections, setSelections] = useState<Record<string, DestinationSelection>>({});
   const [flightAirlineFilters, setFlightAirlineFilters] = useState<Record<string, string>>({});
+  const [activeNavSection, setActiveNavSection] = useState("");
+  const [navOpenState, setNavOpenState] = useState<Record<string, boolean>>({});
   const people = search.adults + search.childrenAges.length;
   const nights = Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000));
   const totalBudget = search.budgetMode === "per_person" ? search.budget * people : search.budget;
@@ -845,6 +954,51 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     });
   }
 
+  const navigationRecommendation = recommendations.find((item) => item.destination.id === expanded && Boolean(states[item.destination.id]?.result))
+    ?? recommendations.find((item) => Boolean(states[item.destination.id]?.result))
+    ?? null;
+  const navigationDestinationId = navigationRecommendation?.destination.id ?? "";
+  const navigationResult = navigationDestinationId ? states[navigationDestinationId]?.result ?? null : null;
+  const navigationSections: ResultSectionNavItem[] = navigationResult ? [
+    ...(search.components.includes("flights") ? [{ key: "flights", id: `trip-section-${navigationDestinationId}-flights`, label: "Flights", icon: Plane }] : []),
+    ...(search.components.includes("stays") ? [{ key: "stays", id: `trip-section-${navigationDestinationId}-stays`, label: "Places to stay", icon: Hotel }] : []),
+    ...(search.components.includes("activities") ? [
+      { key: "activities", id: `trip-section-${navigationDestinationId}-activities`, label: "Activities & attractions", icon: Activity },
+      { key: "restaurants", id: `trip-section-${navigationDestinationId}-restaurants`, label: "Restaurants & dining", icon: Users },
+    ] : []),
+    { key: "weather", id: `trip-section-${navigationDestinationId}-weather`, label: "Weather", icon: CloudRain },
+    { key: "plan", id: `trip-section-${navigationDestinationId}-plan`, label: "Your plan", icon: ClipboardList },
+    { key: "cost", id: `trip-section-${navigationDestinationId}-cost`, label: "Cost breakdown", icon: Wallet },
+    { key: "schedule", id: `trip-section-${navigationDestinationId}-schedule`, label: "Your trip schedule", icon: CalendarDays },
+  ] : [];
+  const navigationSignature = navigationSections.map((item) => item.id).join("|");
+
+  useEffect(() => {
+    if (!navigationSignature || typeof IntersectionObserver === "undefined") return;
+    const elements = navigationSignature.split("|").map((id) => document.getElementById(id)).filter((item): item is HTMLElement => Boolean(item));
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      const active = visible[0]?.target.getAttribute("data-section-key");
+      if (active) setActiveNavSection(active);
+    }, { rootMargin: "-105px 0px -68% 0px", threshold: 0.01 });
+    elements.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [navigationSignature]);
+
+  function navigateToResultSection(section: ResultSectionNavItem) {
+    const target = document.getElementById(section.id);
+    if (!target) return;
+    if (navigationDestinationId) setExpanded(navigationDestinationId);
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveNavSection(section.key);
+  }
+
+  function toggleResultSection(section: ResultSectionNavItem) {
+    const target = document.getElementById(section.id);
+    if (target instanceof HTMLDetailsElement) target.open = !target.open;
+  }
+
   const requestedLabels = search.components.map((component) => component === "flights" ? "Flights" : component === "stays" ? (search.stayTypes.includes("vacation_rentals") && search.stayTypes.includes("hotels") ? "Hotels and vacation rentals" : search.stayTypes.includes("vacation_rentals") ? "Vacation rentals" : "Hotels") : "Things to do");
 
   const assistantRecommendation = recommendations.find((item) => item.destination.id === expanded)
@@ -928,6 +1082,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   } : null;
 
   return <div className="planner-results-workspace">
+    {navigationSections.length > 0 && <ResultsSectionNavigation sections={navigationSections} activeKey={activeNavSection || navigationSections[0].key} openState={navOpenState} onNavigate={navigateToResultSection} onToggle={toggleResultSection}/>}
     <div className="results-overview-bar">
       <div><small>Budget</small><strong>{money(totalBudget, search.currency)}</strong><span>{search.budgetMode === "total" ? "for the whole group" : "per traveler"}</span></div>
       <div><small>Dates</small><strong>{dateLabel(search.departureDate)} – {dateLabel(search.returnDate)}</strong><span>{nights} nights</span></div>
@@ -937,7 +1092,6 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
 
     {!liveSearchConfigured && <div className="live-setup-note"><ShieldAlert size={17}/><div><strong>Live search is not connected</strong><p>{!providerKeyConfigured ? "Add SERPAPI_API_KEY in Vercel. " : ""}{!databaseConfigured ? "Add DATABASE_URL for the Neon cache and shared usage limits." : ""}</p></div></div>}
 
-    {search.flexibleDays > 0 && <p className="accuracy-note"><Clock3 size={13}/> Date flexibility is stored as a preference; live searches currently use the exact dates entered.</p>}
     {search.rooms > 1 && search.components.includes("stays") && <p className="accuracy-note">Room count is shown in your request. Confirm the exact room allocation with the property before booking.</p>}
 
     <div className="planner-results-list">
@@ -974,7 +1128,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               {search.components.includes("stays") && search.stayTypes.includes("hotels") && <a className="planner-outbound-link" href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer"><Hotel size={14}/> Hotels · {nights} nights <ArrowUpRight size={12}/></a>}
               {search.components.includes("stays") && search.stayTypes.includes("vacation_rentals") && <a className="planner-outbound-link" href={recommendation.vacationRentalSearchUrl} target="_blank" rel="noreferrer"><Hotel size={14}/> Rentals · {nights} nights <ArrowUpRight size={12}/></a>}
               {search.components.includes("activities") && <a className="planner-outbound-link" href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer"><Activity size={14}/> Things to do · {nights} days <ArrowUpRight size={12}/></a>}
-              <button className="text-action" type="button" onClick={() => setExpanded(isExpanded ? null : destination.id)} aria-expanded={isExpanded}>{isExpanded ? "Hide schedule" : "Trip schedule"}</button>
+              {state?.result && <button className="text-action" type="button" onClick={() => { setExpanded(destination.id); window.requestAnimationFrame(() => window.requestAnimationFrame(() => { const schedule = document.getElementById(`trip-section-${destination.id}-schedule`); if (schedule instanceof HTMLDetailsElement) schedule.open = true; schedule?.scrollIntoView({ behavior: "smooth", block: "start" }); })); }}>Go to schedule</button>}
             </div>
 
             {liveSearchConfigured && <div className="live-search-action"><button type="button" className="live-search-button" disabled={state?.loading} onClick={() => checkLiveOffers(recommendation, Boolean(state?.result))}>{state?.loading ? <><RefreshCw size={14} className="spin"/> {state?.result ? "Refreshing selected categories…" : "Searching selected categories…"}</> : state?.result ? <><RefreshCw size={14}/> Refresh results</> : `Search ${requestedLabels.join(" + ")}`}</button>{!singleDestination && <span>Only the destination you open is searched. Other recommendations do not use API requests until selected.</span>}<span>Identical searches use the shared Neon cache. Refresh bypasses Tripfinder’s saved results and may use a provider search. The provider may still return its own cached data.</span></div>}
@@ -986,38 +1140,51 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               {state.result.warnings.map((warning) => <p className="provider-warning" key={warning}>{warning}</p>)}
               {state.result.cacheSummary?.length > 0 && <div className="cache-freshness-list" aria-label="Search result freshness">{state.result.cacheSummary.map((entry) => <span className={`cache-freshness cache-${entry.status}`} key={entry.key}><strong>{entry.label}</strong>{entry.status === "live" ? "Live" : entry.status === "cached" ? "Cached" : "Saved fallback"} · {cacheAgeLabel(entry.fetchedAt)}</span>)}</div>}
 
-              {search.components.includes("flights") && <details className="live-result-group" open>
+              {search.components.includes("flights") && <details id={`trip-section-${destination.id}-flights`} data-section-key="flights" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><Plane size={17}/><strong>Flights</strong><span>{state.result.flights.length} outbound options{selection.outbound ? " · 1 selected" : ""}{selection.returnFlight ? " + return selected" : ""}</span><ChevronDown size={16} className="group-chevron"/></summary>
                 <p className="flight-timezone-note">{destinationTimezoneNotice(destinationLabel, airportCode, search.departureDate)}</p>
+                <FlexibleFlightDatePanel search={search} destinationAirportCode={airportCode} hasSelections={Boolean(selection.outbound || selection.returnFlight || selection.hotel || Object.keys(selection.experiences).length)}/>
                 <p className="flight-roundtrip-note">Tripfinder sends one round-trip search with both dates. Google Flights returns outbound choices first; selecting one uses its departure token to retrieve matching return choices. The initial result price is indicative, not a confirmed combined fare. After choosing both legs, compare seller offers: they identify whether the booking is one combined ticket or separate outbound and return tickets, and show each leg's price when the provider supplies it.</p>
                 {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected) => loadBookingOptions(selected, airportCode)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
               </details>}
 
-              {search.components.includes("stays") && <details className="live-result-group" open>
+              {search.components.includes("stays") && <details id={`trip-section-${destination.id}-stays`} data-section-key="stays" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><Hotel size={17}/><strong>Places to stay</strong><span>{state.result.hotels.length} properties{selection.hotel ? " · 1 selected" : ""}</span><ChevronDown size={16} className="group-chevron"/></summary>
                 {state.result.hotels.length ? state.result.hotels.map((hotel) => <HotelResult key={hotel.id} hotel={hotel} currency={search.currency} airportCode={airportCode} experiences={state.result!.experiences} nights={nights} search={search} bookingState={hotelBookingStates[hotel.id]} selected={selection.hotel?.id === hotel.id} onSelect={(selected) => selectHotel(destination.id, selected)} onLoadBookingOptions={loadHotelOptions}/>) : <div className="empty-category"><p>No properties were returned for these dates and guest details.</p><a href={recommendation.hotelSearchUrl} target="_blank" rel="noreferrer">Open the stay search <ArrowUpRight size={12}/></a></div>}
               </details>}
 
               {search.components.includes("activities") && <>
-                <details className="live-result-group" open><summary className="live-result-group-summary"><Activity size={17}/><strong>Activities & attractions</strong><span>{activityExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "activity")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
+                <details id={`trip-section-${destination.id}-activities`} data-section-key="activities" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Activity size={17}/><strong>Activities & attractions</strong><span>{activityExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "activity")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
                   {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
                 </details>
-                <details className="live-result-group" open><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
+                <details id={`trip-section-${destination.id}-restaurants`} data-section-key="restaurants" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
                   {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">To verify the requested drive-time limit, select your preferred property above and use “Check drive time from selected stay” on each restaurant. Tripfinder checks the route only when you request it; straight-line distance is not driving time.</p>}
                   {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
                 </details>
               </>}
-              <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} search={search}/>
-              <TripCostLedger selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} people={people} budget={totalBudget} flightRequested={search.components.includes("flights")} stayRequested={search.components.includes("stays")} activitiesRequested={search.components.includes("activities")}/>
-              <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
+              <details id={`trip-section-${destination.id}-weather`} data-section-key="weather" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
+                <summary className="live-result-group-summary"><CloudRain size={17}/><strong>Weather</strong><span>Forecast for your trip dates</span><ChevronDown size={16} className="group-chevron"/></summary>
+                <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
+              </details>
+              <details id={`trip-section-${destination.id}-plan`} data-section-key="plan" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
+                <summary className="live-result-group-summary"><ClipboardList size={17}/><strong>Your plan</strong><span>Selected trip items</span><ChevronDown size={16} className="group-chevron"/></summary>
+                <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} search={search}/>
+                {!selection.outbound && !selection.returnFlight && !selection.hotel && Object.keys(selection.experiences).length === 0 && <p className="empty-inline results-plan-empty">Your plan is empty. Select flights, a place to stay, activities or restaurants to add them here.</p>}
+              </details>
+              <details id={`trip-section-${destination.id}-cost`} data-section-key="cost" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
+                <summary className="live-result-group-summary"><Wallet size={17}/><strong>Cost breakdown</strong><span>Planning estimate</span><ChevronDown size={16} className="group-chevron"/></summary>
+                <TripCostLedger selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} people={people} budget={totalBudget} flightRequested={search.components.includes("flights")} stayRequested={search.components.includes("stays")} activitiesRequested={search.components.includes("activities")}/>
+              </details>
               <p className="provider-disclaimer">Provider results are snapshots, not reservations. Confirm the room or passenger mix, taxes, baggage, cancellation terms and final price with the seller.</p>
             </div>}
 
-            {isExpanded && <div className="itinerary-panel">
-              <div className="itinerary-panel-heading">
-                <div><h4>Your trip schedule</h4></div>
-                <p>Flights, stay milestones, activities, and dining are combined in one chronological schedule. Change the scheduled date of any selected activity or restaurant to move it to another trip day.</p>
-              </div>
+            {isExpanded && state?.result && <details id={`trip-section-${destination.id}-schedule`} data-section-key="schedule" className="live-result-group results-utility-group results-schedule-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
+              <summary className="live-result-group-summary"><CalendarDays size={17}/><strong>Your trip schedule</strong><span>Chronological itinerary</span><ChevronDown size={16} className="group-chevron"/></summary>
+              <div className="itinerary-panel">
+                <div className="itinerary-panel-heading">
+                  <div><h4>Schedule overview</h4></div>
+                  <p>Flights, stay milestones, activities, and dining are combined in one chronological schedule. Change the scheduled date of any selected activity or restaurant to move it to another trip day.</p>
+                </div>
 
               <UnifiedTripSchedule
                 search={search}
@@ -1030,7 +1197,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 onUpdateStayTime={(field, value) => updateSelection(destination.id, (current) => ({ ...current, [field]: value || undefined }))}
                 onUpdateExperience={(experience, plan) => updateExperienceSelection(destination.id, experience, plan)}
               />
-            </div>}
+              </div>
+            </details>}
           </div>
         </motion.article>;
       })}

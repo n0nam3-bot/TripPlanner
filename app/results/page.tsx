@@ -81,7 +81,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
           {search.planningNotes.map((note, index) => <span key={`planning-note-${index}`}>Planning note: {note}</span>)}
         </div>
       </section>
-      <section className="results-content shell">
+      <section className="results-content shell results-content-with-rail">
         <div className="results-section-heading">
           <div><h2>{recommendations.length === 1 ? "Your search" : "Destination ideas"}</h2><p>{recommendations.length} {recommendations.length === 1 ? "destination" : "destinations"} · {tripLength(search)} nights · {travelers} traveler{travelers === 1 ? "" : "s"}</p></div>
         </div>

@@ -5,6 +5,7 @@ import { filterAndRankStays, googleAmenityFilterIds, inferStaySpaceType } from "
 import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationRegionScope, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StaySpaceType, StayType } from "@/lib/trip-planner/types";
 import { makeFlightBookingParams, makeFlightParams, makeReturnFlightParams } from "@/lib/trip-planner/flight-search-params";
+import { makeFlexibleFlightCalendarParams, normalizeFlexibleFlightDateOptions, type FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
 import { applyLayoverPreferences } from "@/lib/trip-planner/flight-search-policy";
 import { safeGoogleBookingUrl } from "@/lib/trip-planner/flight-booking-url";
 import { getGeoapifyDrivingRoute, searchGeoapifyPlaces } from "@/lib/providers/geoapify";
@@ -244,6 +245,7 @@ async function getSerpApiQuota(apiKey: string): Promise<ProviderQuota> {
 
 function telemetryCategory(params: Record<string, string>): string {
   const engine = params.engine ?? "unknown";
+  if (engine === "google_flights_calendar") return "Flexible flight dates";
   if (engine === "google_flights") {
     if (params.booking_token) return "Flight seller lookup";
     if (params.departure_token) return "Return flights";
@@ -272,6 +274,7 @@ type ProviderCachePolicy = { ttlSeconds: number; staleMaxAgeSeconds: number };
 /** Category-specific freshness windows. Search parameters remain part of the cache key. */
 export function getProviderCachePolicy(params: Record<string, string>): ProviderCachePolicy {
   const engine = params.engine ?? "";
+  if (engine === "google_flights_calendar") return { ttlSeconds: 3600, staleMaxAgeSeconds: 12 * 3600 };
   if (engine === "google_flights") {
     const days = daysUntilProviderDate(params.outbound_date);
     if (days !== null && days <= 7) return { ttlSeconds: 900, staleMaxAgeSeconds: 6 * 3600 };
@@ -926,6 +929,44 @@ async function searchPlacesWithFallback(
   if (mapsResult) return mapsResult;
   if (mapsError) throw mapsError;
   throw new Error("PLACE_SEARCH_UNAVAILABLE");
+}
+
+export type FlexibleFlightDateSearchResult = {
+  options: FlexibleFlightDateOption[];
+  checkedAt: string;
+  dataAsOf: string;
+  servedFromCache: boolean;
+  stale: boolean;
+  warnings: string[];
+};
+
+/** Compare a small date window with one Google Flights Calendar API request. */
+export async function searchFlexibleFlightDates(
+  input: TripSearchInput,
+  destinationAirportCode: string,
+  clientUsageKey = "shared",
+): Promise<FlexibleFlightDateSearchResult> {
+  if (!input.components.includes("flights")) throw new Error("FLEXIBLE_DATES_REQUIRE_FLIGHTS");
+  if (input.flexibleDays < 1 || input.flexibleDays > 3) throw new Error("INVALID_FLEXIBLE_DATE_WINDOW");
+  const originCode = input.originAirportCode || resolveAirportCode(input.origin);
+  if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
+  if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
+  const params = makeFlexibleFlightCalendarParams(input, originCode, destinationAirportCode);
+  const result = await querySerpApi(params, clientUsageKey);
+  const options = normalizeFlexibleFlightDateOptions(
+    result.data.prices,
+    input.currency,
+    params.date_range_start,
+    params.date_range_end,
+  );
+  return {
+    options,
+    checkedAt: new Date().toISOString(),
+    dataAsOf: result.fetchedAt,
+    servedFromCache: result.fromCache,
+    stale: Boolean(result.isStale),
+    warnings: options.length ? [] : ["No flexible-date price indications were returned for this route and date window. Try exact dates or expand the window by one day."],
+  };
 }
 
 export async function searchLiveTravel(input: TripSearchInput, destinationAirportCode: string, destinationName: string, clientUsageKey = "shared", forceRefresh = false): Promise<LiveTravelSearchResult> {

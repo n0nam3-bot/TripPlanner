@@ -9,6 +9,7 @@ const sourceFiles = [
   "lib/trip-planner/airports.ts",
   "lib/trip-planner/flight-routing.ts",
   "lib/trip-planner/flight-search-params.ts",
+  "lib/trip-planner/flexible-flight-dates.ts",
   "lib/trip-planner/flight-search-policy.ts",
   "lib/trip-planner/flight-booking-url.ts",
   "lib/trip-planner/geoapify-format.ts",

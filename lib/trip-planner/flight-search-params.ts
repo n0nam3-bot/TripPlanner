@@ -1,6 +1,6 @@
 import type { TripSearchInput } from "./types";
 
-function expandOriginAirports(originCode: string): string {
+export function expandOriginAirports(originCode: string): string {
   const metroAirports: Record<string, string> = {
     NYC: "JFK,EWR,LGA",
     CHI: "ORD,MDW",

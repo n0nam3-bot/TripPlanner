@@ -20,7 +20,7 @@
 - Neon persistent response cache.
 - Shared monthly and hourly uncached-query counters, per-connection limits, and real SerpApi Account API monthly and hourly balance checks with safety reserves.
 - Provider timestamps, source labels, partial-result warnings and no-results handling.
-- Explicit limitations for children age matching, multi-room occupancy, flexible dates and airport resolution.
+- Explicit limitations for child age matching, multi-room occupancy and airport resolution.
 
 ## Release 2.5 — operations and API monitoring (implemented; pending deployment verification)
 - Private `/admin` dashboard protected by a server-signed 12-hour HttpOnly session.
@@ -54,11 +54,12 @@
 - [x] Add Geoapify credit reservations in Neon: shared daily cap, per-visitor daily cap, shared 400 ms request gate with bounded queue, 12-hour places and route cache, and `/api/health` reporting. No provider requests are made during health checks.
 - [x] Show Geoapify key status, shared and per-visitor credit usage, remaining daily app budget and low-budget warnings in `/admin`.
 - Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.
-- Add flexible-date searches in a controlled way that respects provider quotas.
+- [x] Add controlled flexible-date comparisons (±1 to ±3 days) through one cached Google Flights Calendar request; preserve the same trip duration and re-run exact itineraries only after the traveler selects a date pair. Existing SerpApi shared quotas and per-client limits apply.
+- [x] Add a fixed desktop results quick-navigation rail with active-section tracking, jump controls, independent expand/collapse controls, and a compact horizontally scrollable responsive layout. Includes Flights, Places to stay, Activities & attractions, Restaurants & dining, Weather, Your plan, Cost breakdown, and Your trip schedule.
 - Improve airport autocomplete and multi-airport coverage.
 - [x] Add a no-API-credit regression suite for parser examples, inclusive date/duration handling, outbound/return/seller token stages, connection-country filtering, airport-local time zones/DST, round-trip price basis, currency-safe cost totals, room/guest validation, and Google booking redirect URL validation.
 
-**Next Release 4 focus:** controlled flexible-date flight search with explicit per-search query limits and clear SerpApi quota estimates, followed by broader airport gateway coverage. Exact-date search remains the default.
+**Next Release 4 focus:** broader airport gateway coverage and improved airport resolution, followed by supplier-data quality and search-outcome monitoring. Exact-date search remains the default; flexible date comparison is opt-in and consumes one cached calendar request only when the traveler asks to compare.
 
 ## Release 5 — persistence and trip workspace
 - Neon persistence for anonymous shareable trip drafts and saved searches.

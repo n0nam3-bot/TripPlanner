@@ -82,7 +82,7 @@ export function parseTripSearch(params: URLSearchParams): { input?: TripSearchIn
   if (!Number.isFinite(budget) || budget < 50 || budget > 1000000) errors.push("Enter a budget between 50 and 1,000,000.");
   if (!styles.has(styleValue)) errors.push("Choose a valid trip style.");
   if (!currencies.has(currency)) errors.push("Choose a supported currency.");
-  if (!Number.isInteger(flexibleDays) || flexibleDays < 0 || flexibleDays > 7) errors.push("Date flexibility must be between 0 and 7 days.");
+  if (!Number.isInteger(flexibleDays) || flexibleDays < 0 || flexibleDays > 3) errors.push("Date flexibility must be between 0 and 3 days.");
   if (!cabins.has(cabinClass)) errors.push("Choose a valid cabin class.");
   if (!stops.has(stopsValue)) errors.push("Choose a valid stop preference.");
   if (![0, 3, 4, 5].includes(ratingValue)) errors.push("Choose a valid minimum hotel rating.");
