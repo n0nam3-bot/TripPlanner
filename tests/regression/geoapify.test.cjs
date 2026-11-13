@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { getDestinationAreaGeo } = require("../../.test-build/lib/trip-planner/location-suggestions.js");
 const {
   geoapifyCategories,
   buildGeoapifyPlacesUrl,
@@ -82,4 +85,27 @@ test("Geoapify safety caps share one bounded default and never exceed Tripfinder
   assert.deepEqual(resolveGeoapifyCreditCaps(), { dailyCap: 2400, clientDailyCap: 80 });
   assert.deepEqual(resolveGeoapifyCreditCaps({ dailyCap: "5000", clientDailyCap: "900" }), { dailyCap: 2800, clientDailyCap: 300 });
   assert.deepEqual(resolveGeoapifyCreditCaps({ dailyCap: "not-a-number", clientDailyCap: 0 }), { dailyCap: 2400, clientDailyCap: 1 });
+});
+
+
+test("Las Terrenas uses its own local anchor instead of the Samaná town center", () => {
+  const lasTerrenas = getDestinationAreaGeo("Las Terrenas, Samaná, Dominican Republic");
+  const samana = getDestinationAreaGeo("Samaná, Dominican Republic");
+  assert.ok(lasTerrenas);
+  assert.ok(samana);
+  assert.notEqual(lasTerrenas.latitude, samana.latitude);
+  assert.notEqual(lasTerrenas.longitude, samana.longitude);
+  assert.equal(lasTerrenas.restaurantRadiusMiles, 6);
+  assert.equal(lasTerrenas.activityRadiusMiles, 12);
+});
+
+test("image-free experience cards use full content width and a single OpenStreetMap label", () => {
+  const root = path.resolve(__dirname, "../..");
+  const workspace = fs.readFileSync(path.join(root, "components/trips/results-workspace.tsx"), "utf8");
+  const css = fs.readFileSync(path.join(root, "app/globals.css"), "utf8");
+  assert.match(workspace, /experience\.thumbnail \? "has-image" : "no-image"/);
+  assert.match(workspace, /"View on OpenStreetMap"/);
+  assert.doesNotMatch(workspace, /"Open OpenStreetMap"/);
+  assert.match(css, /\.experience-card\.no-image\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(190px,\s*220px\)/);
+  assert.match(css, /\.experience-card\.no-image\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
 });

@@ -342,7 +342,7 @@ function ExperienceResult({ experience, hotels, selectedHotel, airportCode, sear
     setDraftTime(time);
     if (selected) onSelectionChange(experience, { ...selected, time: time || undefined });
   };
-  return <article id={getTripAssistantResultAnchor(experience.kind, experience.id)} tabIndex={-1} className={`experience-card ${selected ? "is-selected" : ""}`}>
+  return <article id={getTripAssistantResultAnchor(experience.kind, experience.id)} tabIndex={-1} className={`experience-card ${experience.thumbnail ? "has-image" : "no-image"} ${selected ? "is-selected" : ""}`}>
     {experience.thumbnail && <img src={experience.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer"/>}
     <div className="experience-copy"><div className="experience-title"><h4><a href={experience.website || experience.mapsUrl} target="_blank" rel="noreferrer">{experience.name} <ExternalLink size={11}/></a></h4>{experience.rating !== null && <span><Star size={12} fill="currentColor"/> {experience.rating.toFixed(1)}{experience.reviews ? ` · ${experience.reviews.toLocaleString()}` : ""}</span>}</div><p>{experience.category}{experience.address ? ` · ${experience.address}` : ""}</p>{experience.openState && <small>{experience.openState}</small>}{experience.openingHours && <small>Hours listed: {experience.openingHours} · confirm directly before visiting</small>}{experience.price && <small>{experience.price}</small>}{experience.source?.includes("Geoapify") && <small className="experience-attribution">Place data via <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer">Geoapify</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a></small>}
       {isRestaurant && selectedHotel && selectedStayLocation
@@ -360,7 +360,7 @@ function ExperienceResult({ experience, hotels, selectedHotel, airportCode, sear
       <button type="button" className={`selection-button ${selected ? "is-selected" : ""}`} onClick={() => onSelectionChange(experience, selected ? null : { date: activeDate, slot: activeSlot, time: activeTime || undefined })}>{selected ? <><Check size={13}/> Added to trip · Remove</> : isRestaurant ? "Add restaurant" : "Add activity"}</button>
       <small className="experience-time-note">A time you enter is a planning note; Tripfinder does not make or confirm reservations.</small>
       {experience.website && <a href={experience.website} target="_blank" rel="noreferrer" className="text-action">Official site <ArrowUpRight size={12}/></a>}
-      <a href={experience.mapsUrl} target="_blank" rel="noreferrer" className="text-action">{experience.source?.includes("Geoapify") ? "Open OpenStreetMap" : "Open in Maps"} <ArrowUpRight size={12}/></a>
+      <a href={experience.mapsUrl} target="_blank" rel="noreferrer" className="text-action">{experience.source?.includes("Geoapify") ? "View on OpenStreetMap" : "Open in Maps"} <ArrowUpRight size={12}/></a>
       {isRestaurant ? null : <><a href={viatorUrl} target="_blank" rel="noreferrer" className="text-action">Search Viator <ArrowUpRight size={12}/></a><a href={getYourGuideUrl} target="_blank" rel="noreferrer" className="text-action">Search GetYourGuide <ArrowUpRight size={12}/></a></>}
     </div>
   </article>;

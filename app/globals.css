@@ -963,13 +963,19 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .empty-category-links a:hover { color:#713321; }
 
 
-/* Compact, predictable result imagery on desktop and mobile. */
+/* Experience cards must not reserve an empty thumbnail column when a provider
+   does not supply an image (common for Geoapify / OpenStreetMap records). */
 .experience-card {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr) minmax(165px, 220px);
   align-items: start;
   gap: 14px;
   min-width: 0;
+}
+.experience-card.has-image {
+  grid-template-columns: 112px minmax(0, 1fr) minmax(165px, 220px);
+}
+.experience-card.no-image {
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 220px);
 }
 .experience-card > img {
   display: block;
@@ -988,19 +994,24 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   align-content: start;
   justify-content: flex-start;
 }
+.experience-card.no-image .experience-actions { width: 100%; }
 .experience-actions a { min-height: 32px; white-space: normal; }
 .live-hotel-card > img { width: 92px; height: 76px; max-width: 100%; object-fit: cover; }
 .planner-destination-visual { min-height: 230px; max-height: 300px; }
 .weather-day > img { width: 34px; height: 34px; max-width: 34px; object-fit: contain; }
 @media (max-width: 900px) {
-  .experience-card { grid-template-columns: 88px minmax(0, 1fr); }
-  .experience-card > img { width: 88px; height: 78px; }
-  .experience-actions { grid-column: 2; max-width: none; }
+  .experience-card.has-image { grid-template-columns: 88px minmax(0, 1fr); }
+  .experience-card.has-image > img { width: 88px; height: 78px; }
+  .experience-card.has-image .experience-actions { grid-column: 2; max-width: none; }
+  .experience-card.no-image { grid-template-columns: minmax(0, 1fr); }
+  .experience-card.no-image .experience-actions { grid-column: 1; max-width: none; }
 }
 @media (max-width: 620px) {
-  .experience-card { grid-template-columns: 70px minmax(0, 1fr); gap: 10px; }
-  .experience-card > img { width: 70px; height: 68px; }
-  .experience-actions { grid-column: 1 / -1; max-width: none; }
+  .experience-card.has-image { grid-template-columns: 70px minmax(0, 1fr); gap: 10px; }
+  .experience-card.has-image > img { width: 70px; height: 68px; }
+  .experience-card.has-image .experience-actions { grid-column: 1 / -1; max-width: none; }
+  .experience-card.no-image { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .experience-card.no-image .experience-actions { grid-column: 1; max-width: none; }
   .planner-destination-visual { min-height: 190px; max-height: 220px; }
 }
 

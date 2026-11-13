@@ -568,6 +568,20 @@ export type DestinationAreaGeo = {
 
 const DESTINATION_AREA_GEOS: Array<{ aliases: string[]; geo: DestinationAreaGeo }> = [
   {
+    // Keep this specific Las Terrenas anchor ahead of the broader Samaná area.
+    // Previously both names shared the Samaná town coordinates, causing local
+    // restaurant and attraction results to appear 14–20 miles from the stay.
+    aliases: ["las terrenas"],
+    geo: {
+      latitude: 19.3120,
+      longitude: -69.5425,
+      activityRadiusMiles: 12,
+      restaurantRadiusMiles: 6,
+      hotelRadiusMiles: 15,
+      addressAliases: ["las terrenas", "el portillo", "playa bonita", "coson", "cosón"],
+    },
+  },
+  {
     aliases: ["tirana", "tirane"],
     geo: { latitude: 41.3275, longitude: 19.8187, activityRadiusMiles: 18, restaurantRadiusMiles: 10, hotelRadiusMiles: 18, addressAliases: ["tirana", "tirane"] },
   },
@@ -623,8 +637,8 @@ const DESTINATION_AREA_GEOS: Array<{ aliases: string[]; geo: DestinationAreaGeo 
     geo: { latitude: 18.4273, longitude: -68.9728, activityRadiusMiles: 38, restaurantRadiusMiles: 24, hotelRadiusMiles: 34, addressAliases: ["la romana", "bayahibe", "dominicus", "casa de campo"] },
   },
   {
-    aliases: ["samana", "samaná", "las terrenas", "las galeras", "el limon"],
-    geo: { latitude: 19.2050, longitude: -69.3360, activityRadiusMiles: 42, restaurantRadiusMiles: 25, hotelRadiusMiles: 36, addressAliases: ["samana", "samaná", "las terrenas", "las galeras", "el limon"] },
+    aliases: ["samana", "samaná", "las galeras", "el limon"],
+    geo: { latitude: 19.2050, longitude: -69.3360, activityRadiusMiles: 42, restaurantRadiusMiles: 25, hotelRadiusMiles: 36, addressAliases: ["samana", "samaná", "las galeras", "el limon"] },
   },
 ];
 
