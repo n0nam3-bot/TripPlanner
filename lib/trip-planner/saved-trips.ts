@@ -12,6 +12,13 @@ export type SavedTripItem = {
   price?: number | null;
   currency?: string;
   priceLabel?: string;
+  imageUrl?: string;
+  rating?: number;
+  reviewCount?: number;
+  websiteUrl?: string;
+  websiteLabel?: string;
+  mapsUrl?: string;
+  sourceLabel?: string;
   /** Absolute event ordering timestamp, calculated with the same airport/destination timezone rules as the live trip schedule. */
   sortTimestamp?: number;
   details: string[];
@@ -40,6 +47,36 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 function cleanText(value: unknown, maxLength: number, fallback = ""): string {
   if (typeof value !== "string") return fallback;
   return value.replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+
+function safeSavedHttpsUrl(value: unknown, maxLength = 2048): string | undefined {
+  const candidate = cleanText(value, maxLength);
+  if (!candidate) return undefined;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password) return undefined;
+    if (["localhost", "127.0.0.1", "::1"].includes(url.hostname.toLowerCase())) return undefined;
+    return url.toString().slice(0, maxLength);
+  } catch {
+    return undefined;
+  }
+}
+
+function safeSavedImageUrl(value: unknown): string | undefined {
+  const safe = safeSavedHttpsUrl(value, 2048);
+  if (!safe) return undefined;
+  try {
+    const hostname = new URL(safe).hostname.toLowerCase();
+    const allowed = [
+      "googleusercontent.com", "gstatic.com", "serpapi.com", "geoapify.com",
+      "booking.com", "bstatic.com", "trvl-media.com", "expedia.com",
+      "expedia.net", "unsplash.com", "images.unsplash.com",
+    ];
+    return allowed.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`)) ? safe : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function validIsoDate(value: string): boolean {
@@ -123,6 +160,15 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
       }
       const currency = cleanText(item.currency, 3).toUpperCase();
       if (currency && !/^[A-Z]{3}$/.test(currency)) return null;
+      const rating = typeof item.rating === "number" && Number.isFinite(item.rating) && item.rating >= 0 && item.rating <= 5
+        ? Math.round(item.rating * 10) / 10 : undefined;
+      const reviewCount = typeof item.reviewCount === "number" && Number.isInteger(item.reviewCount) && item.reviewCount >= 0 && item.reviewCount <= 100000000
+        ? item.reviewCount : undefined;
+      const imageUrl = safeSavedImageUrl(item.imageUrl);
+      const websiteUrl = safeSavedHttpsUrl(item.websiteUrl);
+      const websiteLabel = cleanText(item.websiteLabel, 80);
+      const mapsUrl = safeSavedHttpsUrl(item.mapsUrl);
+      const sourceLabel = cleanText(item.sourceLabel, 80);
       const details = Array.isArray(item.details)
         ? item.details.slice(0, 10).map((entry) => cleanText(entry, 300)).filter(Boolean)
         : [];
@@ -134,7 +180,14 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
         ...(time ? { time } : {}),
         ...(price !== undefined ? { price } : {}),
         ...(currency ? { currency } : {}),
-        ...(cleanText(item.priceLabel, 120) ? { priceLabel: cleanText(item.priceLabel, 120) } : {}),
+        ...(cleanText(item.priceLabel, 180) ? { priceLabel: cleanText(item.priceLabel, 180) } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(rating !== undefined ? { rating } : {}),
+        ...(reviewCount !== undefined ? { reviewCount } : {}),
+        ...(websiteUrl ? { websiteUrl } : {}),
+        ...(websiteLabel ? { websiteLabel } : {}),
+        ...(mapsUrl ? { mapsUrl } : {}),
+        ...(sourceLabel ? { sourceLabel } : {}),
         ...(sortTimestamp !== undefined ? { sortTimestamp } : {}),
         details,
       });

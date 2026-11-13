@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, CalendarDays, MapPin, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, ExternalLink, MapPin, Star, Users } from "lucide-react";
 import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { SupportTipLink } from "@/components/support-tip-link";
+import { PrintTripButton } from "@/components/trips/print-trip-button";
 import { getSavedTripByShareToken } from "@/lib/db/saved-trips";
 import { formatTripDestinationLabel } from "@/lib/trip-planner/destinations";
 import { sortSavedTripItemsChronologically } from "@/lib/trip-planner/saved-trips";
@@ -33,7 +34,7 @@ function money(value: number, currency: string): string {
 const kindLabels: Record<string, string> = {
   "outbound-flight": "Outbound flight",
   "return-flight": "Return flight",
-  "flight-fare": "Selected flight fare",
+  "flight-fare": "Flight pricing · round trip",
   stay: "Place to stay",
   "stay-check-in": "Accommodation check-in",
   "stay-check-out": "Accommodation check-out",
@@ -56,8 +57,7 @@ export default async function SharedTripPage({ params }: { params: Promise<{ tok
     <section className="saved-trip-shell shell">
       <Link href={openSearch} className="back-link"><ArrowLeft size={15}/> Open this search in Tripfinder</Link>
       <header className="saved-trip-header">
-        <span className="eyebrow">SHARED TRIP PLAN</span>
-        <h1>{saved.snapshot.title}</h1>
+        <div className="saved-trip-header-row"><div><span className="eyebrow">SHARED TRIP PLAN</span><h1>{saved.snapshot.title}</h1></div><PrintTripButton/></div>
         <p className="saved-trip-intro">A saved planning snapshot. It is not a booking, reservation or live availability guarantee.</p>
       </header>
       <section className="saved-trip-overview" aria-label="Trip overview">
@@ -67,23 +67,32 @@ export default async function SharedTripPage({ params }: { params: Promise<{ tok
         <div><Users size={15}/><strong>{travelers} traveler{travelers === 1 ? "" : "s"}</strong></div>
         <div><span>BUDGET</span><strong>{money(search.budget, search.currency)} {search.budgetMode === "per_person" ? "per person" : "total"}</strong></div>
       </section>
-      <div className="saved-trip-notice"><MapPin size={15}/><p>Anyone with this private link can view this trip. Share it only with people you trust. Booking tokens, account credentials and private API data are not included.</p></div>
+      <div className="saved-trip-notice no-print"><MapPin size={15}/><p>Anyone with this private link can view this trip. Share it only with people you trust. Booking tokens, account credentials and private API data are not included. Photos, ratings and links are saved provider snapshots and may change.</p></div>
       <section className="saved-trip-content">
         <div className="saved-trip-content-heading"><div><span className="eyebrow">YOUR PLAN</span><h2>Selected trip details</h2></div><span>Saved {new Date(saved.updatedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span></div>
         {saved.snapshot.destinations.map((group, index) => <section className="saved-trip-destination" key={`${group.label}-${index}`}>
           <h3>{group.label}</h3>
           {!group.items.length ? <p className="saved-trip-empty">No flights, stays, activities or restaurants have been selected yet. This link preserves the original search criteria.</p> : <div className="saved-trip-items">
-            {sortSavedTripItemsChronologically(group.items).map((item, itemIndex) => <article className="saved-trip-item" key={`${item.kind}-${item.title}-${itemIndex}`}>
-              <div className="saved-trip-item-heading"><span>{kindLabels[item.kind] || "Trip item"}</span>{item.date && <time dateTime={item.date}>{dateLabel(item.date)}{item.time ? ` · ${item.time}` : ""}</time>}</div>
-              <h4>{item.title}</h4>
-              {item.subtitle && <p>{item.subtitle}</p>}
-              {item.details.length > 0 && <ul>{item.details.map((detail, detailIndex) => <li key={detailIndex}>{detail}</li>)}</ul>}
-              {item.price !== undefined && item.price !== null && <div className="saved-trip-item-price"><strong>{money(item.price, item.currency || search.currency)}</strong>{item.priceLabel && <span>{item.priceLabel}</span>}</div>}
+            {sortSavedTripItemsChronologically(group.items).map((item, itemIndex) => <article className={`saved-trip-item ${item.imageUrl ? "has-image" : "no-image"}`} key={`${item.kind}-${item.title}-${itemIndex}`}>
+              {item.imageUrl && <a className="saved-trip-item-image-link" href={item.mapsUrl || item.websiteUrl || undefined} target={item.mapsUrl || item.websiteUrl ? "_blank" : undefined} rel={item.mapsUrl || item.websiteUrl ? "noreferrer" : undefined}><img className="saved-trip-item-image" src={item.imageUrl} alt={`${item.title}`} loading="lazy" referrerPolicy="no-referrer"/></a>}
+              <div className="saved-trip-item-main">
+                <div className="saved-trip-item-heading"><span>{kindLabels[item.kind] || "Trip item"}</span>{item.date && <time dateTime={item.date}>{dateLabel(item.date)}{item.time ? ` · ${item.time}` : ""}</time>}</div>
+                <h4>{item.title}</h4>
+                {item.subtitle && <p>{item.subtitle}</p>}
+                {item.rating !== undefined && <div className="saved-trip-item-rating"><Star size={12} fill="currentColor" aria-hidden="true"/><strong>{item.rating.toFixed(1)}</strong>{item.reviewCount !== undefined && <span>{item.reviewCount.toLocaleString("en-US")} reviews</span>}</div>}
+                {item.sourceLabel && <small className="saved-trip-item-source">Information from {item.sourceLabel}</small>}
+                {item.details.length > 0 && <ul>{item.details.map((detail, detailIndex) => <li key={detailIndex}>{detail}</li>)}</ul>}
+                {item.price !== undefined && item.price !== null && <div className="saved-trip-item-price"><strong>{money(item.price, item.currency || search.currency)}</strong>{item.priceLabel && <span>{item.priceLabel}</span>}</div>}
+                {(item.mapsUrl || item.websiteUrl) && <div className="saved-trip-item-links">
+                  {item.mapsUrl && <a href={item.mapsUrl} target="_blank" rel="noreferrer">Open in Google Maps <ExternalLink size={11}/></a>}
+                  {item.websiteUrl && <a href={item.websiteUrl} target="_blank" rel="noreferrer">{item.websiteLabel || "Open provider link"} <ExternalLink size={11}/></a>}
+                </div>}
+              </div>
             </article>)}
           </div>}
         </section>)}
       </section>
-      <div className="saved-trip-actions"><Link href={openSearch} className="button button-dark">Reopen search <ArrowRight size={16}/></Link><span>Reopening the search checks the current provider cache and may refresh travel results.</span></div>
+      <div className="saved-trip-actions no-print"><Link href={openSearch} className="button button-dark">Reopen search <ArrowRight size={16}/></Link><span>Reopening restores the search criteria. Provider results and availability may have changed; selected options are shown here as a saved snapshot.</span></div>
       <p className="saved-trip-expiry">This share link expires {dateLabel(saved.expiresAt.slice(0, 10))}. Saving an updated copy extends its expiry.</p>
     </section>
     <footer className="site-footer shell saved-trip-footer">

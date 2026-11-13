@@ -41,6 +41,27 @@ test("saved trip snapshot allowlists item types and normalizes text", () => {
   assert.equal(result.destinations[0].items.length, 2);
 });
 
+test("saved trip share metadata preserves approved HTTPS photos, ratings and provider links only", () => {
+  const enriched = normalizeSavedTripSnapshot({ ...snapshot, destinations: [{ label: "Las Terrenas", items: [{
+    kind: "activity", title: "Playa Punta Popy", subtitle: "Beach", details: [],
+    imageUrl: "https://lh3.googleusercontent.com/place-photo.jpg", rating: 4.7, reviewCount: 4118,
+    mapsUrl: "https://www.google.com/maps/search/?api=1&query=Playa%20Punta%20Popy",
+    websiteUrl: "https://example.org/official", websiteLabel: "Official website", sourceLabel: "Google Maps",
+  }, { kind: "activity", title: "Unsafe metadata", details: [], imageUrl: "https://evil.example/tracker.svg", websiteUrl: "javascript:alert(1)", mapsUrl: "http://127.0.0.1/admin", rating: 7, reviewCount: -1 }] }] });
+  assert.ok(enriched);
+  const [place, unsafe] = enriched.destinations[0].items;
+  assert.equal(place.imageUrl, "https://lh3.googleusercontent.com/place-photo.jpg");
+  assert.equal(place.rating, 4.7);
+  assert.equal(place.reviewCount, 4118);
+  assert.equal(place.websiteUrl, "https://example.org/official");
+  assert.equal(place.websiteLabel, "Official website");
+  assert.equal(unsafe.imageUrl, undefined);
+  assert.equal(unsafe.websiteUrl, undefined);
+  assert.equal(unsafe.mapsUrl, undefined);
+  assert.equal(unsafe.rating, undefined);
+  assert.equal(unsafe.reviewCount, undefined);
+});
+
 test("saved trip rejects unsupported item kinds, invalid dates and over-sized selections", () => {
   assert.equal(normalizeSavedTripSnapshot({ ...snapshot, destinations: [{ label: "x", items: [{ kind: "booking-token", title: "secret", details: [] }] }] }), null);
   assert.equal(normalizeSavedTripSnapshot({ ...snapshot, destinations: [{ label: "x", items: [{ kind: "activity", title: "x", date: "2026-02-31", details: [] }] }] }), null);
@@ -109,6 +130,29 @@ test("results workspace exposes save/share action and snapshots no booking token
   assert.match(ui, /onCopyShareLink/);
   assert.match(ui, /Open link/);
   assert.doesNotMatch(ui.slice(ui.indexOf("function buildSavedTripSnapshot"), ui.indexOf("function nearestKnownAirport")), /bookingToken|departureToken|propertyToken|postData/);
+});
+
+test("saved flight fare is displayed once for the round trip rather than on each flight leg", () => {
+  const source = read("components/trips/results-workspace.tsx");
+  const builder = source.slice(source.indexOf("function buildSavedTripSnapshot"), source.indexOf("function nearestKnownAirport"));
+  const addFlight = builder.slice(builder.indexOf("const addFlight"), builder.indexOf("if (selection.outbound"));
+  assert.doesNotMatch(addFlight, /price:\s*flight\.price/);
+  assert.match(builder, /One round-trip search reference/);
+  assert.match(builder, /kind:\s*"flight-fare"/);
+  assert.match(builder, /Do not add it again to the outbound or return flight/);
+});
+
+test("public saved-trip page shows provider photos, review summaries, outbound links and print controls", () => {
+  const page = read("app/trip/[token]/page.tsx");
+  const styles = read("app/globals.css");
+  assert.match(page, /item\.imageUrl/);
+  assert.match(page, /item\.rating/);
+  assert.match(page, /item\.reviewCount/);
+  assert.match(page, /item\.mapsUrl/);
+  assert.match(page, /item\.websiteUrl/);
+  assert.match(page, /PrintTripButton/);
+  assert.match(styles, /@media print/);
+  assert.match(styles, /saved-trip-item-image/);
 });
 
 test("public saved-trip page uses the same chronological sorter and renders stay milestones", () => {

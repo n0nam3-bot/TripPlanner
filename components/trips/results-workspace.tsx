@@ -164,27 +164,35 @@ function buildSavedTripSnapshot(
         subtitle: `${flight.airlines.join(" / ")} · ${flight.from} → ${flight.to}`,
         date,
         sortTimestamp,
-        price: flight.price,
-        currency: flight.currency || search.currency,
-        priceLabel: "Provider-displayed reference price · not a confirmed fare",
         details,
       });
     };
 
     if (selection.outbound && outboundSortAt !== null) addFlight(selection.outbound, "outbound-flight", search.departureDate, outboundSortAt);
     if (selection.returnFlight && returnSortAt !== null) addFlight(selection.returnFlight, "return-flight", search.returnDate, returnSortAt);
-    if (selection.flightSeller) {
-      const offer = selection.flightSeller.option;
+
+    // Google Flights labels these option prices as round-trip results. Store one
+    // indicative reference for the selected itinerary; never repeat the same
+    // round-trip quote on both the outbound and return schedule events.
+    if (selection.flightSeller || selection.outbound?.price != null || selection.returnFlight?.price != null) {
+      const offer = selection.flightSeller?.option;
+      const referencePrice = selection.outbound?.price ?? selection.returnFlight?.price ?? null;
+      const flightSearchUrl = result?.providerSearchLinks?.flights;
       items.push({
         kind: "flight-fare",
-        title: "Selected seller fare",
-        subtitle: offer.seller,
+        title: offer ? "Selected seller fare" : "Indicative round-trip flight price",
+        subtitle: offer ? offer.seller : `${selection.outbound?.airlines.join(" / ") || selection.returnFlight?.airlines.join(" / ") || "Google Flights"} · ${selection.outbound?.from || selection.returnFlight?.from || "Origin"} → ${selection.outbound?.to || selection.returnFlight?.to || "Destination"}`,
         date: search.departureDate,
         sortTimestamp: (outboundSortAt ?? fallbackSort(search.departureDate, "00:00")) + 1,
-        price: offer.price,
-        currency: offer.currency || search.currency,
-        priceLabel: "Provider-displayed seller quote · verify at checkout",
-        details: [offer.type, offer.separateTickets ? "Outbound and return are separate tickets" : "Combined-ticket status must be confirmed", ...(offer.departingPrice != null ? [`Outbound: ${money(offer.departingPrice, offer.currency)}`] : []), ...(offer.returningPrice != null ? [`Return: ${money(offer.returningPrice, offer.currency)}`] : [])].filter(Boolean),
+        price: offer ? offer.price : referencePrice,
+        currency: offer?.currency || selection.outbound?.currency || selection.returnFlight?.currency || search.currency,
+        priceLabel: offer
+          ? "Provider-displayed seller quote for the selected round trip · confirm ticketing, passengers, taxes and fees at checkout"
+          : "One round-trip search reference · not a separate price for each direction or a confirmed seller total",
+        ...(flightSearchUrl ? { websiteUrl: flightSearchUrl, websiteLabel: "Open this Google Flights search" } : {}),
+        details: offer
+          ? [offer.type, offer.separateTickets ? "Separate outbound and return tickets" : "Combined-ticket status must be confirmed at checkout", ...(offer.departingPrice != null ? [`Outbound ticket: ${money(offer.departingPrice, offer.currency || search.currency)}`] : []), ...(offer.returningPrice != null ? [`Return ticket: ${money(offer.returningPrice, offer.currency || search.currency)}`] : [])]
+          : ["This amount is shown once for the round-trip itinerary. Do not add it again to the outbound or return flight."],
       });
     }
     if (selection.hotel) {
@@ -208,6 +216,12 @@ function buildSavedTripSnapshot(
         price: hotel.totalPrice ?? hotel.nightlyPrice,
         currency: hotel.currency || search.currency,
         priceLabel: hotel.totalPrice !== null ? "Provider-displayed stay total · verify taxes and fees" : hotel.nightlyPrice !== null ? "Provider-displayed nightly price · not the stay total" : "Provider price basis unavailable",
+        ...(hotel.image ? { imageUrl: hotel.image } : {}),
+        ...(hotel.rating !== null ? { rating: hotel.rating } : {}),
+        ...(hotel.reviews !== null ? { reviewCount: hotel.reviews } : {}),
+        ...(hotel.bookingUrl ? { websiteUrl: hotel.bookingUrl, websiteLabel: "View property listing" } : {}),
+        ...(hotel.address || (hotel.latitude !== null && hotel.longitude !== null) ? { mapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(hotel.latitude !== null && hotel.longitude !== null ? `${hotel.latitude},${hotel.longitude}` : `${hotel.name} ${hotel.address}`)}` } : {}),
+        sourceLabel: hotel.source,
         details: [`Check-in · ${nights} ${nights === 1 ? "night" : "nights"}`, `${search.returnDate} check-out`, `${hotel.source} · ${hotel.propertyType}`],
       });
       items.push({
@@ -231,6 +245,12 @@ function buildSavedTripSnapshot(
         date: plan.date,
         time: plan.time || plan.slot,
         sortTimestamp: fallbackSort(plan.date, orderTime),
+        ...(experience.thumbnail ? { imageUrl: experience.thumbnail } : {}),
+        ...(experience.rating !== null ? { rating: experience.rating } : {}),
+        ...(experience.reviews !== null ? { reviewCount: experience.reviews } : {}),
+        ...(experience.website ? { websiteUrl: experience.website, websiteLabel: "Official website" } : {}),
+        ...(experience.mapsUrl ? { mapsUrl: experience.mapsUrl } : {}),
+        ...(experience.source ? { sourceLabel: experience.source } : {}),
         details: [experience.category, ...(experience.openingHours ? [`Listed hours: ${experience.openingHours}`] : [])],
       });
     }

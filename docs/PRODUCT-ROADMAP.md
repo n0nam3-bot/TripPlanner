@@ -77,11 +77,14 @@
 - [x] Add a Save trip action to persist the validated search criteria and a selected-item snapshot; allow the original browser to update its saved draft using a separate owner token that is not placed in the URL.
 - [x] Keep saved-trip items in the same chronological order as the live trip schedule, including flight airport-local departure times, check-in/check-out milestones, and activity/restaurant slot or exact times.
 - [x] Move Save trip, Copy share link, and Open share link controls into the frozen trip overview above left-side quick navigation; restore the existing share link from the original browser's owner record.
+- [x] Enrich public share and print views with selected-property/place photos, ratings, review counts, provider/source labels, Google Maps and official/listing links; sanitize all saved URLs and provide print-specific styling.
+- [x] Display a round-trip flight reference or seller quote once in the saved itinerary; do not repeat the provider price on both outbound and return events. Separate-ticket outbound/return amounts remain distinct only when the seller explicitly supplies them.
+- [ ] Add a safe "Make my own copy" action that forks a read-only shared trip into a new independently owned draft, issues new tokens, and restores only selections that can be matched unambiguously to refreshed provider results.
 - [ ] Add traveler edits and feedback capture with explicit edit permissions and conflict-safe updates; public share links remain read-only in the current release.
 - [ ] Optional user accounts only if needed; the first saved-trip version does not require accounts.
 - [ ] Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
 
-**Next Release 5 focus:** invite-only traveler feedback and suggested edits with explicit permissions, owner approval, and conflict-safe saved-trip revisions; public share links remain read-only. Keep saved trip links as private bearer URLs and do not expose owner tokens or supplier booking credentials.
+**Next Release 5 focus:** safe trip duplication/forking from a read-only share link, followed by invite-only traveler feedback and suggested edits with explicit permissions, owner approval, and conflict-safe saved-trip revisions. Never let a public share token mutate the original trip; new copies receive new share/owner tokens, and supplier booking credentials remain excluded.
 
 
 ## Release 6 — supplier depth and monetization
