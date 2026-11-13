@@ -1762,6 +1762,21 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
 .results-trip-overview-item > small { color: #839187; font-size: 7px; font-weight: 800; letter-spacing: .9px; }
 .results-trip-overview-item > strong { color: #253a2e; font-size: 10px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
 .results-trip-overview-item > span { color: #8b978e; font-size: 8px; line-height: 1.35; overflow-wrap: anywhere; }
+.results-trip-overview-save-actions { display: grid; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px solid #edf1ed; }
+.results-overview-save-primary, .results-overview-share-actions > button, .results-overview-share-actions > a {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 29px;
+  padding: 5px 7px; border: 1px solid #dce5dc; border-radius: 7px; background: #fff; color: #405648;
+  font: inherit; font-size: 8px; font-weight: 750; text-decoration: none; cursor: pointer;
+}
+.results-overview-save-primary { min-height: 32px; border-color: #263d31; background: #263d31; color: #fff; font-size: 9px; }
+.results-overview-save-primary:disabled, .results-overview-share-actions > button:disabled { opacity: .45; cursor: not-allowed; }
+.results-overview-share-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+.results-overview-share-actions > button:disabled { color: #8b978e; }
+.results-overview-share-actions svg, .results-overview-save-primary svg { flex: 0 0 auto; }
+.results-overview-save-message { margin: 0; color: #6d7d71; font-size: 8px; line-height: 1.4; overflow-wrap: anywhere; }
+.results-overview-save-message.is-success { color: #4f7058; }
+.results-overview-save-message.is-error { color: #9b5548; }
+
 .results-left-sidebar .results-section-rail {
   position: relative; top: auto; left: auto; flex: 1 1 auto; width: 100%; min-height: 0; max-height: none;
   margin: 0; overflow: auto; padding: 9px; border: 1px solid #dfe7df; border-radius: 12px;
@@ -1825,6 +1840,9 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
   .results-trip-overview-item { flex: 0 0 auto; min-width: 126px; max-width: 210px; padding: 4px 8px; border-right: 1px solid #e9eee8; }
   .results-trip-overview-item:last-child { border-right: 0; }
   .results-trip-overview-item > strong { white-space: normal; }
+  .results-trip-overview-save-actions { flex: 0 0 190px; width: 190px; margin: 7px 0 0; padding: 7px 0 0; border-top: 0; border-left: 1px solid #e9eee8; padding-left: 9px; }
+  .results-overview-save-primary { min-height: 30px; }
+  .results-overview-share-actions > button, .results-overview-share-actions > a { min-height: 27px; }
   .results-left-sidebar .results-section-rail {
     flex: 0 0 auto; width: 100%; max-height: none; overflow: hidden; margin: 0; padding: 7px;
     border-radius: 10px; box-shadow: 0 6px 20px rgba(25,43,33,.08);

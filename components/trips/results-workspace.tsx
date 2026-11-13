@@ -14,7 +14,7 @@ import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssi
 import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-ledger";
 import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
-import type { SavedTripSnapshot, SavedTripItem } from "@/lib/trip-planner/saved-trips";
+import { sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem } from "@/lib/trip-planner/saved-trips";
 
 type Props = {
   search: TripSearchInput;
@@ -131,8 +131,25 @@ function buildSavedTripSnapshot(
     const selection = selections[destination.id] ?? emptySelection();
     const result = states[destination.id]?.result;
     const items: SavedTripItem[] = [];
+    const destinationAirportCode = search.destinationAirportCode || destination.airportCode || "";
+    const fallbackSort = (date: string, time: string) => airportLocalDateTimeToTimestamp(date, time, destinationAirportCode)
+      ?? (() => { const [year, month, day] = date.split("-").map(Number); const [hour, minute] = time.split(":").map(Number); return Date.UTC(year, month - 1, day, hour, minute); })();
+    const defaultSlotTime: Record<ExperienceSlot, string> = {
+      Morning: "09:00", Lunch: "12:00", Afternoon: "15:00", Dinner: "19:00", Evening: "20:30",
+    };
+    const outboundSegments = selection.outbound?.segments ?? [];
+    const returnSegments = selection.returnFlight?.segments ?? [];
+    const outboundDeparture = outboundSegments[0];
+    const outboundArrival = outboundSegments[outboundSegments.length - 1];
+    const returnDeparture = returnSegments[0];
+    const outboundSortAt = selection.outbound
+      ? flightTimeSortTimestamp(outboundDeparture?.departure || selection.outbound.departure, outboundDeparture?.fromAirportCode) ?? fallbackSort(search.departureDate, "00:00")
+      : null;
+    const returnSortAt = selection.returnFlight
+      ? flightTimeSortTimestamp(returnDeparture?.departure || selection.returnFlight.departure, returnDeparture?.fromAirportCode) ?? fallbackSort(search.returnDate, "23:59")
+      : null;
 
-    const addFlight = (flight: LiveFlight, kind: "outbound-flight" | "return-flight", date: string) => {
+    const addFlight = (flight: LiveFlight, kind: "outbound-flight" | "return-flight", date: string, sortTimestamp: number) => {
       const first = flight.segments[0];
       const last = flight.segments[flight.segments.length - 1];
       const details = [
@@ -146,6 +163,7 @@ function buildSavedTripSnapshot(
         title: kind === "outbound-flight" ? "Outbound flight" : "Return flight",
         subtitle: `${flight.airlines.join(" / ")} · ${flight.from} → ${flight.to}`,
         date,
+        sortTimestamp,
         price: flight.price,
         currency: flight.currency || search.currency,
         priceLabel: "Provider-displayed reference price · not a confirmed fare",
@@ -153,14 +171,16 @@ function buildSavedTripSnapshot(
       });
     };
 
-    if (selection.outbound) addFlight(selection.outbound, "outbound-flight", search.departureDate);
-    if (selection.returnFlight) addFlight(selection.returnFlight, "return-flight", search.returnDate);
+    if (selection.outbound && outboundSortAt !== null) addFlight(selection.outbound, "outbound-flight", search.departureDate, outboundSortAt);
+    if (selection.returnFlight && returnSortAt !== null) addFlight(selection.returnFlight, "return-flight", search.returnDate, returnSortAt);
     if (selection.flightSeller) {
       const offer = selection.flightSeller.option;
       items.push({
         kind: "flight-fare",
         title: "Selected seller fare",
         subtitle: offer.seller,
+        date: search.departureDate,
+        sortTimestamp: (outboundSortAt ?? fallbackSort(search.departureDate, "00:00")) + 1,
         price: offer.price,
         currency: offer.currency || search.currency,
         priceLabel: "Provider-displayed seller quote · verify at checkout",
@@ -169,35 +189,52 @@ function buildSavedTripSnapshot(
     }
     if (selection.hotel) {
       const hotel = selection.hotel;
+      const nights = Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000));
+      const inferredArrival = outboundArrival ? flightTimeSortTimestamp(outboundArrival.arrival, outboundArrival.toAirportCode) : null;
+      const inferredReturnDeparture = returnDeparture ? flightTimeSortTimestamp(returnDeparture.departure, returnDeparture.fromAirportCode) : null;
+      const checkInSortAt = selection.checkInTime
+        ? fallbackSort(search.departureDate, selection.checkInTime)
+        : inferredArrival !== null ? inferredArrival + 60_000 : fallbackSort(search.departureDate, "15:00");
+      const checkOutSortAt = selection.checkOutTime
+        ? fallbackSort(search.returnDate, selection.checkOutTime)
+        : inferredReturnDeparture !== null ? inferredReturnDeparture - 60_000 : fallbackSort(search.returnDate, "18:00");
       items.push({
-        kind: "stay",
+        kind: "stay-check-in",
         title: hotel.name,
         subtitle: hotel.address || `${hotel.source} · ${hotel.propertyType}`,
         date: search.departureDate,
+        ...(selection.checkInTime ? { time: formatTime(selection.checkInTime) } : {}),
+        sortTimestamp: checkInSortAt,
         price: hotel.totalPrice ?? hotel.nightlyPrice,
         currency: hotel.currency || search.currency,
         priceLabel: hotel.totalPrice !== null ? "Provider-displayed stay total · verify taxes and fees" : hotel.nightlyPrice !== null ? "Provider-displayed nightly price · not the stay total" : "Provider price basis unavailable",
-        details: [
-          `${search.returnDate} check-out · ${Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000))} nights`,
-          `${hotel.source} · ${hotel.propertyType}`,
-          ...(selection.checkInTime ? [`Check-in note: ${selection.checkInTime}`] : []),
-          ...(selection.checkOutTime ? [`Check-out note: ${selection.checkOutTime}`] : []),
-        ],
+        details: [`Check-in · ${nights} ${nights === 1 ? "night" : "nights"}`, `${search.returnDate} check-out`, `${hotel.source} · ${hotel.propertyType}`],
+      });
+      items.push({
+        kind: "stay-check-out",
+        title: hotel.name,
+        subtitle: hotel.address || `${hotel.source} · ${hotel.propertyType}`,
+        date: search.returnDate,
+        ...(selection.checkOutTime ? { time: formatTime(selection.checkOutTime) } : {}),
+        sortTimestamp: checkOutSortAt,
+        details: ["Check-out · end of the selected stay", `${hotel.source} · ${hotel.propertyType}`],
       });
     }
     for (const [experienceId, plan] of Object.entries(selection.experiences)) {
       const experience = result?.experiences.find((item) => item.id === experienceId);
       if (!experience) continue;
+      const orderTime = plan.time || defaultSlotTime[plan.slot];
       items.push({
         kind: experience.kind,
         title: experience.name,
         subtitle: experience.address || experience.category,
         date: plan.date,
         time: plan.time || plan.slot,
+        sortTimestamp: fallbackSort(plan.date, orderTime),
         details: [experience.category, ...(experience.openingHours ? [`Listed hours: ${experience.openingHours}`] : [])],
       });
     }
-    return { label: formatDestinationLabel(destination.city, destination.country), items };
+    return { label: formatDestinationLabel(destination.city, destination.country), items: sortSavedTripItemsChronologically(items) };
   });
 
   const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
@@ -845,11 +882,18 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
 
 type ResultSectionNavItem = { key: string; id: string; label: string; icon: LucideIcon };
 
-function ResultsTripOverview({ search, totalBudget, people, nights }: {
+function ResultsTripOverview({ search, totalBudget, people, nights, databaseConfigured, savingTrip, hasSavedTrip, shareUrl, saveMessage, onSaveTrip, onCopyShareLink }: {
   search: TripSearchInput;
   totalBudget: number;
   people: number;
   nights: number;
+  databaseConfigured: boolean;
+  savingTrip: boolean;
+  hasSavedTrip: boolean;
+  shareUrl: string;
+  saveMessage: string;
+  onSaveTrip: () => void;
+  onCopyShareLink: () => void;
 }) {
   const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
   const travelerLabel = `${search.adults} adult${search.adults === 1 ? "" : "s"}${search.childrenAges.length ? ` · ${search.childrenAges.length} child${search.childrenAges.length === 1 ? "" : "ren"}` : ""}`;
@@ -872,6 +916,16 @@ function ResultsTripOverview({ search, totalBudget, people, nights }: {
         {item.note && <span>{item.note}</span>}
       </div>)}
     </div>
+    <div className="results-trip-overview-save-actions">
+      <button type="button" className="results-overview-save-primary" onClick={onSaveTrip} disabled={!databaseConfigured || savingTrip} title={!databaseConfigured ? "Neon database must be configured to save trips." : "Save this search and its selected itinerary."}>
+        {savingTrip ? <><RefreshCw size={12} className="spin"/> Saving</> : <><Save size={12}/> {hasSavedTrip ? "Update saved trip" : "Save trip"}</>}
+      </button>
+      <div className="results-overview-share-actions">
+        <button type="button" onClick={onCopyShareLink} disabled={!shareUrl} title={shareUrl ? "Copy the private share link" : "Save this trip first to create a share link."}><Copy size={11}/> Copy share link</button>
+        {shareUrl ? <a href={shareUrl} target="_blank" rel="noreferrer"><ExternalLink size={11}/> Open share link</a> : <button type="button" disabled title="Save this trip first to create a share link."><ExternalLink size={11}/> Open share link</button>}
+      </div>
+    </div>
+    {saveMessage && <p className={`results-overview-save-message ${shareUrl ? "is-success" : "is-error"}`} role="status">{saveMessage}</p>}
   </section>;
 }
 
@@ -1008,6 +1062,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       const parsed = JSON.parse(stored) as { shareToken?: unknown; ownerToken?: unknown };
       if (typeof parsed.shareToken === "string" && typeof parsed.ownerToken === "string") {
         setSavedTripCredentials({ shareToken: parsed.shareToken, ownerToken: parsed.ownerToken });
+        setSavedShareUrl(new URL(`/trip/${parsed.shareToken}`, window.location.origin).toString());
       }
     } catch { /* Saved-link ownership is a convenience; creating a new share link remains available. */ }
   }, []);
@@ -1053,6 +1108,16 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       setSaveTripMessage(error instanceof Error ? error.message : "Tripfinder couldn't save this trip right now.");
     } finally {
       setSavingTrip(false);
+    }
+  }
+
+  async function copySavedTripLink() {
+    if (!savedShareUrl) return;
+    try {
+      await navigator.clipboard.writeText(savedShareUrl);
+      setSaveTripMessage("Share link copied");
+    } catch {
+      setSaveTripMessage("Clipboard access was blocked. Open the share link and copy its address from the browser.");
     }
   }
 
@@ -1297,7 +1362,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
 
   return <div className="planner-results-workspace">
     <aside className="results-left-sidebar" aria-label="Trip overview and section navigation">
-      <ResultsTripOverview search={search} totalBudget={totalBudget} people={people} nights={nights}/>
+      <ResultsTripOverview
+        search={search} totalBudget={totalBudget} people={people} nights={nights}
+        databaseConfigured={databaseConfigured} savingTrip={savingTrip} hasSavedTrip={Boolean(savedTripCredentials)}
+        shareUrl={savedShareUrl} saveMessage={saveTripMessage} onSaveTrip={() => void saveCurrentTrip()} onCopyShareLink={() => void copySavedTripLink()}
+      />
       {navigationSections.length > 0 && <ResultsSectionNavigation sections={navigationSections} activeKey={activeNavSection || navigationSections[0].key} openState={navOpenState} onNavigate={navigateToResultSection} onToggle={toggleResultSection}/>}
     </aside>
 
@@ -1306,16 +1375,6 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     {search.rooms > 1 && search.components.includes("stays") && <p className="accuracy-note">Room count is shown in your request. Confirm the exact room allocation with the property before booking.</p>}
 
     <div className="planner-results-list">
-      <div className="saved-trip-toolbar">
-        <div className="saved-trip-toolbar-copy"><strong>Keep this trip handy</strong><span>Save your search and selected items, then share a private read-only link.</span></div>
-        <div className="saved-trip-toolbar-actions">
-          <button type="button" className="saved-trip-save-button" onClick={() => void saveCurrentTrip()} disabled={!databaseConfigured || savingTrip} title={!databaseConfigured ? "Neon database must be configured to save trips." : "Save this search and its selected itinerary."}>
-            {savingTrip ? <><RefreshCw size={14} className="spin"/> Saving</> : <><Save size={14}/> {savedTripCredentials ? "Update saved trip" : "Save trip"}</>}
-          </button>
-          {savedShareUrl && <a className="saved-trip-share-link" href={savedShareUrl} target="_blank" rel="noreferrer">Open share link <ArrowUpRight size={12}/></a>}
-        </div>
-        {saveTripMessage && <p className={`saved-trip-message ${savedShareUrl ? "is-success" : "is-error"}`} role="status">{saveTripMessage}{savedShareUrl && <><span> · </span><button type="button" onClick={() => void navigator.clipboard?.writeText(savedShareUrl)}><Copy size={12}/> Copy link</button></>}</p>}
-      </div>
       {recommendations.map((recommendation, index) => {
         const destination = recommendation.destination;
         const state = states[destination.id];

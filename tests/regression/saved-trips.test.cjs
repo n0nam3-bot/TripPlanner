@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { normalizeSavedTripSnapshot, serializeTripSearchInput, validateSavedTripDraft } = require("../../.test-build/lib/trip-planner/saved-trips.js");
+const { normalizeSavedTripSnapshot, serializeTripSearchInput, sortSavedTripItemsChronologically, validateSavedTripDraft } = require("../../.test-build/lib/trip-planner/saved-trips.js");
 
 const root = path.resolve(__dirname, "../..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -47,6 +47,31 @@ test("saved trip rejects unsupported item kinds, invalid dates and over-sized se
   assert.equal(normalizeSavedTripSnapshot({ ...snapshot, destinations: [{ label: "x", items: Array.from({ length: 51 }, () => ({ kind: "activity", title: "x", details: [] })) }] }), null);
 });
 
+
+test("saved trip items use the live itinerary's chronological event timestamps", () => {
+  const items = [
+    { kind: "return-flight", title: "Return flight", date: "2026-12-28", sortTimestamp: Date.parse("2026-12-28T07:44:00Z"), details: [] },
+    { kind: "restaurant", title: "Day 2 lunch", date: "2026-12-27", time: "Lunch", sortTimestamp: Date.parse("2026-12-27T15:00:00Z"), details: [] },
+    { kind: "stay-check-out", title: "Property checkout", date: "2026-12-28", sortTimestamp: Date.parse("2026-12-28T07:43:00Z"), details: [] },
+    { kind: "stay-check-in", title: "Property check-in", date: "2026-12-26", sortTimestamp: Date.parse("2026-12-27T04:29:00Z"), details: [] },
+    { kind: "outbound-flight", title: "Outbound flight", date: "2026-12-26", sortTimestamp: Date.parse("2026-12-27T00:38:00Z"), details: [] },
+    { kind: "activity", title: "Morning activity", date: "2026-12-26", time: "Morning", sortTimestamp: Date.parse("2026-12-26T13:00:00Z"), details: [] },
+  ];
+  assert.deepEqual(sortSavedTripItemsChronologically(items).map((item) => item.title), [
+    "Morning activity", "Outbound flight", "Property check-in", "Day 2 lunch", "Property checkout", "Return flight",
+  ]);
+});
+
+test("legacy saved trips without timestamps receive stable date and slot-based ordering", () => {
+  const legacy = [
+    { kind: "return-flight", title: "Return", date: "2026-12-28", details: [] },
+    { kind: "restaurant", title: "Dinner", date: "2026-12-27", time: "Dinner", details: [] },
+    { kind: "activity", title: "Morning", date: "2026-12-27", time: "Morning", details: [] },
+    { kind: "outbound-flight", title: "Outbound", date: "2026-12-26", details: [] },
+  ];
+  assert.deepEqual(sortSavedTripItemsChronologically(legacy).map((item) => item.title), ["Outbound", "Morning", "Dinner", "Return"]);
+});
+
 test("saved trip draft validates search and rejects arbitrary provider data", () => {
   assert.ok(validateSavedTripDraft({ search, snapshot }).draft);
   assert.equal(validateSavedTripDraft({ search: { ...search, adults: 99 }, snapshot }).draft, undefined);
@@ -80,7 +105,21 @@ test("results workspace exposes save/share action and snapshots no booking token
   assert.match(ui, /Update saved trip/);
   assert.match(ui, /buildSavedTripSnapshot/);
   assert.match(ui, /navigator\.clipboard\.writeText\(data\.shareUrl\)/);
+  assert.match(ui, /results-trip-overview-save-actions/);
+  assert.match(ui, /onCopyShareLink/);
+  assert.match(ui, /Open link/);
   assert.doesNotMatch(ui.slice(ui.indexOf("function buildSavedTripSnapshot"), ui.indexOf("function nearestKnownAirport")), /bookingToken|departureToken|propertyToken|postData/);
+});
+
+test("public saved-trip page uses the same chronological sorter and renders stay milestones", () => {
+  const page = read("app/trip/[token]/page.tsx");
+  assert.match(page, /sortSavedTripItemsChronologically\(group\.items\)/);
+  assert.match(page, /stay-check-in/);
+  assert.match(page, /stay-check-out/);
+  const source = read("components/trips/results-workspace.tsx");
+  assert.match(source, /sortSavedTripItemsChronologically\(items\)/);
+  assert.match(source, /sortTimestamp: checkInSortAt/);
+  assert.match(source, /sortTimestamp: checkOutSortAt/);
 });
 
 test("Neon health and schema include anonymous saved-trip tables", () => {

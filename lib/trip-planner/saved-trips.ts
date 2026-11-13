@@ -1,7 +1,7 @@
 import type { TripSearchInput } from "./types";
 import { validateTripSearchInput } from "./validation";
 
-export type SavedTripItemKind = "outbound-flight" | "return-flight" | "flight-fare" | "stay" | "activity" | "restaurant";
+export type SavedTripItemKind = "outbound-flight" | "return-flight" | "flight-fare" | "stay" | "stay-check-in" | "stay-check-out" | "activity" | "restaurant";
 
 export type SavedTripItem = {
   kind: SavedTripItemKind;
@@ -12,6 +12,8 @@ export type SavedTripItem = {
   price?: number | null;
   currency?: string;
   priceLabel?: string;
+  /** Absolute event ordering timestamp, calculated with the same airport/destination timezone rules as the live trip schedule. */
+  sortTimestamp?: number;
   details: string[];
 };
 
@@ -32,7 +34,7 @@ export type SavedTripDraft = {
 };
 
 export const SAVED_TRIP_MAX_BYTES = 120 * 1024;
-const ITEM_KINDS = new Set<SavedTripItemKind>(["outbound-flight", "return-flight", "flight-fare", "stay", "activity", "restaurant"]);
+const ITEM_KINDS = new Set<SavedTripItemKind>(["outbound-flight", "return-flight", "flight-fare", "stay", "stay-check-in", "stay-check-out", "activity", "restaurant"]);
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 
 function cleanText(value: unknown, maxLength: number, fallback = ""): string {
@@ -105,9 +107,14 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
       const subtitle = cleanText(item.subtitle, 280);
       if (!itemTitle) return null;
       const date = cleanText(item.date, 10);
-      const time = cleanText(item.time, 20);
+      const time = cleanText(item.time, 24);
       if (date && !validIsoDate(date)) return null;
-      if (time && !/^(?:\d{1,2}:\d{2}(?:\s?[AP]M)?|Morning|Lunch|Afternoon|Dinner|Evening)$/i.test(time)) return null;
+      if (time && !/^(?:\d{1,2}:\d{2}(?:\s?[AP]M)?(?:\s+[A-Z]{2,5})?|Morning|Lunch|Afternoon|Dinner|Evening)$/i.test(time)) return null;
+      let sortTimestamp: number | undefined;
+      if (item.sortTimestamp !== undefined) {
+        if (typeof item.sortTimestamp !== "number" || !Number.isFinite(item.sortTimestamp) || item.sortTimestamp < 946684800000 || item.sortTimestamp > 4102444800000) return null;
+        sortTimestamp = Math.round(item.sortTimestamp);
+      }
       let price: number | null | undefined;
       if (item.price === null) price = null;
       else if (item.price !== undefined) {
@@ -128,6 +135,7 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
         ...(price !== undefined ? { price } : {}),
         ...(currency ? { currency } : {}),
         ...(cleanText(item.priceLabel, 120) ? { priceLabel: cleanText(item.priceLabel, 120) } : {}),
+        ...(sortTimestamp !== undefined ? { sortTimestamp } : {}),
         details,
       });
       totalItems += 1;
@@ -139,6 +147,52 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
   const snapshot: SavedTripSnapshot = { version: 1, title, destinations };
   if (new TextEncoder().encode(JSON.stringify(snapshot)).length > SAVED_TRIP_MAX_BYTES) return null;
   return snapshot;
+}
+
+const SAVED_SLOT_MINUTES: Record<string, number> = { Morning: 9 * 60, Lunch: 12 * 60, Afternoon: 15 * 60, Dinner: 19 * 60, Evening: 20 * 60 + 30 };
+const SAVED_KIND_ORDER: Record<SavedTripItemKind, number> = {
+  "outbound-flight": 0,
+  "flight-fare": 1,
+  "stay-check-in": 2,
+  stay: 3,
+  activity: 4,
+  restaurant: 5,
+  "stay-check-out": 6,
+  "return-flight": 7,
+};
+
+function savedItemFallbackTimestamp(item: SavedTripItem): number {
+  if (typeof item.sortTimestamp === "number" && Number.isFinite(item.sortTimestamp)) return item.sortTimestamp;
+  if (!item.date || !validIsoDate(item.date)) return Number.MAX_SAFE_INTEGER;
+  let minutes = SAVED_SLOT_MINUTES[item.time || ""];
+  if (minutes === undefined && item.time) {
+    const match = item.time.match(/^(\d{1,2}):(\d{2})(?:\s*([AP]M))?/i);
+    if (match) {
+      let hour = Number(match[1]);
+      const minute = Number(match[2]);
+      if (minute > 59 || hour > 23 || (!match[3] && hour > 23)) return Number.MAX_SAFE_INTEGER;
+      if (match[3]) hour = (hour % 12) + (match[3].toUpperCase() === "PM" ? 12 : 0);
+      minutes = hour * 60 + minute;
+    }
+  }
+  if (minutes === undefined) {
+    if (item.kind === "stay-check-in" || item.kind === "stay") minutes = 15 * 60;
+    else if (item.kind === "stay-check-out") minutes = 18 * 60;
+    else if (item.kind === "restaurant") minutes = 19 * 60;
+    else if (item.kind === "return-flight") minutes = 23 * 60 + 59;
+    else minutes = 0;
+  }
+  const [year, month, day] = item.date.split("-").map(Number);
+  return Date.UTC(year, month - 1, day, Math.floor(minutes / 60), minutes % 60);
+}
+
+/** Stable chronological ordering shared by the public saved-trip page and snapshot creation. */
+export function sortSavedTripItemsChronologically(items: SavedTripItem[]): SavedTripItem[] {
+  return items.map((item, index) => ({ item, index, timestamp: savedItemFallbackTimestamp(item) }))
+    .sort((a, b) => a.timestamp - b.timestamp
+      || (SAVED_KIND_ORDER[a.item.kind] ?? 99) - (SAVED_KIND_ORDER[b.item.kind] ?? 99)
+      || a.index - b.index)
+    .map(({ item }) => item);
 }
 
 export function validateSavedTripDraft(value: unknown): { draft?: SavedTripDraft; errors: string[] } {

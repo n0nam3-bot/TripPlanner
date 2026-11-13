@@ -75,11 +75,13 @@
 ## Release 5 — persistence and trip workspace
 - [x] Add Neon persistence for anonymous saved trip drafts and saved searches. Create short, random share tokens and store only SHA-256 token hashes; share pages are read-only, expire after 180 days, and exclude provider booking tokens and private API data.
 - [x] Add a Save trip action to persist the validated search criteria and a selected-item snapshot; allow the original browser to update its saved draft using a separate owner token that is not placed in the URL.
+- [x] Keep saved-trip items in the same chronological order as the live trip schedule, including flight airport-local departure times, check-in/check-out milestones, and activity/restaurant slot or exact times.
+- [x] Move Save trip, Copy share link, and Open share link controls into the frozen trip overview above left-side quick navigation; restore the existing share link from the original browser's owner record.
 - [ ] Add traveler edits and feedback capture with explicit edit permissions and conflict-safe updates; public share links remain read-only in the current release.
 - [ ] Optional user accounts only if needed; the first saved-trip version does not require accounts.
 - [ ] Extend admin quality dashboard with provider availability history, stale-result detection, outbound-link monitoring and trip-search outcomes.
 
-**Next Release 5 focus:** collaborative traveler edits and feedback capture, followed by admin quality reporting. Keep saved trip links as private bearer URLs and do not expose owner tokens or supplier booking credentials.
+**Next Release 5 focus:** invite-only traveler feedback and suggested edits with explicit permissions, owner approval, and conflict-safe saved-trip revisions; public share links remain read-only. Keep saved trip links as private bearer URLs and do not expose owner tokens or supplier booking credentials.
 
 
 ## Release 6 — supplier depth and monetization

@@ -6,6 +6,7 @@ import { SiteHeader } from "@/components/site-header";
 import { SupportTipLink } from "@/components/support-tip-link";
 import { getSavedTripByShareToken } from "@/lib/db/saved-trips";
 import { formatTripDestinationLabel } from "@/lib/trip-planner/destinations";
+import { sortSavedTripItemsChronologically } from "@/lib/trip-planner/saved-trips";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,8 @@ const kindLabels: Record<string, string> = {
   "return-flight": "Return flight",
   "flight-fare": "Selected flight fare",
   stay: "Place to stay",
+  "stay-check-in": "Accommodation check-in",
+  "stay-check-out": "Accommodation check-out",
   activity: "Activity & attraction",
   restaurant: "Restaurant & dining",
 };
@@ -70,7 +73,7 @@ export default async function SharedTripPage({ params }: { params: Promise<{ tok
         {saved.snapshot.destinations.map((group, index) => <section className="saved-trip-destination" key={`${group.label}-${index}`}>
           <h3>{group.label}</h3>
           {!group.items.length ? <p className="saved-trip-empty">No flights, stays, activities or restaurants have been selected yet. This link preserves the original search criteria.</p> : <div className="saved-trip-items">
-            {group.items.map((item, itemIndex) => <article className="saved-trip-item" key={`${item.kind}-${item.title}-${itemIndex}`}>
+            {sortSavedTripItemsChronologically(group.items).map((item, itemIndex) => <article className="saved-trip-item" key={`${item.kind}-${item.title}-${itemIndex}`}>
               <div className="saved-trip-item-heading"><span>{kindLabels[item.kind] || "Trip item"}</span>{item.date && <time dateTime={item.date}>{dateLabel(item.date)}{item.time ? ` · ${item.time}` : ""}</time>}</div>
               <h4>{item.title}</h4>
               {item.subtitle && <p>{item.subtitle}</p>}
