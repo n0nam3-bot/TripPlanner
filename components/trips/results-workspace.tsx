@@ -567,10 +567,11 @@ function fallbackLocalDayTime(date: string, time: string): number {
   return Date.UTC(year, month - 1, day, hour, minute);
 }
 
-function UnifiedTripSchedule({ search, selection, experiences, nights, currency, destinationAirportCode, onUpdateStayTime, onUpdateExperience }: {
+function UnifiedTripSchedule({ search, selection, experiences, days, nights, currency, destinationAirportCode, onUpdateStayTime, onUpdateExperience }: {
   search: TripSearchInput;
   selection: DestinationSelection;
   experiences: LiveExperience[];
+  days: Array<{ date: string; label: string }>;
   nights: number;
   currency: string;
   destinationAirportCode: string;
@@ -685,7 +686,13 @@ function UnifiedTripSchedule({ search, selection, experiences, nights, currency,
         <div className="itinerary-travel-copy">
           <strong><a className="itinerary-selected-link" href={`#${getTripAssistantResultAnchor(experience.kind, experience.id)}`}>{experience.name} <ArrowUpRight size={11}/></a></strong>
           <p>{exactTime} · {[experience.category, experience.address].filter(Boolean).join(" · ") || "Check current opening hours and booking details."}</p>
-          <div className="itinerary-activity-actions"><a href={experienceBookingUrl(experience)} target="_blank" rel="noreferrer">Open listing <ExternalLink size={10}/></a><label><span>{experience.kind === "restaurant" ? "Reservation time" : "Start time"}</span><input type="time" value={plan.time || ""} onChange={(event) => onUpdateExperience(experience, { ...plan, time: event.target.value || undefined })}/></label></div>
+          <div className="itinerary-activity-actions">
+            <a href={experienceBookingUrl(experience)} target="_blank" rel="noreferrer">Open listing <ExternalLink size={10}/></a>
+            <label className="itinerary-date-select"><span>Scheduled date</span><select value={plan.date} onChange={(event) => onUpdateExperience(experience, { ...plan, date: event.target.value })} aria-label={`Change scheduled date for ${experience.name}`}>
+              {days.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}
+            </select></label>
+            <label><span>{experience.kind === "restaurant" ? "Reservation time" : "Start time"}</span><input type="time" value={plan.time || ""} onChange={(event) => onUpdateExperience(experience, { ...plan, time: event.target.value || undefined })}/></label>
+          </div>
           <small className="itinerary-time-note">Your schedule only · this does not confirm a booking or reservation.</small>
         </div>
         <small>{experience.kind === "restaurant" ? "Selected restaurant" : "Selected activity"}</small>
@@ -1008,13 +1015,14 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
             {isExpanded && <div className="itinerary-panel">
               <div className="itinerary-panel-heading">
                 <div><h4>Your trip schedule</h4></div>
-                <p>Flights, stay milestones, activities, and dining are combined in one chronological schedule.</p>
+                <p>Flights, stay milestones, activities, and dining are combined in one chronological schedule. Change the scheduled date of any selected activity or restaurant to move it to another trip day.</p>
               </div>
 
               <UnifiedTripSchedule
                 search={search}
                 selection={selection}
                 experiences={state?.result?.experiences ?? []}
+                days={itineraryDates}
                 nights={nights}
                 currency={search.currency}
                 destinationAirportCode={airportCode}
