@@ -79,6 +79,7 @@ export default async function SharedTripPage({ params }: { params: Promise<{ tok
               <div className="saved-trip-item-main">
                 <div className="saved-trip-item-heading"><span>{kindLabels[item.kind] || "Trip item"}</span>{item.date && <time dateTime={item.date}>{dateLabel(item.date)}{item.time ? ` · ${item.time}` : ""}</time>}</div>
                 <h4>{item.title}</h4>
+                {item.dateNeedsReview && <p className="saved-trip-date-review">Needs review for the updated trip dates</p>}
                 {item.subtitle && <p>{item.subtitle}</p>}
                 {item.rating !== undefined && <div className="saved-trip-item-rating"><Star size={12} fill="currentColor" aria-hidden="true"/><strong>{item.rating.toFixed(1)}</strong>{item.reviewCount !== undefined && <span>{item.reviewCount.toLocaleString("en-US")} reviews</span>}</div>}
                 {item.sourceLabel && <small className="saved-trip-item-source">Information from {item.sourceLabel}</small>}

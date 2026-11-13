@@ -1762,6 +1762,17 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
 .results-trip-overview-item > small { color: #839187; font-size: 7px; font-weight: 800; letter-spacing: .9px; }
 .results-trip-overview-item > strong { color: #253a2e; font-size: 10px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
 .results-trip-overview-item > span { color: #8b978e; font-size: 8px; line-height: 1.35; overflow-wrap: anywhere; }
+.results-overview-change-dates { display: inline-flex; align-items: center; justify-self: start; gap: 5px; margin-top: 3px; padding: 3px 0; border: 0; background: transparent; color: #496451; font-size: 9px; font-weight: 750; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.results-overview-date-editor { display: grid; gap: 7px; width: 100%; margin-top: 5px; padding: 9px; border: 1px solid #e0e8df; border-radius: 8px; background: #f8faf7; }
+.results-overview-date-editor label { display: grid; gap: 3px; min-width: 0; }
+.results-overview-date-editor label > span { color: #6d7b70; font-size: 8px; font-weight: 750; text-transform: uppercase; letter-spacing: .5px; }
+.results-overview-date-editor input { width: 100%; min-width: 0; min-height: 33px; padding: 5px 6px; border: 1px solid #d9e2d8; border-radius: 6px; background: #fff; color: #26372d; font-size: 11px; }
+.results-overview-date-editor > p { margin: 0; color: #6f7d72; font-size: 8px; line-height: 1.45; }
+.results-overview-date-editor > .results-overview-date-error { color: #9b5548; font-size: 9px; }
+.results-overview-date-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 5px; }
+.results-overview-date-actions button { min-width: 0; min-height: 30px; padding: 5px; border: 1px solid #d9e2d8; border-radius: 6px; background: #fff; color: #405648; font-size: 8px; font-weight: 750; }
+.results-overview-date-actions button:last-child { border-color: #263d31; background: #263d31; color: #fff; }
+.results-overview-date-actions button:disabled { opacity: .5; cursor: not-allowed; }
 .results-trip-overview-save-actions { display: grid; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px solid #edf1ed; }
 .results-overview-save-primary, .results-overview-share-actions > button, .results-overview-share-actions > a {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 29px;
@@ -2064,6 +2075,7 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
 .saved-trip-item-rating { display: flex; align-items: center; gap: 5px; margin: 5px 0 0; color: #9b783d; font-size: 10px; }
 .saved-trip-item-rating strong { color: #4b5e50; font-size: 10px; }
 .saved-trip-item-rating span { color: #849087; font-size: 9px; }
+.saved-trip-date-review { margin: 5px 0; color: #8b5b32; font-size: 12px; font-weight: 700; }
 .saved-trip-item-source { display: block; margin-top: 5px; color: #8a968d; font-size: 8px; }
 .saved-trip-item-links { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 14px; margin-top: 10px; }
 .saved-trip-item-links a { display: inline-flex; align-items: center; gap: 4px; color: #4d6b55; font-size: 9px; font-weight: 700; text-decoration: none; }
@@ -2156,6 +2168,12 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
   .results-trip-overview-item > small { font-size: 9px; }
   .results-trip-overview-item > strong { font-size: 12px; }
   .results-trip-overview-item > span { font-size: 10px; }
+  .results-trip-overview-item.is-editing-dates { flex-basis: 285px; min-width: 285px; max-width: 285px; }
+  .results-overview-date-editor { width: 100%; }
+  .results-overview-date-editor label > span { font-size: 9px; }
+  .results-overview-date-editor input { min-height: 38px; font-size: 13px; }
+  .results-overview-date-editor > p { font-size: 10px; }
+  .results-overview-date-actions button { min-height: 36px; font-size: 10px; }
   .results-overview-save-primary { font-size: 10px; }
   .results-overview-share-actions > button,
   .results-overview-share-actions > a { font-size: 10px; }

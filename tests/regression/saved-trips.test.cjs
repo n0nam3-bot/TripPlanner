@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { buildSavedTripForkDraft, normalizeSavedTripSnapshot, serializeTripSearchInput, sortSavedTripItemsChronologically, validateSavedTripDraft } = require("../../.test-build/lib/trip-planner/saved-trips.js");
+const { buildSavedTripForkDraft, normalizeSavedTripSnapshot, serializeTripSearchInput, shiftSavedTripSnapshotDateRange, sortSavedTripItemsChronologically, validateSavedTripDraft } = require("../../.test-build/lib/trip-planner/saved-trips.js");
 
 const root = path.resolve(__dirname, "../..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -189,6 +189,46 @@ test("safe shared-trip fork preserves selected itinerary items and safe re-match
   assert.ok(validateSavedTripDraft(fork).draft);
 });
 
+test("changing the copied trip date range shifts schedule days and flags date-bound offers for review", () => {
+  const selected = normalizeSavedTripSnapshot({
+    ...snapshot,
+    destinations: [{ label: "Las Terrenas, Dominican Republic", items: [
+      { kind: "outbound-flight", title: "Outbound flight", subtitle: "JetBlue · JFK → STI", date: "2026-12-26", details: [], selectionRef: { type: "flight", direction: "outbound", from: "JFK", to: "STI", departure: "2026-12-26 18:38", arrival: "2026-12-26 23:29", segmentKeys: ["JetBlue|B6123|New York|Santiago|2026-12-26 18:38|2026-12-26 23:29"] } },
+      { kind: "return-flight", title: "Return flight", subtitle: "JetBlue · STI → JFK", date: "2026-12-28", details: [], selectionRef: { type: "flight", direction: "return", from: "STI", to: "JFK", departure: "2026-12-28 10:00", arrival: "2026-12-28 14:00", segmentKeys: ["JetBlue|B6124|Santiago|New York|2026-12-28 10:00|2026-12-28 14:00"] } },
+      { kind: "stay-check-in", title: "Hotel Example", subtitle: "Las Terrenas", date: "2026-12-26", time: "3:00 PM", details: [], selectionRef: { type: "stay", name: "Hotel Example", address: "Las Terrenas" } },
+      { kind: "stay-check-out", title: "Hotel Example", subtitle: "Las Terrenas", date: "2026-12-28", time: "11:00 AM", details: [] },
+      { kind: "activity", title: "Playa Punta Popy", subtitle: "Beach", date: "2026-12-27", time: "Morning", details: [], selectionRef: { type: "experience", kind: "activity", name: "Playa Punta Popy", address: "Las Terrenas", category: "Beach", date: "2026-12-27", slot: "Morning" } },
+    ] }],
+  });
+  assert.ok(selected);
+  const shifted = shiftSavedTripSnapshotDateRange(selected, "2026-12-26", "2026-12-28", "2027-01-10", "2027-01-12");
+  const byKind = Object.fromEntries(shifted.destinations[0].items.map((item) => [item.kind, item]));
+  assert.equal(byKind["outbound-flight"].date, "2027-01-10");
+  assert.equal(byKind["return-flight"].date, "2027-01-12");
+  assert.equal(byKind["outbound-flight"].dateNeedsReview, true);
+  assert.equal(byKind["return-flight"].dateNeedsReview, true);
+  assert.equal(byKind["stay-check-in"].date, "2027-01-10");
+  assert.equal(byKind["stay-check-out"].date, "2027-01-12");
+  assert.equal(byKind.activity.date, "2027-01-11");
+  assert.equal(byKind.activity.selectionRef.date, "2027-01-11");
+  assert.equal(byKind.activity.dateNeedsReview, undefined);
+  assert.ok(validateSavedTripDraft({ search: { ...search, departureDate: "2027-01-10", returnDate: "2027-01-12" }, snapshot: shifted }).draft);
+});
+
+test("activities shifted outside a shortened trip are flagged instead of silently rescheduled", () => {
+  const selected = normalizeSavedTripSnapshot({
+    ...snapshot,
+    destinations: [{ label: "Las Terrenas", items: [{ kind: "activity", title: "Day three activity", date: "2026-12-28", time: "Afternoon", details: [], selectionRef: { type: "experience", kind: "activity", name: "Day three activity", address: "Las Terrenas", category: "Tour", date: "2026-12-28", slot: "Afternoon" } }] }],
+  });
+  assert.ok(selected);
+  const shifted = shiftSavedTripSnapshotDateRange(selected, "2026-12-26", "2026-12-28", "2027-01-10", "2027-01-11");
+  const activity = shifted.destinations[0].items[0];
+  assert.equal(activity.date, "2027-01-12");
+  assert.equal(activity.selectionRef.date, "2027-01-12");
+  assert.equal(activity.dateNeedsReview, true);
+  assert.equal(normalizeSavedTripSnapshot(shifted).destinations[0].items[0].dateNeedsReview, true);
+});
+
 test("saved itinerary re-match references preserve safe flight, hotel and experience identity without booking tokens", () => {
   const selected = {
     ...snapshot,
@@ -280,4 +320,37 @@ test("shared link action controls use a non-overlapping responsive grid", () => 
   assert.match(styles, /\.saved-trip-actions \{ display: grid/);
   assert.match(styles, /grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(styles, /\.saved-trip-actions \.saved-trip-copy-button/);
+});
+
+test("frozen Your Trip overview offers validated editable dates and migrates saved-trip restore state", () => {
+  const ui = read("components/trips/results-workspace.tsx");
+  assert.match(ui, /results-overview-change-dates/);
+  assert.match(ui, /type="date" value=\{nextDepartureDate\}/);
+  assert.match(ui, /type="date" value=\{nextReturnDate\}/);
+  assert.match(ui, /tripfinder:saved-trip-owner:v1:/);
+  assert.match(ui, /tripfinder:saved-trip-fork-restore:v1:/);
+  assert.match(ui, /shiftSavedTripSnapshotDateRange/);
+  assert.match(ui, /window\.location\.assign/);
+});
+
+test("Release 5 roadmap tracks itinerary-copy restoration and editable trip dates", () => {
+  const roadmap = read("docs/PRODUCT-ROADMAP.md");
+  assert.match(roadmap, /\[x\] Add a safe "Make my own copy"[\s\S]*preserves selected flights, stays, activities, restaurants/);
+  assert.match(roadmap, /\[x\] Allow travelers to change departure\/check-in and return\/check-out dates from the frozen "Your Trip" overview/);
+  assert.doesNotMatch(roadmap, /Provider-backed selections are deliberately cleared/);
+});
+
+test("date range editor snapshots the live selections when there is no pending fork-restore payload", () => {
+  const ui = read("components/trips/results-workspace.tsx");
+  assert.match(ui, /currentSnapshot\.destinations\.some\(\(destination\) => destination\.items\.length > 0\)/);
+  assert.match(ui, /currentSnapshot=\{buildSavedTripSnapshot\(search, recommendations, states, selections\)\}/);
+  assert.match(ui, /window\.localStorage\.setItem\(`\$\{restorePrefix\}\$\{nextIdentity\}`/);
+});
+
+test("date-bound flight and out-of-window activity selections are withheld from automatic restoration", () => {
+  const ui = read("components/trips/results-workspace.tsx");
+  const page = read("app/trip/[token]/page.tsx");
+  assert.match(ui, /const reviewItems = items\.filter\(\(item\) => item\.dateNeedsReview\)/);
+  assert.match(ui, /const selectableItems = items\.filter\(\(item\) => !item\.dateNeedsReview\)/);
+  assert.match(page, /item\.dateNeedsReview && <p className="saved-trip-date-review">/);
 });

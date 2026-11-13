@@ -29,6 +29,8 @@ export type SavedTripItem = {
   sortTimestamp?: number;
   /** Safe, non-token identifiers used to reselect matching live results when a traveler forks this itinerary. */
   selectionRef?: SavedTripSelectionReference;
+  /** True when a new trip date range makes this saved item unsafe to auto-select without traveler review. */
+  dateNeedsReview?: boolean;
   details: string[];
 };
 
@@ -66,6 +68,84 @@ export function buildSavedTripForkDraft(source: SavedTripDraft): SavedTripDraft 
         items: destination.items.map((item) => ({ ...item, details: [...item.details] })),
       })),
     },
+  };
+}
+
+function dateDeltaDays(from: string, to: string): number {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+function addDateDays(value: string, days: number): string {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Shift a copied itinerary when the traveler changes the frozen overview's
+ * date range. Activity/restaurants retain their day offset from departure;
+ * hotel milestones follow the new endpoints. Flights and fare quotes tied to
+ * old travel dates are retained for context but require a fresh selection.
+ */
+export function shiftSavedTripSnapshotDateRange(
+  snapshot: SavedTripSnapshot,
+  previousDepartureDate: string,
+  previousReturnDate: string,
+  nextDepartureDate: string,
+  nextReturnDate: string,
+): SavedTripSnapshot {
+  const dates = [previousDepartureDate, previousReturnDate, nextDepartureDate, nextReturnDate];
+  if (!dates.every(validIsoDate) || nextReturnDate <= nextDepartureDate || previousReturnDate <= previousDepartureDate) {
+    throw new Error("Choose a valid date range with the return date after departure.");
+  }
+  const departureShift = dateDeltaDays(previousDepartureDate, nextDepartureDate);
+  const returnShift = dateDeltaDays(previousReturnDate, nextReturnDate);
+  if (!departureShift && !returnShift) return snapshot;
+
+  return {
+    ...snapshot,
+    destinations: snapshot.destinations.map((destination) => ({
+      ...destination,
+      items: destination.items.map((item) => {
+        let dateShift = departureShift;
+        let nextDate = item.date;
+        let dateNeedsReview = false;
+        if (item.kind === "outbound-flight" || item.kind === "stay-check-in") {
+          dateShift = departureShift;
+          nextDate = nextDepartureDate;
+          if (item.kind === "outbound-flight" && (departureShift !== 0 || returnShift !== 0)) dateNeedsReview = true;
+        } else if (item.kind === "return-flight" || item.kind === "stay-check-out") {
+          dateShift = returnShift;
+          nextDate = nextReturnDate;
+          if (item.kind === "return-flight" && (departureShift !== 0 || returnShift !== 0)) dateNeedsReview = true;
+        } else if (item.kind === "flight-fare") {
+          dateShift = departureShift;
+          dateNeedsReview = true;
+        } else if (item.date) {
+          nextDate = addDateDays(item.date, departureShift);
+          dateNeedsReview = item.kind === "activity" || item.kind === "restaurant"
+            ? nextDate < nextDepartureDate || nextDate > nextReturnDate
+            : false;
+        }
+
+        const details = item.details.map((detail) => detail
+          .replaceAll(previousDepartureDate, nextDepartureDate)
+          .replaceAll(previousReturnDate, nextReturnDate));
+        const selectionRef = item.selectionRef?.type === "experience" && nextDate
+          ? { ...item.selectionRef, date: nextDate }
+          : item.selectionRef;
+        return {
+          ...item,
+          ...(nextDate ? { date: nextDate } : {}),
+          ...(typeof item.sortTimestamp === "number" ? { sortTimestamp: item.sortTimestamp + dateShift * 86400000 } : {}),
+          ...(selectionRef ? { selectionRef } : {}),
+          ...(dateNeedsReview ? { dateNeedsReview: true } : { dateNeedsReview: undefined }),
+          details,
+        };
+      }),
+    })),
   };
 }
 
@@ -298,6 +378,7 @@ export function normalizeSavedTripSnapshot(value: unknown): SavedTripSnapshot | 
         ...(sourceLabel ? { sourceLabel } : {}),
         ...(sortTimestamp !== undefined ? { sortTimestamp } : {}),
         ...(selectionRef ? { selectionRef } : {}),
+        ...(item.dateNeedsReview === true ? { dateNeedsReview: true } : {}),
         details,
       });
       totalItems += 1;

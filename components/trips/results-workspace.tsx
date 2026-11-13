@@ -14,7 +14,7 @@ import { getTripAssistantResultAnchor, getTripAssistantStayAnchor, type TripAssi
 import { buildTripCostLedger, parseCostEstimate } from "@/lib/trip-planner/cost-ledger";
 import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
-import { normalizeSavedTripSnapshot, sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem, type SavedTripSelectionReference } from "@/lib/trip-planner/saved-trips";
+import { normalizeSavedTripSnapshot, shiftSavedTripSnapshotDateRange, sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem, type SavedTripSelectionReference } from "@/lib/trip-planner/saved-trips";
 import { isValidProximityStartingPoint, type ProximityStartingPoint } from "@/lib/trip-planner/proximity";
 
 type Props = {
@@ -55,6 +55,7 @@ const money = (amount: number, currency: string) => new Intl.NumberFormat("en-US
 const duration = (minutes: number | null) => minutes === null ? "Duration not listed" : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 const dateLabel = (date: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
 const dateShort = (date: string) => new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
+const localDateInputValue = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const formatTime = (value?: string) => {
   const match = /^(\d{2}):(\d{2})$/.exec(value || "");
   if (!match) return "";
@@ -950,7 +951,7 @@ function WeatherPanel({ location, startDate, endDate, configured }: { location: 
 
 type ResultSectionNavItem = { key: string; id: string; label: string; icon: LucideIcon };
 
-function ResultsTripOverview({ search, totalBudget, people, nights, databaseConfigured, savingTrip, hasSavedTrip, shareUrl, saveMessage, onSaveTrip, onCopyShareLink }: {
+function ResultsTripOverview({ search, totalBudget, people, nights, databaseConfigured, savingTrip, hasSavedTrip, shareUrl, saveMessage, currentSnapshot, onSaveTrip, onCopyShareLink }: {
   search: TripSearchInput;
   totalBudget: number;
   people: number;
@@ -960,9 +961,15 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
   hasSavedTrip: boolean;
   shareUrl: string;
   saveMessage: string;
+  currentSnapshot: SavedTripSnapshot;
   onSaveTrip: () => void;
   onCopyShareLink: () => void;
 }) {
+  const [dateEditorOpen, setDateEditorOpen] = useState(false);
+  const [nextDepartureDate, setNextDepartureDate] = useState(search.departureDate);
+  const [nextReturnDate, setNextReturnDate] = useState(search.returnDate);
+  const [dateChangeError, setDateChangeError] = useState("");
+  const [dateChangePending, setDateChangePending] = useState(false);
   const destinationLabel = formatTripDestinationLabel(search.destination, search.destinationArea);
   const travelerLabel = `${search.adults} adult${search.adults === 1 ? "" : "s"}${search.childrenAges.length ? ` · ${search.childrenAges.length} child${search.childrenAges.length === 1 ? "" : "ren"}` : ""}`;
   const budgetAmount = money(search.budget, search.currency);
@@ -975,13 +982,87 @@ function ResultsTripOverview({ search, totalBudget, people, nights, databaseConf
     { label: "BUDGET", value: budgetAmount, note: budgetBasis },
   ];
 
+  function applyDateRange() {
+    if (dateChangePending) return;
+    setDateChangeError("");
+    const today = localDateInputValue();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDepartureDate) || !/^\d{4}-\d{2}-\d{2}$/.test(nextReturnDate)) {
+      setDateChangeError("Choose both a start date and an end date.");
+      return;
+    }
+    if (nextDepartureDate < today) {
+      setDateChangeError("The new start date must be today or later.");
+      return;
+    }
+    if (nextReturnDate <= nextDepartureDate) {
+      setDateChangeError("The end date must be at least one day after the start date.");
+      return;
+    }
+    if (nextDepartureDate === search.departureDate && nextReturnDate === search.returnDate) {
+      setDateEditorOpen(false);
+      return;
+    }
+
+    setDateChangePending(true);
+    try {
+      const currentIdentity = `${window.location.pathname}${window.location.search}`;
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("depart", nextDepartureDate);
+      nextUrl.searchParams.set("return", nextReturnDate);
+      const nextIdentity = `${nextUrl.pathname}${nextUrl.search}`;
+      const ownerPrefix = "tripfinder:saved-trip-owner:v1:";
+      const restorePrefix = "tripfinder:saved-trip-fork-restore:v1:";
+      const ownerRaw = window.localStorage.getItem(`${ownerPrefix}${currentIdentity}`);
+      const restoreRaw = window.localStorage.getItem(`${restorePrefix}${currentIdentity}`);
+      if (ownerRaw) window.localStorage.setItem(`${ownerPrefix}${nextIdentity}`, ownerRaw);
+      let sourceSnapshot: SavedTripSnapshot | null = null;
+      if (restoreRaw) {
+        const parsed = JSON.parse(restoreRaw) as { snapshot?: unknown };
+        sourceSnapshot = normalizeSavedTripSnapshot(parsed.snapshot);
+        if (!sourceSnapshot) throw new Error("Tripfinder could not safely carry your saved selections to the new dates. Your current trip has not been changed.");
+      } else if (currentSnapshot.destinations.some((destination) => destination.items.length > 0)) {
+        sourceSnapshot = currentSnapshot;
+      }
+      if (sourceSnapshot) {
+        const shiftedSnapshot = shiftSavedTripSnapshotDateRange(
+          sourceSnapshot,
+          search.departureDate,
+          search.returnDate,
+          nextDepartureDate,
+          nextReturnDate,
+        );
+        window.localStorage.setItem(`${restorePrefix}${nextIdentity}`, JSON.stringify({ snapshot: shiftedSnapshot }));
+      }
+      nextUrl.hash = "";
+      window.location.assign(`${nextUrl.pathname}${nextUrl.search}`);
+    } catch (error) {
+      setDateChangePending(false);
+      setDateChangeError(error instanceof Error ? error.message : "Tripfinder could not save your date change in this browser. Enable site storage and try again.");
+    }
+  }
+
   return <section className="results-trip-overview" aria-label="Your selected trip details">
     <div className="results-trip-overview-heading"><span>YOUR TRIP</span><small>Search overview</small></div>
     <div className="results-trip-overview-list">
-      {items.map((item) => <div className="results-trip-overview-item" key={item.label}>
+      {items.map((item) => <div className={`results-trip-overview-item ${item.label === "DATES" ? `is-date-item ${dateEditorOpen ? "is-editing-dates" : ""}` : ""}`} key={item.label}>
         <small>{item.label}</small>
         <strong title={item.value}>{item.value}</strong>
         {item.note && <span>{item.note}</span>}
+        {item.label === "DATES" && <>
+          <button type="button" className="results-overview-change-dates" onClick={() => { setDateEditorOpen((open) => !open); setDateChangeError(""); }} aria-expanded={dateEditorOpen} aria-controls="results-overview-date-editor">
+            <CalendarDays size={12}/> {dateEditorOpen ? "Close date editor" : "Change dates"}
+          </button>
+          {dateEditorOpen && <div className="results-overview-date-editor" id="results-overview-date-editor">
+            <label><span>Start</span><input type="date" value={nextDepartureDate} min={localDateInputValue()} onChange={(event) => setNextDepartureDate(event.target.value)} /></label>
+            <label><span>End</span><input type="date" value={nextReturnDate} min={nextDepartureDate || localDateInputValue()} onChange={(event) => setNextReturnDate(event.target.value)} /></label>
+            <p>Tripfinder will refresh results for these dates. Matching stays and activities can be restored; flights and items outside the new range may need review.{hasSavedTrip ? " After results load, choose Update saved trip to apply the new dates to your share link." : ""}</p>
+            {dateChangeError && <p className="results-overview-date-error" role="alert">{dateChangeError}</p>}
+            <div className="results-overview-date-actions">
+              <button type="button" onClick={() => { setNextDepartureDate(search.departureDate); setNextReturnDate(search.returnDate); setDateEditorOpen(false); setDateChangeError(""); }} disabled={dateChangePending}>Cancel</button>
+              <button type="button" onClick={applyDateRange} disabled={dateChangePending || (nextDepartureDate === search.departureDate && nextReturnDate === search.returnDate)}>{dateChangePending ? "Updating…" : "Update results"}</button>
+            </div>
+          </div>}
+        </>}
       </div>)}
     </div>
     <div className="results-trip-overview-save-actions">
@@ -1451,17 +1532,19 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       const group = matchSnapshotGroup(destinationLabel);
       if (!group) continue;
       const items = group.items;
-      const outboundRef = items.find((item) => item.selectionRef?.type === "flight" && item.selectionRef.direction === "outbound")?.selectionRef;
-      const returnRef = items.find((item) => item.selectionRef?.type === "flight" && item.selectionRef.direction === "return")?.selectionRef;
-      const hotelRef = items.find((item) => item.selectionRef?.type === "stay")?.selectionRef;
-      const checkInTime = restoreClockTime(items.find((item) => item.kind === "stay-check-in")?.time);
-      const checkOutTime = restoreClockTime(items.find((item) => item.kind === "stay-check-out")?.time);
-      const sellerRef = items.find((item) => item.selectionRef?.type === "flight-seller")?.selectionRef;
+      const reviewItems = items.filter((item) => item.dateNeedsReview);
+      const selectableItems = items.filter((item) => !item.dateNeedsReview);
+      const outboundRef = selectableItems.find((item) => item.selectionRef?.type === "flight" && item.selectionRef.direction === "outbound")?.selectionRef;
+      const returnRef = selectableItems.find((item) => item.selectionRef?.type === "flight" && item.selectionRef.direction === "return")?.selectionRef;
+      const hotelRef = selectableItems.find((item) => item.selectionRef?.type === "stay")?.selectionRef;
+      const checkInTime = restoreClockTime(selectableItems.find((item) => item.kind === "stay-check-in")?.time);
+      const checkOutTime = restoreClockTime(selectableItems.find((item) => item.kind === "stay-check-out")?.time);
+      const sellerRef = selectableItems.find((item) => item.selectionRef?.type === "flight-seller")?.selectionRef;
       const outbound = outboundRef?.type === "flight" ? uniqueMatch(result.flights, (flight) => flightMatchesRestoreReference(flight, outboundRef)) : null;
       const hotel = hotelRef?.type === "stay" ? uniqueMatch(result.hotels, (candidate) => normalizeRestoreKey(candidate.name) === normalizeRestoreKey(hotelRef.name) && (!hotelRef.address || normalizeRestoreKey(candidate.address) === normalizeRestoreKey(hotelRef.address))) : null;
       const experiences: Record<string, SelectedExperience> = {};
-      const experienceRefs = items.flatMap((item) => item.selectionRef?.type === "experience" ? [item.selectionRef] : []);
-      const missing: string[] = [];
+      const experienceRefs = selectableItems.flatMap((item) => item.selectionRef?.type === "experience" ? [item.selectionRef] : []);
+      const missing: string[] = reviewItems.map((item) => `${item.title} (review for the updated dates)`);
       for (const reference of experienceRefs) {
         const experience = uniqueMatch(result.experiences, (candidate) => candidate.kind === reference.kind
           && normalizeRestoreKey(candidate.name) === normalizeRestoreKey(reference.name)
@@ -1709,7 +1792,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       <ResultsTripOverview
         search={search} totalBudget={totalBudget} people={people} nights={nights}
         databaseConfigured={databaseConfigured} savingTrip={savingTrip} hasSavedTrip={Boolean(savedTripCredentials)}
-        shareUrl={savedShareUrl} saveMessage={saveTripMessage} onSaveTrip={() => void saveCurrentTrip()} onCopyShareLink={() => void copySavedTripLink()}
+        shareUrl={savedShareUrl} saveMessage={saveTripMessage} currentSnapshot={buildSavedTripSnapshot(search, recommendations, states, selections)}
+        onSaveTrip={() => void saveCurrentTrip()} onCopyShareLink={() => void copySavedTripLink()}
       />
       {navigationSections.length > 0 && <ResultsSectionNavigation sections={navigationSections} activeKey={activeNavSection || navigationSections[0].key} openState={navOpenState} onNavigate={navigateToResultSection} onToggle={toggleResultSection}/>}
     </aside>
