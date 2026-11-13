@@ -1,6 +1,6 @@
-import { LAYOVER_COUNTRY_OPTIONS } from "@/lib/trip-planner/flight-routing";
-import { resolveAirportCode } from "@/lib/trip-planner/airports";
-import { airportCountry } from "@/lib/trip-planner/flight-routing";
+import { LAYOVER_COUNTRY_OPTIONS } from "../trip-planner/flight-routing";
+import { resolveAirportCode } from "../trip-planner/airports";
+import { airportCountry } from "../trip-planner/flight-routing";
 import type {
   CabinClass,
   StayAmenity,
@@ -9,7 +9,7 @@ import type {
   StopPreference,
   TripComponent,
   TripStyle,
-} from "@/lib/trip-planner/types";
+} from "../trip-planner/types";
 
 export type SearchPreferenceDraft = {
   origin?: string;

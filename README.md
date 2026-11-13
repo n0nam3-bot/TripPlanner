@@ -124,6 +124,16 @@ npm run dev
 
 Open http://localhost:3000. Without environment variables the site remains in planning-only mode. To test live search locally, copy `.env.example` to `.env.local` and enter the two server-side credentials.
 
+### Run regression tests
+
+The regression suite uses Node's built-in test runner and the project's existing TypeScript compiler; it does not require travel-provider credentials, call external APIs, or consume search credits. Run it with:
+
+```bash
+npm run test:regression
+```
+
+The suite compiles only the pure planning modules into a temporary `.test-build` directory, runs the fixtures, and removes the temporary output. It covers natural-language parsing, inclusive trip-day calculations, all three round-trip flight request stages, connection-country filtering, airport-local time zones and DST, cost-ledger price/currency handling, traveler/room validation, and Google flight-booking redirect URL validation.
+
 ## Deploy to Vercel
 
 1. Push the project to GitHub.

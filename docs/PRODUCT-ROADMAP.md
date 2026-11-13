@@ -53,7 +53,7 @@
 - Enforce hard budget constraints only when each relevant cost component is sourced and appropriately complete.
 - Add flexible-date searches in a controlled way that respects provider quotas.
 - Improve airport autocomplete and multi-airport coverage.
-- Add test fixtures for round-trip token stages, hotel occupancy, currencies, time zones and supplier links.
+- [x] Add a no-API-credit regression suite for parser examples, inclusive date/duration handling, outbound/return/seller token stages, connection-country filtering, airport-local time zones/DST, round-trip price basis, currency-safe cost totals, room/guest validation, and Google booking redirect URL validation.
 
 ## Release 5 — persistence and trip workspace
 - Neon persistence for anonymous shareable trip drafts and saved searches.

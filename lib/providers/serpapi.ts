@@ -1,10 +1,12 @@
 import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordProviderEvent, reserveProviderSearch, setProviderCache } from "@/lib/db/travel-cache";
 import { resolveAirportCode } from "@/lib/trip-planner/airports";
-import { airportCountry } from "@/lib/trip-planner/flight-routing";
 import { isBookingComConfigured, searchBookingComAccommodations } from "@/lib/providers/booking-com";
 import { filterAndRankStays, googleAmenityFilterIds, inferStaySpaceType } from "@/lib/providers/stay-features";
 import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDestinationRegionScope, getDestinationStateRegion, getUSStateAddressAliases, getUSStateRegion } from "@/lib/trip-planner/location-suggestions";
 import type { TripSearchInput, TripComponent, StaySpaceType, StayType } from "@/lib/trip-planner/types";
+import { makeFlightBookingParams, makeFlightParams, makeReturnFlightParams } from "@/lib/trip-planner/flight-search-params";
+import { applyLayoverPreferences } from "@/lib/trip-planner/flight-search-policy";
+import { safeGoogleBookingUrl } from "@/lib/trip-planner/flight-booking-url";
 
 const ENDPOINT = "https://serpapi.com/search.json";
 type JsonObject = Record<string, unknown>;
@@ -682,76 +684,10 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
   };
 }
 
-function expandOriginAirports(originCode: string): string {
-  const metroAirports: Record<string, string> = {
-    NYC: "JFK,EWR,LGA",
-    CHI: "ORD,MDW",
-    WAS: "DCA,IAD,BWI",
-    LON: "LHR,LGW,STN,LTN",
-    PAR: "CDG,ORY",
-    ROM: "FCO,CIA",
-    TYO: "HND,NRT",
-  };
-  return metroAirports[originCode] ?? originCode;
-}
-
-function makeFlightParams(input: TripSearchInput, originCode: string, destinationAirportCode: string): Record<string, string> {
-  const classMap = { economy: "1", premium_economy: "2", business: "3", first: "4" } as const;
-  // Google Flights exposes maximum-stop filters, not an exact one-stop/two-stop filter.
-  const stopMap = { any: "0", nonstop: "1", one_stop: "2", two_stops: "3" } as const;
-  return {
-    engine: "google_flights",
-    departure_id: expandOriginAirports(originCode),
-    arrival_id: destinationAirportCode,
-    type: "1",
-    outbound_date: input.departureDate,
-    return_date: input.returnDate,
-    adults: String(input.adults),
-    children: String(input.childrenAges.length),
-    travel_class: classMap[input.cabinClass],
-    stops: stopMap[input.stops],
-    currency: input.currency,
-    gl: "us",
-    hl: "en",
-    deep_search: "true",
-  };
-}
-
 function normalizeFlights(data: JsonObject, currency: string): LiveFlight[] {
   const source = [...arr(data.best_flights), ...arr(data.other_flights)];
   // Keep enough alternatives for airline preferences such as Delta vs JetBlue.
   return source.map((item, index) => normalizeFlight(item, index, currency)).filter((item): item is LiveFlight => Boolean(item)).slice(0, 16);
-}
-
-function applyLayoverPreferences(flights: LiveFlight[], input: TripSearchInput): { flights: LiveFlight[]; warnings: string[] } {
-  const normalize = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-  const preferred = new Set(input.preferredLayoverCountries.map(normalize));
-  const avoided = new Set(input.avoidLayoverCountries.map(normalize));
-  if (!preferred.size && !avoided.size) return { flights, warnings: [] };
-
-  let removedForAvoid = 0;
-  let removedAsUnverified = 0;
-  const ranked = flights.map((flight) => {
-    // The final arrival airport is not a layover. A connection is the arrival
-    // airport of every segment except the final segment.
-    const connectionCodes = flight.segments.slice(0, -1).map((segment) => segment.toAirportCode);
-    const connectionCountries = connectionCodes.map((code) => airportCountry(code));
-    const hasUnverifiedConnection = connectionCodes.some((code, index) => !code || !connectionCountries[index]);
-    const hasAvoidedCountry = connectionCountries.some((country) => country && avoided.has(normalize(country)));
-    if (hasAvoidedCountry) removedForAvoid += 1;
-    else if (avoided.size > 0 && hasUnverifiedConnection) removedAsUnverified += 1;
-    const preferredMatches = connectionCountries.filter((country) => country && preferred.has(normalize(country))).length;
-    return { flight, excluded: hasAvoidedCountry || (avoided.size > 0 && hasUnverifiedConnection), preferredMatches };
-  });
-  const kept = ranked.filter((entry) => !entry.excluded).sort((a, b) => b.preferredMatches - a.preferredMatches).map((entry) => entry.flight);
-  const warnings: string[] = ["Connection preferences are checked only against stopover airports included in the returned flight options. They do not assess overflight airspace or replace official travel advisories, and the provider may not return every possible route."];
-  if (removedForAvoid) warnings.push(`${removedForAvoid} flight option${removedForAvoid === 1 ? " was" : "s were"} removed because a connection airport is in a country on the avoid list.`);
-  if (removedAsUnverified) warnings.push(`${removedAsUnverified} flight option${removedAsUnverified === 1 ? " was" : "s were"} withheld because Tripfinder could not verify the country for at least one connection airport. This avoids presenting an unverified route when you selected countries to avoid.`);
-  if (preferred.size && kept.some((flight) => flight.stops > 0) && !kept.some((flight) => flight.segments.slice(0, -1).some((segment) => {
-    const country = airportCountry(segment.toAirportCode);
-    return country ? preferred.has(normalize(country)) : false;
-  }))) warnings.push("No returned connection matched the preferred country. Other eligible routes are still shown; try another date or stop limit to compare more options.");
-  return { flights: kept, warnings };
 }
 
 function makeHotelParams(input: TripSearchInput, destinationName: string, airportCode: string, stayType: StayType): Record<string, string> {
@@ -1178,7 +1114,7 @@ export async function searchReturnFlights(input: TripSearchInput, destinationAir
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
   if (!originCode) throw new Error("ORIGIN_AIRPORT_UNRESOLVED");
   if (!/^[A-Z]{3}$/.test(destinationAirportCode)) throw new Error("DESTINATION_AIRPORT_UNRESOLVED");
-  const params = { ...makeFlightParams(input, originCode, destinationAirportCode), departure_token: departureToken };
+  const params = makeReturnFlightParams(input, originCode, destinationAirportCode, departureToken);
   const result = await querySerpApi(params, clientUsageKey);
   const normalizedFlights = normalizeFlights(result.data, input.currency);
   const layoverFilter = applyLayoverPreferences(normalizedFlights, input);
@@ -1213,15 +1149,6 @@ export type FlightBookingOption = {
   fareTerms: string[];
 };
 
-function safeGoogleBookingUrl(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-    return url.protocol === "https:" && (host === "www.google.com" || host === "google.com") && url.pathname === "/travel/clk/f" ? url.toString() : undefined;
-  } catch { return undefined; }
-}
-
 function makeGoogleFlightsFallbackUrl(input: TripSearchInput, originCode: string, destinationAirportCode: string, seller = ""): string {
   const query = [
     `round trip flights from ${originCode} to ${destinationAirportCode}`,
@@ -1251,22 +1178,7 @@ export async function getFlightBookingOptions(
   // Retain the original round-trip search context and replace the token with
   // the selected booking token. SerpApi currently validates outbound_date even
   // for some booking-token requests, so keep both original dates in the query.
-  const original = makeFlightParams(input, originCode, destinationAirportCode);
-  const params = {
-    engine: "google_flights",
-    type: original.type,
-    departure_id: original.departure_id,
-    arrival_id: original.arrival_id,
-    outbound_date: original.outbound_date,
-    return_date: original.return_date,
-    adults: original.adults,
-    children: original.children,
-    travel_class: original.travel_class,
-    currency: original.currency,
-    gl: original.gl,
-    hl: original.hl,
-    booking_token: bookingToken,
-  };
+  const params = makeFlightBookingParams(input, originCode, destinationAirportCode, bookingToken);
   const response = await querySerpApi(params, clientUsageKey);
   return arr(response.data.booking_options).map((item) => {
     const option = obj(item);
