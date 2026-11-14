@@ -1,3 +1,4 @@
+import { isRestaurantCategory, isUsefulActivityCategory, localPlaceDedupeKey } from "./place-quality";
 export type GeoapifyKind = "activity" | "restaurant";
 export type GeoCoordinates = { latitude: number; longitude: number };
 export type GeoapifyPlace = {
@@ -39,97 +40,6 @@ export type GeoapifyStaticMapRequest = {
 };
 
 export type GeoapifyCreditCaps = { dailyCap: number; clientDailyCap: number };
-export type GeoapifyReservationFailure = "cap-reached" | "gate-inconsistent";
-export type GeoapifyCreditUsageSnapshot = {
-  sharedUsed: number;
-  sharedCap: number;
-  clientUsed: number;
-  clientCap: number;
-};
-export type GeoapifyMapFailureInfo = {
-  warning: string;
-  blocked: boolean;
-  httpStatus?: number;
-  retryDelayMs: number | null;
-};
-
-/** Produce an accurate map failure message without conflating Tripfinder's own gate with Geoapify's account quota. */
-export function describeGeoapifyMapFailure(code: string, usage?: GeoapifyCreditUsageSnapshot | null): GeoapifyMapFailureInfo {
-  const statusMatch = code.match(/^GEOAPIFY_STATIC_MAP_HTTP_(\d{3})$/);
-  const httpStatus = statusMatch ? Number(statusMatch[1]) : undefined;
-  if (code === "GEOAPIFY_DAILY_CAP_REACHED") {
-    if (usage && usage.sharedUsed < usage.sharedCap) {
-      return {
-        warning: `Tripfinder's shared credit gate denied the request, but its UTC-day counter shows ${usage.sharedUsed.toLocaleString()} of ${usage.sharedCap.toLocaleString()} app credits used. This is an app-side counter or deployment mismatch, not evidence that the Geoapify account quota is exhausted. No map-image request was sent.`,
-        blocked: true, retryDelayMs: 2 * 60 * 1000,
-      };
-    }
-    if (usage) return {
-      warning: `Tripfinder's shared Geoapify safety allowance is exhausted (${usage.sharedUsed.toLocaleString()} of ${usage.sharedCap.toLocaleString()} app credits used). The map request was blocked before contacting Geoapify.`,
-      blocked: true, retryDelayMs: null,
-    };
-    return {
-      warning: "Tripfinder's shared credit gate denied this map request, but the current usage counter could not be verified. This does not confirm that the Geoapify account quota is exhausted.",
-      blocked: true, retryDelayMs: 5 * 60 * 1000,
-    };
-  }
-  if (code === "GEOAPIFY_CLIENT_DAILY_CAP_REACHED") {
-    if (usage && usage.clientUsed < usage.clientCap) return {
-      warning: `Tripfinder's per-visitor credit gate denied the map request, but this visitor's UTC-day counter shows ${usage.clientUsed.toLocaleString()} of ${usage.clientCap.toLocaleString()} app credits used. This is an app-side counter or deployment mismatch.`,
-      blocked: true, retryDelayMs: 2 * 60 * 1000,
-    };
-    if (usage) return {
-      warning: `This visitor has reached Tripfinder's daily Geoapify allowance (${usage.clientUsed.toLocaleString()} of ${usage.clientCap.toLocaleString()} credits). It resets at 00:00 UTC.`,
-      blocked: true, retryDelayMs: null,
-    };
-    return {
-      warning: "Tripfinder's per-visitor credit gate denied this map request, but the visitor usage counter could not be verified.",
-      blocked: true, retryDelayMs: 5 * 60 * 1000,
-    };
-  }
-  if (code === "GEOAPIFY_DAILY_GATE_INCONSISTENT") return {
-    warning: usage
-      ? `Tripfinder could not complete its shared database credit reservation even though its UTC-day counter shows ${usage.sharedUsed.toLocaleString()} of ${usage.sharedCap.toLocaleString()} app credits used. This is a database reservation inconsistency, not an exhausted allowance; no map-image request was sent.`
-      : "Tripfinder could not complete its shared database credit reservation. The current counter could not be verified, so no map-image request was sent.",
-    blocked: true, retryDelayMs: 30 * 1000,
-  };
-  if (code === "GEOAPIFY_CLIENT_GATE_INCONSISTENT") return {
-    warning: usage
-      ? `Tripfinder could not complete this visitor's database credit reservation even though the visitor counter shows ${usage.clientUsed.toLocaleString()} of ${usage.clientCap.toLocaleString()} app credits used. This is a database reservation inconsistency, not an exhausted allowance; no map-image request was sent.`
-      : "Tripfinder could not complete this visitor's database credit reservation. The current counter could not be verified, so no map-image request was sent.",
-    blocked: true, retryDelayMs: 30 * 1000,
-  };
-  if (code === "GEOAPIFY_REQUEST_RATE_LIMITED") return {
-    warning: "Tripfinder's shared Geoapify request pacing delayed this map request. Retry shortly; no provider quota was consumed by this blocked map attempt.",
-    blocked: true, retryDelayMs: 60 * 1000,
-  };
-  if (httpStatus === 429) return {
-    warning: usage
-      ? `Geoapify Static Maps returned HTTP 429. Tripfinder itself has reserved ${usage.sharedUsed.toLocaleString()} of ${usage.sharedCap.toLocaleString()} daily app credits; Geoapify may also count usage from other apps sharing this API key or apply a separate provider rate limit.`
-      : "Geoapify Static Maps returned HTTP 429. The provider rejected this request; its account quota or request-rate limit may have been reached, including usage outside Tripfinder.",
-    blocked: false, httpStatus, retryDelayMs: 15 * 60 * 1000,
-  };
-  if (httpStatus === 401 || httpStatus === 403) return {
-    warning: `Geoapify Static Maps rejected the request with HTTP ${httpStatus}. Check that the Vercel server-side API key is valid and allowed to use Static Maps.`,
-    blocked: false, httpStatus, retryDelayMs: 30 * 60 * 1000,
-  };
-  if (httpStatus === 400) return {
-    warning: "Geoapify Static Maps rejected the map parameters with HTTP 400. The route details are still available; the map request needs provider-side validation.",
-    blocked: false, httpStatus, retryDelayMs: 30 * 60 * 1000,
-  };
-  if (code === "GEOAPIFY_STATIC_MAP_NOT_IMAGE") return {
-    warning: "Geoapify returned a response that was not a JPEG or PNG image. The route calculation succeeded, but the map image response was invalid.",
-    blocked: false, retryDelayMs: 5 * 60 * 1000,
-  };
-  if (code === "GEOAPIFY_STATIC_MAP_INVALID_SIZE") return {
-    warning: "Geoapify returned an empty or unexpectedly large map image. The route calculation succeeded, but the image was rejected for safety.",
-    blocked: false, retryDelayMs: 5 * 60 * 1000,
-  };
-  return {
-    warning: `The map preview failed (${code.replace(/_/g, " ").toLowerCase()}). The route distance and directions may still be available.`,
-    blocked: false, retryDelayMs: 5 * 60 * 1000,
-  };
-}
 
 function boundedCap(value: unknown, fallback: number, maximum: number): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
@@ -142,22 +52,6 @@ export function resolveGeoapifyCreditCaps(input: { dailyCap?: unknown; clientDai
     dailyCap: boundedCap(input.dailyCap, 2400, 2800),
     clientDailyCap: boundedCap(input.clientDailyCap, 80, 300),
   };
-}
-
-/**
- * Classify a failed conditional credit reservation. A failed database update is
- * a true cap denial only when the observed usage plus this request would exceed
- * the configured cap. Otherwise it is an internal gate/database inconsistency.
- */
-export function classifyGeoapifyReservationFailure(
-  used: number,
-  cap: number,
-  requested: number,
-): GeoapifyReservationFailure {
-  const safeUsed = Number.isFinite(used) ? Math.max(0, used) : 0;
-  const safeCap = Number.isFinite(cap) ? Math.max(0, cap) : 0;
-  const safeRequested = Number.isFinite(requested) ? Math.max(1, requested) : 1;
-  return safeUsed + safeRequested > safeCap ? "cap-reached" : "gate-inconsistent";
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -228,7 +122,9 @@ export function normalizeGeoapifyPlaces(payload: unknown, kind: GeoapifyKind): G
     const sourceRaw = record(sourceData.raw);
     const placeId = text(properties.place_id) || text(properties.datasource && record(properties.datasource).raw && record(record(properties.datasource).raw).osm_id) || `${kind}-${index}-${latitude.toFixed(5)}-${longitude.toFixed(5)}`;
     const mapUrl = `https://www.openstreetmap.org/?mlat=${encodeURIComponent(String(latitude))}&mlon=${encodeURIComponent(String(longitude))}#map=17/${latitude}/${longitude}`;
-    const category = categories.slice(0, 3).map((value) => value.replace(/\./g, " · ")).join(" / ") || (kind === "restaurant" ? "Restaurant or cafe" : "Attraction or activity");
+    const category = categories.slice(0, 3).map((value) => value.replace(/\./g, " · ")).join(" / ");
+    if (kind === "restaurant" && !isRestaurantCategory(category)) return null;
+    if (kind === "activity" && !isUsefulActivityCategory(category)) return null;
     const website = safeHttps(properties.website) ?? safeHttps(sourceRaw.website);
     const openingHours = text(properties.opening_hours);
     return {
@@ -244,7 +140,12 @@ export function normalizeGeoapifyPlaces(payload: unknown, kind: GeoapifyKind): G
       source: "Geoapify / OpenStreetMap" as const,
     };
   }).filter((item): item is GeoapifyPlace => Boolean(item));
-  return [...new Map(normalized.map((item) => [`${item.placeId}:${item.latitude.toFixed(5)}:${item.longitude.toFixed(5)}`, item])).values()].slice(0, 40);
+  const unique = new Map<string, GeoapifyPlace>();
+  for (const item of normalized) {
+    const key = localPlaceDedupeKey({ name: item.title, address: item.address, latitude: item.latitude, longitude: item.longitude });
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  return [...unique.values()].slice(0, 40);
 }
 
 export function buildGeoapifyRouteUrl(input: {

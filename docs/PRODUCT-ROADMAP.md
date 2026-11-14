@@ -6,9 +6,11 @@
 
 Tripfinder development is split into three tracks so that partner approvals do not block product improvements:
 
-- **Track A — Product readiness (active):** search accuracy, location relevance, editable trip planning, itinerary utility, traveler feedback and production confidence. These items can proceed with the current providers and infrastructure.
-- **Track B — Supplier readiness (partner-gated):** sandbox/production credentials, supplier inventory and pricing verification, commercial display rights, and additional direct inventory. Work may resume when the relevant provider grants access.
-- **Track C — Monetization (approval-gated):** affiliate applications, program-specific disclosures and partner-attributed conversion reporting. Existing outbound-click and redirect-health telemetry is already implemented; approval is only needed for network-specific attribution and commissions.
+**Track A — Product readiness (active):** search accuracy, location relevance, editable trip planning, itinerary utility, traveler feedback and production confidence. These items can proceed with the current providers and infrastructure.
+
+**Track B — Supplier readiness (partner-gated):** sandbox/production credentials, supplier inventory and pricing verification, commercial display rights, and additional direct inventory. Work may resume when the relevant provider grants access.
+
+**Track C — Monetization (approval-gated):** affiliate applications, program-specific disclosures and partner-attributed conversion reporting. Existing outbound-click and redirect-health telemetry is already implemented; approval is only needed for network-specific attribution and commissions.
 
 **Execution rule:** do not hold up Track A for affiliate, airline/NDC, package or accommodation-partner approval. Do not simulate supplier inventory, checkout totals, booking confirmation, affiliate approval or commission attribution.
 
@@ -135,16 +137,19 @@ This is an independent track, not a prerequisite for the product-readiness relea
 
 - [ ] Add end-to-end natural-language search regression scenarios that verify destination/country, origin and destination airports, dates, trip duration, traveler count, total/per-person budget, accommodation type, entire-place/private-room requirements, nonstop/stop limits, and requested trip components survive parsing, confirmation and initial search.
 - [ ] Normalize destination geography before provider calls. Prevent airport codes, street names, regions or similarly named places from silently replacing the traveler's intended city, island or country. Ask for a correction when a material location ambiguity cannot be resolved safely.
-- [ ] Improve local place-result relevance: normalize provider categories, remove duplicate businesses/POIs, and exclude irrelevant map features (for example streets or buildings) from restaurant/activity lists. Keep source attribution and do not invent ratings, hours or business details.
-- [ ] Enforce explicit proximity requests against the correct origin: selected accommodation by default, or the traveler's custom starting point when supplied. Keep the two origins independent from flight airports.
-- [ ] Use the requested travel mode and measurement: driving/walking time when requested, route distance when appropriate, and clearly labeled straight-line distance only as a geographic estimate. Do not claim a result is within a time limit until a route has been obtained.
-- [ ] Apply requested proximity limits as filters or clearly separate out-of-range alternatives. If no candidates meet the limit, say so rather than presenting distant places as matches.
-- [ ] Improve result ranking for beach/landmark/neighborhood proximity using available coordinates, nearby-place fields and route evidence. Reuse loaded result data first; calculate routes only for relevant candidates and only when requested/needed.
-- [ ] Improve assistant answers to rank already-loaded stays, activities and restaurants using their actual measurable distances/routes. Do not fall back to generic “cannot determine” answers when the loaded snapshot contains sufficient evidence. Do not invent measurements or trigger an unrelated provider search.
-- [ ] Add regression cases for nearest property to a named beach/landmark, restaurants within a specified driving-time limit, selected-stay origin, custom-origin override, duplicate place results, category errors, and no qualifying nearby results.
-- [ ] Verify cache behavior and provider-credit budgets for these improvements. Ordinary sorting/filtering and assistant answers against loaded results must not cause unnecessary new provider calls.
+- [x] Improve local place-result relevance across Google Maps/SerpApi and Geoapify: normalize food and attraction categories, reject mixed map records containing irrelevant infrastructure/address features, and deduplicate repeated businesses/POIs across provider IDs using normalized names and coordinates. Preserve provider/source attribution and do not invent ratings or hours.
+- [x] Rank loaded activities and restaurants nearest-first by straight-line proximity when the traveler has a resolved custom starting point or selected stay. A custom starting point takes precedence; the selected stay is the default; flight airports remain independent.
+- [ ] Enforce explicit proximity requests as hard filters or clearly separated in-range/out-of-range groups. Until a matching route is available, do not label a result as satisfying a requested driving/walking time limit.
+- [ ] Apply the requested travel mode and measurement consistently: driving/walking time when requested, route distance when appropriate, and clearly labeled straight-line distance only as a geographic estimate. Do not claim a result is within a time limit until a comparable route has been obtained.
+- [ ] Improve ranking and filtering for neighborhood proximity and explicit distance/time limits. Reuse loaded result data first; calculate road routes only for relevant candidates and only when requested/needed.
+- [x] Improve assistant answers to rank already-loaded stays against a named beach or landmark using matching loaded place coordinates, and to compare provider-listed nearby-place route durations only within comparable travel modes. The assistant distinguishes straight-line estimates from road/walking routes and does not trigger an unrelated provider search.
+- [x] Add regression coverage for category errors, duplicate results, origin precedence, nearest properties to named beaches/landmarks, unknown landmarks, and no false travel-time claims from straight-line coordinates.
+- [ ] Add end-to-end route-limit regression cases for restaurants within a specified driving-time limit, out-of-range alternatives, and no qualifying nearby results.
+- [x] Verify that ordinary result sorting and local assistant proximity answers operate on loaded data without new provider calls or additional route-credit consumption.
 
-**Acceptance criteria:** a mixed natural-language prompt produces the same confirmed destination, date range, traveler count, trip components and constraints in the final search; nearby results identify the correct origin and only label a result as within a requested travel-time limit when route evidence supports it.
+**Implementation slice completed in source:** provider category cleanup and local deduplication; nearest-first result ordering from the resolved custom origin or selected stay; named-landmark-to-stay comparison in the local assistant; and regression coverage for those behaviors. These changes use loaded coordinates and provider-supplied nearby routes only. They do not yet enforce a requested minute limit by routing every candidate, and they have not yet been deployment-verified.
+
+**Acceptance criteria:** a mixed natural-language prompt produces the same confirmed destination, date range, traveler count, trip components and constraints in the final search; nearby results identify the correct origin and only label a result as within a requested travel-time limit when comparable route evidence supports it.
 
 
 ## Release 8 — post-search editing and cost clarity (active product track)

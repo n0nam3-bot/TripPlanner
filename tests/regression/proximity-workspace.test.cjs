@@ -47,3 +47,18 @@ test("other hotel and Airbnb options stop appearing as competing proximity origi
   assert.match(source, /Using your selected stay by default:/);
   assert.match(source, /Your selected hotel or Airbnb is the default origin for activities and restaurants/);
 });
+
+
+test("local activities and restaurants rank by the resolved custom origin or selected stay", () => {
+  assert.match(source, /import \{ sortByStraightLineProximity \} from "@\/lib\/trip-planner\/place-quality"/);
+  assert.match(source, /const proximityOrigin = startingPoints\[destination\.id\][\s\S]{0,360}selection\.hotel\?\.latitude/);
+  assert.match(source, /sortByStraightLineProximity\(resultExperiences\.filter\(\(item\) => item\.kind === "activity"\), proximityOrigin\)/);
+  assert.match(source, /sortByStraightLineProximity\(resultExperiences\.filter\(\(item\) => item\.kind === "restaurant"\), proximityOrigin\)/);
+  assert.match(source, /Restaurants are sorted nearest-first by straight-line distance/);
+});
+
+test("assistant receives up to 30 loaded activities and 30 loaded restaurants without additional searches", () => {
+  assert.match(source, /assistantExperiences\.filter\(\(experience\) => experience\.kind === "activity"\)\.slice\(0, 30\)/);
+  assert.match(source, /assistantExperiences\.filter\(\(experience\) => experience\.kind === "restaurant"\)\.slice\(0, 30\)/);
+  assert.match(source, /const assistantExperienceRows = \[/);
+});

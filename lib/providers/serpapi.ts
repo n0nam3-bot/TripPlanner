@@ -8,6 +8,7 @@ import { makeFlightBookingParams, makeFlightParams, makeReturnFlightParams } fro
 import { makeFlexibleFlightCalendarParams, normalizeFlexibleFlightDateOptions, type FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
 import { applyLayoverPreferences } from "@/lib/trip-planner/flight-search-policy";
 import { safeGoogleBookingUrl } from "@/lib/trip-planner/flight-booking-url";
+import { isRestaurantCategory, isUsefulActivityCategory, localPlaceDedupeKey } from "@/lib/trip-planner/place-quality";
 import { getGeoapifyDrivingRoute, searchGeoapifyPlaces } from "@/lib/providers/geoapify";
 
 const ENDPOINT = "https://serpapi.com/search.json";
@@ -777,6 +778,11 @@ function normalizeExperiences(data: JsonObject, destinationName: string, kind: "
     if (!name) return null;
     const address = str(place.address);
     const placeId = str(place.place_id);
+    const category = str(place.type, arr(place.types).map((v) => String(v)).slice(0, 2).join(" · ") || "Place to visit");
+    // Google Maps search can mix nearby buildings and generic map features
+    // into restaurant queries. Keep only explicit food-business categories.
+    if (kind === "restaurant" && !isRestaurantCategory(category)) return null;
+    if (kind === "activity" && !isUsefulActivityCategory(category)) return null;
     const mapsUrl = placeId
       ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}&query_place_id=${encodeURIComponent(placeId)}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name} ${address || destinationName}`)}`;
@@ -784,7 +790,7 @@ function normalizeExperiences(data: JsonObject, destinationName: string, kind: "
       id: `${kind}-${placeId || str(place.data_id, `${name}-${index}`).replace(/[^a-z0-9-]/gi, "-")}`,
       kind,
       name,
-      category: str(place.type, arr(place.types).map((v) => String(v)).slice(0, 2).join(" · ") || "Place to visit"),
+      category,
       address,
       rating: num(place.rating),
       reviews: num(place.reviews),
@@ -799,7 +805,12 @@ function normalizeExperiences(data: JsonObject, destinationName: string, kind: "
       mapsUrl: safeHttpUrl(obj(place.links).directions) ?? mapsUrl,
     } as LiveExperience;
   }).filter((item): item is LiveExperience => Boolean(item));
-  return [...new Map(normalized.map((item) => [item.id, item])).values()].slice(0, 50);
+  const unique = new Map<string, LiveExperience>();
+  for (const item of normalized) {
+    const key = localPlaceDedupeKey({ name: item.name, address: item.address, latitude: item.latitude, longitude: item.longitude });
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  return [...unique.values()].slice(0, 50);
 }
 
 function filterDestinationExperiences(
@@ -910,14 +921,12 @@ async function searchPlacesWithFallback(
       const deduped = [...new Map(combined.map((entry) => {
         const item = obj(entry);
         const coords = obj(item.gps_coordinates);
-        const titleKey = str(item.title, str(item.name, "place")).toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-        const addressKey = str(item.address).toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const title = str(item.title, str(item.name, "place"));
         const lat = num(coords.latitude);
         const lon = num(coords.longitude);
-        const coordinateKey = lat !== null && lon !== null ? `${lat.toFixed(4)},${lon.toFixed(4)}` : "";
         // Stable cross-provider key keeps Google rows (which occur first) when
         // Geoapify returns the same venue with a different provider place ID.
-        const key = coordinateKey ? `${titleKey}|${coordinateKey}` : `${titleKey}|${addressKey}`;
+        const key = localPlaceDedupeKey({ name: title, address: str(item.address), latitude: lat, longitude: lon });
         return [key, item];
       })).values()];
       if (!deduped.length && mapsError) throw mapsError;

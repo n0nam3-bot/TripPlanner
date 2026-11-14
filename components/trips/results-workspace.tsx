@@ -16,6 +16,7 @@ import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
 import { normalizeSavedTripSnapshot, shiftSavedTripSnapshotDateRange, sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem, type SavedTripSelectionReference } from "@/lib/trip-planner/saved-trips";
 import { isValidProximityStartingPoint, type ProximityStartingPoint } from "@/lib/trip-planner/proximity";
+import { sortByStraightLineProximity } from "@/lib/trip-planner/place-quality";
 
 type Props = {
   search: TripSearchInput;
@@ -2021,8 +2022,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     ? [...(assistantSelection.hotel ? [assistantSelection.hotel] : []), ...assistantResult.hotels.filter((hotel) => hotel.id !== assistantSelection.hotel?.id)].slice(0, 14)
     : [];
   const assistantExperienceRows = [
-    ...assistantExperiences.filter((experience) => experience.kind === "activity").slice(0, 20),
-    ...assistantExperiences.filter((experience) => experience.kind === "restaurant").slice(0, 20),
+    ...assistantExperiences.filter((experience) => experience.kind === "activity").slice(0, 30),
+    ...assistantExperiences.filter((experience) => experience.kind === "restaurant").slice(0, 30),
   ];
   const assistantContext: TripAssistantContext | null = assistantRecommendation && assistantResult ? {
     destination: formatDestinationLabel(assistantRecommendation.destination.city, assistantRecommendation.destination.country),
@@ -2113,8 +2114,17 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         const selection = selections[destination.id] ?? emptySelection();
         const resultExperiences = state?.result?.experiences ?? [];
         const itineraryDates = recommendation.itinerary.map((day, dayIndex) => ({ date: day.date, label: `Day ${dayIndex + 1} · ${dateShort(day.date)}` }));
-        const activityExperiences = resultExperiences.filter((item) => item.kind === "activity");
-        const restaurantExperiences = resultExperiences.filter((item) => item.kind === "restaurant");
+        // A resolved custom starting point overrides the selected stay; otherwise
+        // the selected hotel/Airbnb is the default origin for local result ranking.
+        const proximityOrigin = startingPoints[destination.id]
+          ? { latitude: startingPoints[destination.id].latitude, longitude: startingPoints[destination.id].longitude }
+          : selection.hotel?.latitude !== null && selection.hotel?.latitude !== undefined
+            && selection.hotel?.longitude !== null && selection.hotel?.longitude !== undefined
+            ? { latitude: selection.hotel.latitude, longitude: selection.hotel.longitude }
+            : null;
+        const proximityOriginLabel = startingPoints[destination.id]?.label || selection.hotel?.name || "your starting point";
+        const activityExperiences = sortByStraightLineProximity(resultExperiences.filter((item) => item.kind === "activity"), proximityOrigin);
+        const restaurantExperiences = sortByStraightLineProximity(resultExperiences.filter((item) => item.kind === "restaurant"), proximityOrigin);
         const availableAirlines: string[] = Array.from(new Set<string>((state?.result?.flights ?? []).reduce<string[]>((names, flight) => names.concat(flight.airlines), []))).sort((a, b) => a.localeCompare(b));
         const selectedAirline = flightAirlineFilters[destination.id] ?? "all";
         const visibleFlights = selectedAirline === "all" ? (state?.result?.flights ?? []) : (state?.result?.flights ?? []).filter((flight) => flight.airlines.includes(selectedAirline));
@@ -2182,7 +2192,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                   {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
                 </details>
                 <details id={`trip-section-${destination.id}-restaurants`} data-section-key="restaurants" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
-                  {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">To verify a requested drive-time limit, set Your starting point above or select a property, then use the driving-route control on each restaurant. Tripfinder checks routes only when requested; straight-line distance is not driving time.</p>}
+                  {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">{proximityOrigin ? `Restaurants are sorted nearest-first by straight-line distance from ${proximityOriginLabel}. Use each restaurant's driving-route control to verify the requested time limit; straight-line distance is not driving time.` : "Set Your starting point above or select a property to sort restaurants by proximity. Use each restaurant's driving-route control to verify the requested time limit; straight-line distance is not driving time."}</p>}
                   {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
                 </details>
               </>}

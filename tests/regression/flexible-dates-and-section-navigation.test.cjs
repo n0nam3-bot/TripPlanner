@@ -108,6 +108,8 @@ test("product roadmap uses visible checkmarks for completed work and unchecked b
   assert.match(roadmap, /## Release 5[\s\S]*?- \[x\] Add Neon persistence for anonymous saved trip drafts and saved searches/);
   assert.match(roadmap, /## Release 5[\s\S]*?- \[x\] Add invite-only traveler feedback links/);
   assert.match(roadmap, /## Release 5[\s\S]*?- \[x\] Let owners prepare a suggested activity\/dining change/);
+  assert.match(roadmap, /## Release 7[\s\S]*?- \[x\] Improve local place-result relevance/);
+  assert.match(roadmap, /## Release 7[\s\S]*?- \[ \] Enforce explicit proximity requests as hard filters/);
   assert.match(roadmap, /## Release 6[\s\S]*?- \[x\] Initial Booking\.com/);
 });
 
