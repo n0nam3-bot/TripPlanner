@@ -1,6 +1,18 @@
 # Tripfinder product roadmap
 
-**Status key:** [x] implemented in the current source; [ ] still open, awaiting credentials, or pending a separate production/operator verification.
+**Status key:** [x] implemented in the current source; [ ] still open, awaiting credentials, or pending a separate production/operator verification. A completed code change is not automatically production-verified.
+
+## Roadmap execution strategy
+
+Tripfinder development is split into three tracks so that partner approvals do not block product improvements:
+
+- **Track A — Product readiness (active):** search accuracy, location relevance, editable trip planning, itinerary utility, traveler feedback and production confidence. These items can proceed with the current providers and infrastructure.
+- **Track B — Supplier readiness (partner-gated):** sandbox/production credentials, supplier inventory and pricing verification, commercial display rights, and additional direct inventory. Work may resume when the relevant provider grants access.
+- **Track C — Monetization (approval-gated):** affiliate applications, program-specific disclosures and partner-attributed conversion reporting. Existing outbound-click and redirect-health telemetry is already implemented; approval is only needed for network-specific attribution and commissions.
+
+**Execution rule:** do not hold up Track A for affiliate, airline/NDC, package or accommodation-partner approval. Do not simulate supplier inventory, checkout totals, booking confirmation, affiliate approval or commission attribution.
+
+**Recommended next development sequence:** Release 7 (search/location reliability), Release 8 (post-search editing and cost clarity), Release 9 (itinerary utility), then Release 10 (quality signals and production verification). Release 6 supplier/monetization work proceeds independently when access is available.
 
 
 ## Release 0 — polished interface (complete)
@@ -95,17 +107,87 @@
 - [x] Collapse traveler-feedback controls into a compact disclosure row and keep invitation links truncated with a separate copy action so the fixed results quick-navigation rail remains visible.
 - [x] Add privacy-preserving outbound-link click/redirect-health monitoring and end-to-end trip-search funnel tracking. Only an ephemeral tab journey UUID (stored as a SHA-256 hash), provider/category enums, numeric result counts and the internal Google Flights redirect outcome are recorded; never store full provider URLs, booking tokens, search text, destination names, prices or personal data. External provider page loads and completed bookings remain unverified.
 
-**Release 5 collaboration and persistence focus completed:** feedback-only invite links are separate from public read-only share links; the owner can preview and confirm supported activity/dining schedule changes, while stale revisions are rejected and suggestions never apply automatically. Saved-trip creation now uses a persistent anonymous browser identity with a secondary IP abuse guard and atomic quota reservation. Temporary copies, searches, and updates to existing trips remain outside the new-save allowance. Next optional work: evaluate whether accounts are necessary; continue with the remaining Release 6 supplier and monetization validation steps. The admin dashboard now separates provider API health from the privacy-preserving trip funnel and outbound click/Google Flights redirect outcomes.
+**Release 5 collaboration and persistence focus completed:** feedback-only invite links are separate from public read-only share links; the owner can preview and confirm supported activity/dining schedule changes, while stale revisions are rejected and suggestions never apply automatically. Saved-trip creation now uses a persistent anonymous browser identity with a secondary IP abuse guard and atomic quota reservation. Temporary copies, searches, and updates to existing trips remain outside the new-save allowance. Optional account support remains deferred until cross-device synchronization or demonstrated user demand justifies it. The admin dashboard now separates provider API health from the privacy-preserving trip funnel and outbound click/Google Flights redirect outcomes. These completed capabilities should be reused rather than reimplemented in later releases.
 
 
-## Release 6 — supplier depth and monetization
+## Release 6 — supplier access and monetization (parallel, partner-gated)
+
+This is an independent track, not a prerequisite for the product-readiness releases below. Keep it open without blocking ordinary Tripfinder development.
+
 - [x] Initial Booking.com Demand API v3.3 accommodation adapter implemented as an optional, server-side supplier. Activation requires approved Managed Affiliate Partner access and Partner Centre credentials.
 - [x] Booking.com adapter supports destination resolution, date/guest/room-specific accommodation search, property details/photos, redirect links, Neon caching, stale fallback and `/admin` request telemetry. Google Hotels remains a parallel fallback; Airbnb remains an external search link until authorized inventory access is available.
-- [ ] Next: configure approved sandbox credentials and `BOOKING_COM_API_BASE=https://demandapi-sandbox.booking.com/3.3`, validate accommodation types, price/redirect data and cache telemetry, then switch to production credentials and the production base URL. Confirm public display, caching and commercial data rights for each source.
+- [ ] Configure approved Booking.com sandbox credentials and `BOOKING_COM_API_BASE=https://demandapi-sandbox.booking.com/3.3`; validate accommodation types, price/redirect data and cache telemetry, then switch to production credentials and the production base URL. Confirm public display, caching and commercial data rights for each source.
 - [ ] Obtain approved live supplier access for broader airline and official package inventory.
-- [ ] Confirm public display, caching and commercial data rights for each source.
+- [ ] Confirm public display, caching, refresh, attribution and commercial data rights for every enabled supplier/source before production use.
 - [x] Add user-triggered supplier quote revalidation with freshness labels and short cache windows; this does not independently confirm inventory, checkout totals or booking holds.
-- [ ] Add a direct airline/NDC source (evaluate Duffel) alongside Google Flights, without removing broad Google Flights discovery.
-- [ ] Add affiliate network integrations after approval.
-- [ ] Add compliant disclosures and click/conversion reporting.
-- [ ] Add provider fallback and outbound-link health monitoring.
+- [ ] Evaluate and, only after access and commercial terms are confirmed, integrate a direct airline/NDC source (for example, Duffel) alongside Google Flights; retain broad Google Flights discovery.
+- [ ] Apply for affiliate network programs and advertiser approvals when eligible; record each network's actual approval state rather than treating application or account creation as approval.
+- [ ] Publish program-specific affiliate disclosures before enabling monetized links, consistent with each program's requirements and applicable law. Clearly distinguish organic results from sponsored placements.
+- [ ] Add partner-attributed conversion reporting only where the approved network supplies permitted reporting/postback data. Do not infer bookings or commissions from outbound clicks.
+- [x] Maintain provider-specific fallback behavior, admin provider outcome/fallback telemetry, and privacy-preserving outbound-click / internal redirect-health monitoring. External provider page loads and completed bookings remain unverified.
+
+**Partner-gate rule:** an adapter in source code is not an activated supplier. Keep disabled integrations disabled until credentials, technical approval, display rights, caching rules and commercial terms are confirmed. Do not make an application, redirect, outbound click or quote refresh look like a completed booking.
+
+
+## Release 7 — search reliability and local relevance (active product track)
+
+**Goal:** make the results match the traveler's actual request, especially when a prompt combines multiple constraints and asks for nearby places. This release can proceed with current providers and cached data.
+
+- [ ] Add end-to-end natural-language search regression scenarios that verify destination/country, origin and destination airports, dates, trip duration, traveler count, total/per-person budget, accommodation type, entire-place/private-room requirements, nonstop/stop limits, and requested trip components survive parsing, confirmation and initial search.
+- [ ] Normalize destination geography before provider calls. Prevent airport codes, street names, regions or similarly named places from silently replacing the traveler's intended city, island or country. Ask for a correction when a material location ambiguity cannot be resolved safely.
+- [ ] Improve local place-result relevance: normalize provider categories, remove duplicate businesses/POIs, and exclude irrelevant map features (for example streets or buildings) from restaurant/activity lists. Keep source attribution and do not invent ratings, hours or business details.
+- [ ] Enforce explicit proximity requests against the correct origin: selected accommodation by default, or the traveler's custom starting point when supplied. Keep the two origins independent from flight airports.
+- [ ] Use the requested travel mode and measurement: driving/walking time when requested, route distance when appropriate, and clearly labeled straight-line distance only as a geographic estimate. Do not claim a result is within a time limit until a route has been obtained.
+- [ ] Apply requested proximity limits as filters or clearly separate out-of-range alternatives. If no candidates meet the limit, say so rather than presenting distant places as matches.
+- [ ] Improve result ranking for beach/landmark/neighborhood proximity using available coordinates, nearby-place fields and route evidence. Reuse loaded result data first; calculate routes only for relevant candidates and only when requested/needed.
+- [ ] Improve assistant answers to rank already-loaded stays, activities and restaurants using their actual measurable distances/routes. Do not fall back to generic “cannot determine” answers when the loaded snapshot contains sufficient evidence. Do not invent measurements or trigger an unrelated provider search.
+- [ ] Add regression cases for nearest property to a named beach/landmark, restaurants within a specified driving-time limit, selected-stay origin, custom-origin override, duplicate place results, category errors, and no qualifying nearby results.
+- [ ] Verify cache behavior and provider-credit budgets for these improvements. Ordinary sorting/filtering and assistant answers against loaded results must not cause unnecessary new provider calls.
+
+**Acceptance criteria:** a mixed natural-language prompt produces the same confirmed destination, date range, traveler count, trip components and constraints in the final search; nearby results identify the correct origin and only label a result as within a requested travel-time limit when route evidence supports it.
+
+
+## Release 8 — post-search editing and cost clarity (active product track)
+
+**Goal:** let travelers refine a trip after results load without restarting unnecessarily or losing valid selections.
+
+- [ ] Add an editable post-search total-trip budget in the frozen trip overview. Clearly label whether the amount is for the whole trip or per traveler; preserve the selected currency and display the conversion/source basis when currency conversion is introduced.
+- [ ] Recalculate budget readiness, remaining budget and over-budget status immediately when the budget changes, without silently changing selected flights, stays or places.
+- [ ] Keep unknown, indicative, per-night, partial and user-entered amounts separate. Do not sum incompatible currencies or mix per-person and total-trip amounts.
+- [ ] Improve the cost ledger to show selected flight seller quote basis, full-stay accommodation total, known taxes/fees when supplied, and traveler-entered estimates for transport, activities, dining and other expenses. Clearly identify missing or unconfirmed costs.
+- [ ] Allow travelers to edit supported search criteria after the initial search (at minimum budget and traveler count). Explain which result categories need refreshing before applying changes.
+- [ ] When refreshed results are required, preserve selections that still match exactly; flag selections that become invalid, stale or ambiguous. Never silently substitute a different flight, property, room type or activity.
+- [ ] Keep a clear distinction between a planning estimate, provider-displayed quote, revalidated offer and confirmed booking. A refreshed offer is not a hold or checkout guarantee.
+- [ ] Add regression coverage for budget edits, budget currency/price-basis handling, traveler-count changes, selection preservation, invalidation warnings and no silent substitution.
+
+**Hard-budget enforcement remains conditional:** only enforce a hard ceiling when every required cost component is current, comparable, in the same currency and sufficiently complete (including relevant taxes/fees and passenger/room basis). Until then, keep the limit advisory and show exactly what is excluded or unknown. This completes the existing open Release 4 budget item only when those data requirements are genuinely met.
+
+
+## Release 9 — itinerary utility and trip management (active product track)
+
+**Goal:** keep Tripfinder useful before, during and after travel, including for trips booked directly with external providers.
+
+- [ ] Allow travelers to add manual itinerary entries for transportation, lodging, activities, dining and other trip events when no provider result exists or a booking was made elsewhere. Manual entries must not trigger provider API calls.
+- [ ] Support clear item states such as planned, booked, completed and canceled. These are traveler-maintained notes, not supplier-confirmed booking statuses.
+- [ ] Track estimated versus actual trip spending and show the difference from the original budget without overwriting the original estimate.
+- [ ] Add a downloadable calendar export (ICS) for selected flights, accommodation milestones and scheduled activities/dining. Preserve local time zones where known; label unknown or date-only times rather than inventing times.
+- [ ] Improve the printable itinerary as a practical travel document, with day-by-day schedule, addresses, selected links, important notes and estimated/actual cost summaries. Reuse the existing print/share view rather than creating duplicate itinerary storage.
+- [ ] Add an optional travel-preparation checklist (for example documents, transport arrangements and items the traveler chooses to track). Keep entries user-controlled and avoid collecting passport numbers, payment details or other unnecessary sensitive data.
+- [ ] Ensure manual entries and actual-cost notes have clearly defined privacy behavior for owner-only, shared and exported views. Do not expose private notes in public shared links by default.
+- [ ] Add regression tests for manual entries, time-zone-safe calendar exports, status transitions, actual-versus-estimated totals and share/print privacy boundaries.
+
+
+## Release 10 — traveler feedback, quality signals and production confidence
+
+**Goal:** measure result quality and verify the deployed experience rather than treating code completion as proof of production readiness.
+
+- [ ] Add optional structured result feedback (for example wrong location, incorrect category, outdated price, unmet property requirement, unavailable result, or incorrect distance/time). Do not require free-form search text or personal information.
+- [ ] Aggregate result-quality signals by provider, category and issue type in `/admin`. Use minimum aggregation thresholds where needed; do not expose individual traveler feedback or private trip contents in operational dashboards.
+- [ ] Connect funnel metrics to useful quality questions: search completion, no-result rates, selection rates, refresh outcomes, stale-cache use and outbound clicks by provider/category. Keep the distinction between internal redirect handling, external page load and actual booking explicit.
+- [ ] Add a repeatable production release checklist covering full Vercel build/typecheck, regression suite, Neon persistence and atomic quota behavior, provider credentials and live responses, caching/stale fallback, provider-credit guardrails, mobile/desktop layouts, saved/shared-trip permissions, and privacy checks.
+- [ ] Verify every enabled provider's source labels, timestamps, error/fallback states and user-facing limitations in production.
+- [ ] Confirm that secrets remain server-side, private starting points and owner credentials are not exposed in public links, telemetry excludes search text and sensitive trip data, and admin routes remain protected.
+- [ ] Record the exact deployment/version and validation evidence for each production release; distinguish automated tests, staging verification and live-provider verification.
+- [ ] Reassess optional user accounts only if travelers need cross-device trip synchronization, account recovery or other features that cannot be safely delivered through the current anonymous saved-trip model.
+
+**Completion rule:** a feature is “implemented” when its code and automated checks are complete; it is “production-verified” only after the corresponding deployed, database and provider checks have actually passed.
