@@ -217,6 +217,8 @@ export async function getGeoapifyDrivingRoute(input: {
   destinationLabel?: string;
   clientUsageKey: string;
   forceMapRefresh?: boolean;
+  /** Skip static-map rendering when a caller only needs route metrics for a proximity filter. */
+  includeMapPreview?: boolean;
 }): Promise<GeoapifyDrivingRouteResponse | null> {
   const key = apiKey();
   const cacheKey = providerCacheKey({
@@ -240,7 +242,7 @@ export async function getGeoapifyDrivingRoute(input: {
       // geometry, without spending credits on another routing request. Newer
       // failures observe their retry window to protect the Geoapify allowance.
       const retryWindowElapsed = !retryTime || !Number.isFinite(retryTime) || Date.now() >= retryTime;
-      if (!mapImageDataUrl && route.geometry.length >= 2 && (input.forceMapRefresh || legacyMapFailure || retryWindowElapsed)) {
+      if (input.includeMapPreview !== false && !mapImageDataUrl && route.geometry.length >= 2 && (input.forceMapRefresh || legacyMapFailure || retryWindowElapsed)) {
         const map = await attemptGeoapifyMapPreview({
           route, origin: input.origin, destination: input.destination,
           clientUsageKey: input.clientUsageKey, apiKey: key,
@@ -290,12 +292,12 @@ export async function getGeoapifyDrivingRoute(input: {
     const record = asRecord(payload);
     const first = Array.isArray(record.results) ? asRecord(record.results[0]) : {};
     let mapResult: MapAttempt = {};
-    if (route.polyline6 || route.geometry.length >= 2) {
+    if (input.includeMapPreview !== false && (route.polyline6 || route.geometry.length >= 2)) {
       mapResult = await attemptGeoapifyMapPreview({
         route, origin: input.origin, destination: input.destination,
         clientUsageKey: input.clientUsageKey, apiKey: key,
       });
-    } else {
+    } else if (input.includeMapPreview !== false) {
       mapResult = { mapWarning: "The routing response did not include drawable road geometry, so a map preview could not be generated." };
     }
     await setProviderCache(cacheKey, {

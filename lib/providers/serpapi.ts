@@ -1183,7 +1183,7 @@ export async function getHotelBookingOptions(
   };
 }
 
-export type DrivingRouteResult = { distance: string; duration: string; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string; mapImageDataUrl?: string; directions?: string[]; mapWarning?: string };
+export type DrivingRouteResult = { distance: string; duration: string; durationSeconds?: number; durationInTraffic?: string; startAddress?: string; endAddress?: string; source: string; checkedAt: string; mapImageDataUrl?: string; directions?: string[]; mapWarning?: string };
 export type RouteCoordinates = { latitude: number; longitude: number };
 
 export async function getDrivingRoute(
@@ -1191,7 +1191,7 @@ export async function getDrivingRoute(
   destination: string,
   clientUsageKey = "shared",
   coordinates?: { origin?: RouteCoordinates; destination?: RouteCoordinates },
-  options: { forceMapRefresh?: boolean } = {},
+  options: { forceMapRefresh?: boolean; includeMapPreview?: boolean } = {},
 ): Promise<DrivingRouteResult | null> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_NOT_CONFIGURED");
   const cleanOrigin = origin.trim().slice(0, 300);
@@ -1205,11 +1205,13 @@ export async function getDrivingRoute(
       destinationLabel: cleanDestination,
       clientUsageKey,
       forceMapRefresh: options.forceMapRefresh === true,
+      includeMapPreview: options.includeMapPreview !== false,
     });
     if (!route) return null;
     return {
       distance: route.distance,
       duration: route.duration,
+      durationSeconds: route.durationSeconds,
       startAddress: route.startAddress,
       endAddress: route.endAddress,
       source: route.source,

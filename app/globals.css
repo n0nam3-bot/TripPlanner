@@ -2798,3 +2798,66 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
 @media (min-width: 1280px) and (min-height: 861px) {
   .results-left-sidebar { top: 90px; }
 }
+
+/* Explicit proximity verification groups (Release 7 follow-up). */
+.proximity-filter-panel {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line, #d7dce3);
+  border-radius: 14px;
+  background: var(--surface, rgba(255,255,255,.72));
+}
+.proximity-filter-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.proximity-filter-heading strong { display: block; }
+.proximity-filter-heading p,
+.proximity-filter-message,
+.proximity-filter-panel > p {
+  margin: 4px 0 0;
+  color: var(--muted, #687386);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.proximity-filter-heading button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line, #cfd6df);
+  border-radius: 10px;
+  background: var(--surface-raised, #fff);
+  color: var(--ink, #172033);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.proximity-filter-heading button:disabled { opacity: .55; cursor: wait; }
+.proximity-filter-groups { display: grid; gap: 12px; }
+.proximity-filter-groups > section { display: grid; gap: 8px; }
+.proximity-filter-groups h6 { margin: 0; font-size: 12px; font-weight: 800; }
+.proximity-verified-result { display: grid; gap: 5px; }
+.proximity-verdict {
+  display: inline-flex;
+  align-self: start;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: var(--surface-muted, #f0f2f5);
+  color: var(--muted, #586174);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.proximity-verdict-within { background: rgba(22, 138, 83, .10); color: #17734a; }
+.proximity-verdict-outside { background: rgba(185, 91, 36, .10); color: #9a4b22; }
+.proximity-verdict-unverified { background: rgba(105, 112, 128, .10); color: var(--muted, #586174); }
+@media (max-width: 600px) {
+  .proximity-filter-heading { flex-direction: column; }
+  .proximity-filter-heading button { width: 100%; }
+}

@@ -21,6 +21,7 @@ const sourceFiles = [
   "lib/trip-planner/anonymous-visitor.ts",
   "lib/trip-planner/trip-feedback.ts",
   "lib/trip-planner/proximity.ts",
+  "lib/trip-planner/proximity-filter.ts",
   "lib/trip-planner/place-quality.ts",
   "lib/trip-planner/geoapify-format.ts",
   "lib/ai/trip-assistant.ts",

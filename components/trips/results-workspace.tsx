@@ -17,6 +17,7 @@ import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-fligh
 import { normalizeSavedTripSnapshot, shiftSavedTripSnapshotDateRange, sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem, type SavedTripSelectionReference } from "@/lib/trip-planner/saved-trips";
 import { isValidProximityStartingPoint, type ProximityStartingPoint } from "@/lib/trip-planner/proximity";
 import { sortByStraightLineProximity } from "@/lib/trip-planner/place-quality";
+import { milesForProximityLimit, parseProximityRequirement, parseRouteDurationMinutes, type ProximityRequirement } from "@/lib/trip-planner/proximity-filter";
 
 type Props = {
   search: TripSearchInput;
@@ -520,6 +521,184 @@ function ProximityStartingPointPanel({ destinationId, point, defaultOriginLabel,
     {error && <p className="proximity-origin-error" role="alert">{error}</p>}
     <small>{point ? "Your custom starting point overrides the selected stay for activities and restaurants. " : defaultOriginLabel ? "Your selected hotel or Airbnb is the default origin for activities and restaurants. Enter a different point above to override it. " : "Set a starting point to compare nearby activities and restaurants. "}Distances are straight-line estimates; driving routes are calculated only when requested. A custom starting point is saved in this browser and is not included in the public trip share link.</small>
   </section>;
+}
+
+type ProximityRouteVerdict = {
+  status: "within" | "outside" | "unverified";
+  duration?: string;
+  minutes?: number;
+  distance?: string;
+  source?: string;
+  reason?: string;
+};
+
+function ProximityCheckedExperienceResults({
+  destinationId, kind, experiences, requirement, origin, originLabel, originAddress,
+  hotels, selectedHotel, startingPoint, airportCode, search, days, selectedItems, onSelectionChange,
+}: {
+  destinationId: string;
+  kind: "activity" | "restaurant";
+  experiences: LiveExperience[];
+  requirement: ProximityRequirement;
+  origin: { latitude: number; longitude: number } | null;
+  originLabel: string;
+  originAddress: string;
+  hotels: LiveHotel[];
+  selectedHotel?: LiveHotel | null;
+  startingPoint?: ProximityStartingPoint;
+  airportCode: string;
+  search: TripSearchInput;
+  days: Array<{ date: string; label: string }>;
+  selectedItems: Record<string, SelectedExperience>;
+  onSelectionChange: (experience: LiveExperience, selection: SelectedExperience | null) => void;
+}) {
+  const [routeVerdicts, setRouteVerdicts] = useState<Record<string, ProximityRouteVerdict>>({});
+  const [checking, setChecking] = useState(false);
+  const [hasChecked, setHasChecked] = useState(false);
+  const [checkMessage, setCheckMessage] = useState("");
+  const [checkedCount, setCheckedCount] = useState(0);
+
+  useEffect(() => {
+    setRouteVerdicts({});
+    setChecking(false);
+    setHasChecked(false);
+    setCheckMessage("");
+    setCheckedCount(0);
+  }, [destinationId, requirement.raw, origin?.latitude, origin?.longitude]);
+
+  const distanceMiles = requirement.kind === "distance" ? milesForProximityLimit(requirement.amount, requirement.unit) : null;
+  const distanceVerdicts: Record<string, ProximityRouteVerdict> = {};
+  if (requirement.kind === "distance" && origin) {
+    for (const item of experiences) {
+      if (item.latitude === null || item.longitude === null) {
+        distanceVerdicts[item.id] = { status: "unverified", reason: "Provider did not supply coordinates." };
+      } else {
+        const miles = haversineMiles(origin.latitude, origin.longitude, item.latitude, item.longitude);
+        const distanceText = requirement.unit === "km"
+          ? `${(miles * 1.609344).toFixed(1)} km straight-line`
+          : `${miles.toFixed(1)} mi straight-line`;
+        distanceVerdicts[item.id] = miles <= (distanceMiles ?? 0)
+          ? { status: "within", distance: distanceText }
+          : { status: "outside", distance: distanceText };
+      }
+    }
+  }
+  const verdicts = requirement.kind === "distance" ? distanceVerdicts : routeVerdicts;
+  const within = experiences.filter((item) => verdicts[item.id]?.status === "within");
+  const outside = experiences.filter((item) => verdicts[item.id]?.status === "outside");
+  const unverified = experiences.filter((item) => !verdicts[item.id] || verdicts[item.id]?.status === "unverified");
+  const limitLabel = requirement.kind === "distance"
+    ? `${requirement.amount} ${requirement.unit}`
+    : `${requirement.amount}-minute ${requirement.mode === "walk" ? "walk" : "drive"}`;
+
+  async function checkDrivingRoutes() {
+    if (!origin || checking) return;
+    if (requirement.kind !== "time" || requirement.mode !== "drive") {
+      setCheckMessage(requirement.kind === "time" && requirement.mode === "walk"
+        ? "Walking-route verification is not yet supported. No result will be labeled as meeting this walking-time limit."
+        : "This distance requirement is calculated from loaded coordinates and does not need a route lookup.");
+      setHasChecked(true);
+      return;
+    }
+    const coordinateBacked = experiences.filter((item) => item.latitude !== null && item.longitude !== null);
+    const candidates = coordinateBacked.slice(0, 8);
+    const noCoordinateCount = experiences.length - coordinateBacked.length;
+    const beyondCheckLimitCount = Math.max(0, coordinateBacked.length - candidates.length);
+    setChecking(true);
+    setHasChecked(true);
+    setRouteVerdicts(Object.fromEntries(experiences.map((item) => [item.id, {
+      status: "unverified" as const,
+      reason: item.latitude === null || item.longitude === null ? "Provider did not supply coordinates." : "Waiting for route verification.",
+    }])));
+    setCheckMessage(candidates.length
+      ? `Checking up to ${candidates.length} nearest loaded ${kind === "restaurant" ? "restaurants" : "activities"}. Route checks are cached and do not request map images.`
+      : "No results have coordinates that can be routed from this starting point.");
+    setCheckedCount(0);
+    let completed = 0;
+    let stopped = false;
+    for (const item of candidates) {
+      if (stopped) break;
+      try {
+        const response = await fetch("/api/travel/directions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            origin: originAddress || `${origin.latitude},${origin.longitude}`,
+            destination: item.address || `${item.latitude},${item.longitude}`,
+            originCoordinates: origin,
+            destinationCoordinates: { latitude: item.latitude, longitude: item.longitude },
+            proximityCheck: true,
+            includeMapPreview: false,
+          }),
+        });
+        const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          const reason = typeof data.error === "string" ? data.error : "Route provider could not verify this place.";
+          setRouteVerdicts((current) => ({ ...current, [item.id]: { status: "unverified", reason } }));
+          if (response.status === 429 || response.status === 503) {
+            stopped = true;
+            setCheckMessage(`${reason} Remaining candidates were left unverified to protect provider limits.`);
+          }
+        } else {
+          const durationText = typeof data.duration === "string" ? data.duration : "";
+          const minutes = parseRouteDurationMinutes(durationText, data.durationSeconds);
+          if (minutes === null) {
+            setRouteVerdicts((current) => ({ ...current, [item.id]: { status: "unverified", reason: "The route provider did not supply a readable duration." } }));
+          } else {
+            setRouteVerdicts((current) => ({ ...current, [item.id]: {
+              status: minutes <= requirement.amount ? "within" : "outside",
+              duration: durationText,
+              minutes,
+              distance: typeof data.distance === "string" ? data.distance : undefined,
+              source: typeof data.source === "string" ? data.source : undefined,
+            } }));
+          }
+        }
+      } catch {
+        setRouteVerdicts((current) => ({ ...current, [item.id]: { status: "unverified", reason: "A network error prevented route verification." } }));
+      }
+      completed += 1;
+      setCheckedCount(completed);
+    }
+    setChecking(false);
+    if (!stopped) {
+      setCheckMessage(`Checked ${completed} of ${coordinateBacked.length} coordinate-backed results. ${noCoordinateCount} results had no coordinates${beyondCheckLimitCount ? `; ${beyondCheckLimitCount} additional coordinate-backed results remain unchecked beyond the 8-route limit` : ""}. Only results with a verified route at or below ${requirement.amount} minutes are classified as in-range.`);
+    }
+  }
+
+  function renderList(items: LiveExperience[]) {
+    return items.map((experience) => {
+      const verdict = verdicts[experience.id] ?? (requirement.kind === "time"
+        ? { status: "unverified" as const, reason: requirement.mode === "walk" ? "Walking route verification is not available." : "No comparable driving route has been checked yet." }
+        : undefined);
+      return <div className="proximity-verified-result" key={experience.id}>
+        {verdict && <small className={`proximity-verdict proximity-verdict-${verdict.status}`}>
+          {verdict.status === "within" ? "Within requested limit" : verdict.status === "outside" ? "Outside requested limit" : "Not verified"}
+          {verdict.duration ? ` · ${verdict.duration}${verdict.source?.includes("Geoapify") ? " estimated, no live traffic" : ""}` : verdict.distance ? ` · ${verdict.distance}` : ""}
+          {verdict.reason ? ` · ${verdict.reason}` : ""}
+        </small>}
+        <ExperienceResult experience={experience} hotels={hotels} selectedHotel={selectedHotel} startingPoint={startingPoint} airportCode={airportCode} search={search} days={days} selected={selectedItems[experience.id]} onSelectionChange={onSelectionChange}/>
+      </div>;
+    });
+  }
+
+  if (!origin) {
+    return <div className="proximity-filter-panel"><p>This search requested places within <strong>{limitLabel}</strong>, but no stay or starting point with coordinates is selected. Select a property or set Your starting point to verify the requirement.</p>{renderList(experiences)}</div>;
+  }
+
+  return <div className="proximity-filter-panel">
+    <div className="proximity-filter-heading">
+      <div><strong>Requested proximity: {limitLabel}</strong><p>From {originLabel}. {requirement.kind === "distance" ? "Straight-line distance is checked locally from loaded coordinates." : requirement.mode === "walk" ? "Walking route checks are not available yet; results remain unverified." : "Driving-time checks use loaded coordinates and Geoapify route estimates without live traffic."}</p></div>
+      {requirement.kind === "time" && requirement.mode === "drive" && <button type="button" onClick={() => void checkDrivingRoutes()} disabled={checking || experiences.length === 0}>{checking ? `Checking ${checkedCount}…` : hasChecked ? "Recheck requested limit" : "Check requested driving limit"}</button>}
+    </div>
+    {checkMessage && <p className="proximity-filter-message" role="status">{checkMessage}</p>}
+    {!hasChecked && requirement.kind === "time" && requirement.mode === "drive" && <p className="proximity-filter-message">No restaurant or activity is labeled as meeting the requested driving time until its route has been checked.</p>}
+    {(hasChecked || requirement.kind === "distance") ? <div className="proximity-filter-groups">
+      <section><h6>Within requested limit ({within.length})</h6>{within.length ? renderList(within) : <p className="empty-inline">No verified matches in the loaded candidates.</p>}</section>
+      <section><h6>Outside requested limit ({outside.length})</h6>{outside.length ? renderList(outside) : <p className="empty-inline">No loaded results were classified outside the limit.</p>}</section>
+      <section><h6>Not verified ({unverified.length})</h6>{unverified.length ? renderList(unverified) : <p className="empty-inline">All loaded results have a classification.</p>}</section>
+    </div> : renderList(experiences)}
+  </div>;
 }
 
 function ExperienceResult({ experience, hotels, selectedHotel, startingPoint, airportCode, search, days, selected, onSelectionChange }: {
@@ -2123,8 +2302,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
             ? { latitude: selection.hotel.latitude, longitude: selection.hotel.longitude }
             : null;
         const proximityOriginLabel = startingPoints[destination.id]?.label || selection.hotel?.name || "your starting point";
+        const proximityOriginAddress = startingPoints[destination.id]?.address || selection.hotel?.address || (proximityOrigin ? `${proximityOrigin.latitude},${proximityOrigin.longitude}` : "");
         const activityExperiences = sortByStraightLineProximity(resultExperiences.filter((item) => item.kind === "activity"), proximityOrigin);
         const restaurantExperiences = sortByStraightLineProximity(resultExperiences.filter((item) => item.kind === "restaurant"), proximityOrigin);
+        const activityProximityRequirement = parseProximityRequirement(search.planningNotes, "activity");
+        const restaurantProximityRequirement = parseProximityRequirement(search.planningNotes, "restaurant");
         const availableAirlines: string[] = Array.from(new Set<string>((state?.result?.flights ?? []).reduce<string[]>((names, flight) => names.concat(flight.airlines), []))).sort((a, b) => a.localeCompare(b));
         const selectedAirline = flightAirlineFilters[destination.id] ?? "all";
         const visibleFlights = selectedAirline === "all" ? (state?.result?.flights ?? []) : (state?.result?.flights ?? []).filter((flight) => flight.airlines.includes(selectedAirline));
@@ -2189,11 +2371,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                   onClear={() => clearStartingPoint(destination.id)}
                 />
                 <details id={`trip-section-${destination.id}-activities`} data-section-key="activities" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Activity size={17}/><strong>Activities & attractions</strong><span>{activityExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "activity")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
-                  {activityExperiences.length ? activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
+                  {activityExperiences.length ? activityProximityRequirement ? <ProximityCheckedExperienceResults destinationId={destination.id} kind="activity" experiences={activityExperiences} requirement={activityProximityRequirement} origin={proximityOrigin} originLabel={proximityOriginLabel} originAddress={proximityOriginAddress} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selectedItems={selection.experiences} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/> : activityExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No activity results were returned for this destination.</p><div className="empty-category-links"><a href={recommendation.activitySearchUrl} target="_blank" rel="noreferrer">Search Viator <ArrowUpRight size={12}/></a><a href={`https://www.getyourguide.com/s/?q=${encodeURIComponent(`Things to do in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search GetYourGuide <ArrowUpRight size={12}/></a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Attractions in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search Maps <ArrowUpRight size={12}/></a></div></div>}
                 </details>
                 <details id={`trip-section-${destination.id}-restaurants`} data-section-key="restaurants" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
                   {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">{proximityOrigin ? `Restaurants are sorted nearest-first by straight-line distance from ${proximityOriginLabel}. Use each restaurant's driving-route control to verify the requested time limit; straight-line distance is not driving time.` : "Set Your starting point above or select a property to sort restaurants by proximity. Use each restaurant's driving-route control to verify the requested time limit; straight-line distance is not driving time."}</p>}
-                  {restaurantExperiences.length ? restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
+                  {restaurantExperiences.length ? restaurantProximityRequirement ? <ProximityCheckedExperienceResults destinationId={destination.id} kind="restaurant" experiences={restaurantExperiences} requirement={restaurantProximityRequirement} origin={proximityOrigin} originLabel={proximityOriginLabel} originAddress={proximityOriginAddress} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selectedItems={selection.experiences} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/> : restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
                 </details>
               </>}
               <details id={`trip-section-${destination.id}-weather`} data-section-key="weather" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
