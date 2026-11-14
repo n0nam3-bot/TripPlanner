@@ -4,7 +4,7 @@
 
 ## Roadmap execution strategy
 
-Tripfinder development is split into three tracks so that partner approvals do not block product improvements:
+Tripfinder development is split into four tracks so that partner approvals do not block product improvements and legal readiness is treated as its own workstream:
 
 **Track A — Product readiness (active):** search accuracy, location relevance, editable trip planning, itinerary utility, traveler feedback and production confidence. These items can proceed with the current providers and infrastructure.
 
@@ -12,9 +12,11 @@ Tripfinder development is split into three tracks so that partner approvals do n
 
 **Track C — Monetization (approval-gated):** affiliate applications, program-specific disclosures and partner-attributed conversion reporting. Existing outbound-click and redirect-health telemetry is already implemented; approval is only needed for network-specific attribution and commissions.
 
-**Execution rule:** do not hold up Track A for affiliate, airline/NDC, package or accommodation-partner approval. Do not simulate supplier inventory, checkout totals, booking confirmation, affiliate approval or commission attribution.
+**Track D — Legal, privacy and trust readiness (cross-cutting):** accurate public-facing policies, clear user disclosures, privacy requests, retention/deletion controls, secure access to saved trips, vendor/data-use review and independent legal review. This work does not require affiliate approval and should be completed before materially expanding public use or activating monetization.
 
-**Recommended next development sequence:** Release 7 (search/location reliability), Release 8 (post-search editing and cost clarity), Release 9 (itinerary utility), then Release 10 (quality signals and production verification). Release 6 supplier/monetization work proceeds independently when access is available.
+**Execution rules:** do not hold up Track A for affiliate, airline/NDC, package or accommodation-partner approval. Do not simulate supplier inventory, checkout totals, booking confirmation, affiliate approval or commission attribution. Do not publish legal documents with unresolved operator/contact placeholders or claims that have not been verified against the deployed system. Legal documents reduce ambiguity and risk; they do not guarantee immunity from claims or replace legal advice.
+
+**Recommended product sequence:** Release 7 (search/location reliability), Release 8 (post-search editing and cost clarity), Release 9 (itinerary utility), then Release 10 (quality signals and production verification). Release 6 supplier/monetization work proceeds independently when access is available. Release 11 legal/privacy work may proceed in parallel, with publication and public-launch gates applied as described below.
 
 
 ## Release 0 — polished interface (complete)
@@ -196,3 +198,51 @@ This is an independent track, not a prerequisite for the product-readiness relea
 - [ ] Reassess optional user accounts only if travelers need cross-device trip synchronization, account recovery or other features that cannot be safely delivered through the current anonymous saved-trip model.
 
 **Completion rule:** a feature is “implemented” when its code and automated checks are complete; it is “production-verified” only after the corresponding deployed, database and provider checks have actually passed.
+
+## Release 11 — legal, privacy and trust readiness (cross-cutting; pre-expansion gate)
+
+**Goal:** give travelers clear, accurate information about who operates Tripfinder, how their information is handled, what the service does and does not provide, and how third-party travel providers fit into the experience. Reduce avoidable legal and operational risk without implying that disclaimers eliminate liability.
+
+**Brand and operator approach:** use **Tripfinder** as the public-facing service name. The legal operator is not yet settled and must be identified before publication. Do not invent a company, imply that Tripfinder is a registered entity, or publish placeholder names/emails. Keep policy drafts separate from public-facing pages until the operator, contact channel, effective date and counsel review are complete. Preserve flexibility for a future sale or change of control, subject to applicable privacy and contract requirements.
+
+### 11.1 — data inventory and privacy policy
+- [ ] Create and maintain a data inventory and flow map based on the deployed application, covering search inputs, trip details, saved and shared itineraries, feedback submissions, anonymous visitor identifiers, hashed abuse-prevention identifiers, analytics/telemetry, browser storage and support communications.
+- [ ] Document each data category's purpose, source, storage location, access roles, service-provider recipients, retention period and deletion mechanism. Distinguish raw identifiers from hashed/pseudonymous identifiers; do not describe hashing as anonymization where re-identification or linkage remains possible.
+- [ ] Draft a Tripfinder Privacy Policy that accurately describes actual practices, including the anonymous visitor cookie, saved-trip and share-link behavior, AI assistant processing, optional Gemini use/consent, analytics, third-party links, retention, security practices and privacy request procedures.
+- [ ] Verify current OpenRouter, Google/Gemini, Vercel, Neon, Geoapify, SerpApi and any other enabled provider terms/data practices. Update the data-flow map and policy whenever a provider or data use changes.
+- [ ] Decide and document the intended age requirements and whether any child-directed functionality or collection is prohibited. Implement the corresponding age-related safeguards; do not claim child-safety compliance without validation.
+- [ ] Review applicability of New Jersey, other U.S. state, federal and non-U.S. privacy requirements based on actual users, processing and business thresholds. Do not assume that a law applies or does not apply solely because the operator is located in New Jersey.
+
+### 11.2 — terms of service and user-facing disclosures
+- [ ] Draft Tripfinder Terms of Service identifying the actual legal operator and contact route, describing permitted use, user responsibilities, accounts/anonymous saved trips, shared-link risks, user submissions, intellectual property, suspension/termination, third-party services, disclaimers and dispute/contact procedures.
+- [ ] Have qualified counsel determine appropriate governing-law, venue, warranty, limitation-of-liability, indemnification and dispute-resolution language. Do not insert an arbitration waiver, class-action waiver or other potentially unenforceable term without counsel's advice and any legally required assent process.
+- [ ] Clearly state that Tripfinder is a planning/comparison service and that external providers control their own inventory, prices, booking, payments, cancellations, refunds and fulfillment unless a future integration expressly changes that arrangement.
+- [ ] Keep price, availability, maps, route, weather, AI-output and booking disclaimers close to the relevant results or actions, not only in the Terms. Distinguish estimates, straight-line distances, routed estimates, cached provider snapshots, revalidated offers and confirmed transactions.
+- [ ] Add a dedicated affiliate/sponsored-content disclosure standard before any paid placement or affiliate link is activated. Disclosures must be clear, conspicuous and close to the recommendation/link; preserve the distinction between organic ranking and paid placement.
+- [ ] Publish a clear Contact / Privacy Requests method and identify the actual operator. Do not publish policies with unresolved placeholders or a nonfunctional email address.
+
+### 11.3 — privacy rights, retention and deletion
+- [ ] Provide a privacy-request workflow appropriate to applicable law, including access, correction, deletion and appeal/opt-out handling where legally required. Define identity verification and response ownership without collecting excessive additional personal data.
+- [ ] Implement dependable scheduled cleanup for expired saved trips, feedback invitations, feedback submissions and telemetry according to documented retention periods. Do not promise a deletion deadline until the operational job and backup behavior are verified.
+- [ ] Define backup, log, cache and vendor-retention treatment for deletion requests; document any legally permitted retention exceptions and when deleted records age out of backups.
+- [ ] Provide a process for users to report exposed shared links or request revocation. Explain that anyone with a valid share link may be able to view the shared itinerary until it expires or is revoked.
+- [ ] Document how browser-local saved-trip credentials and data are cleared, and clarify what cannot be synchronized or recovered across devices under the anonymous-trip model.
+
+### 11.4 — security and operational risk controls
+- [ ] Review owner-token storage and access controls. Prefer HttpOnly, appropriately scoped secure cookies or another server-controlled mechanism over exposing long-lived owner credentials to JavaScript-accessible local storage, while preserving the anonymous saved-trip workflow.
+- [ ] Verify least-privilege access to Neon, Vercel environment variables, provider dashboards, admin routes, logs and production deployments. Maintain a credential-rotation process and never expose provider secrets to the browser.
+- [ ] Create a written security incident and privacy breach response procedure covering triage, containment, evidence preservation, vendor coordination, legal notification assessment and user communications.
+- [ ] Establish a documented security review for shared links, invite tokens, admin authentication, rate limits, CSRF/origin protections, input validation, dependency updates and exports.
+- [ ] Review accessibility and consumer-facing claims for clarity; ensure the interface does not imply a provider relationship, endorsement, guaranteed result or completed booking where none exists.
+- [ ] Assess appropriate business structure, intellectual-property ownership, contractor/maintainer agreements and insurance (including technology errors-and-omissions and cyber coverage) with qualified professionals. These are business decisions, not substitutes for secure implementation.
+
+### 11.5 — publication, consent and ongoing governance
+- [ ] Add persistent footer links to Privacy, Terms, Disclosures and Contact pages, with accessible mobile layouts and stable URLs.
+- [ ] Implement an affirmative Terms acceptance flow where appropriate to the feature and legal advice; record the policy version and timestamp with the minimum necessary evidence. Do not treat passive browsing or a pre-checked box as affirmative acceptance.
+- [ ] Add a policy-version/change log and an operational review trigger whenever data collection, AI providers, analytics, retention, sharing, commercial relationships or material product behavior changes.
+- [ ] Ensure consent choices for optional processing (including the Gemini fallback) are specific, informed, revocable where applicable and reflected in the actual request path.
+- [ ] Obtain independent U.S. technology/privacy counsel review of the Privacy Policy, Terms, disclosures, data flows, retention controls and any proposed dispute-resolution terms before public publication.
+- [ ] Complete a final operator/contact/effective-date check, deploy the public documents, and verify every footer and in-context legal link on mobile and desktop.
+
+**Release 11 completion criteria:** the legal operator and working contact route are identified; policies match verified production data flows; required request/retention/security workflows operate as described; disclosures are visible at the relevant decision points; attorney review is documented; and deployed links are tested. Draft documents alone do not complete this release.
+
