@@ -54,6 +54,98 @@ export function resolveGeoapifyCreditCaps(input: { dailyCap?: unknown; clientDai
   };
 }
 
+
+/** Classify a failed atomic credit reservation without mistaking a database-gate
+ * inconsistency for an exhausted allowance. The SQL update is authoritative;
+ * this helper only classifies the follow-up snapshot for a useful error code.
+ */
+export type GeoapifyReservationFailure = "cap-reached" | "inconsistent";
+
+export function classifyGeoapifyReservationFailure(
+  used: number,
+  cap: number,
+  requested: number,
+): GeoapifyReservationFailure {
+  const safeUsed = Number.isFinite(used) ? Math.max(0, used) : 0;
+  const safeCap = Number.isFinite(cap) ? Math.max(0, cap) : 0;
+  const safeRequested = Number.isFinite(requested) ? Math.max(1, requested) : 1;
+  return safeUsed + safeRequested > safeCap ? "cap-reached" : "inconsistent";
+}
+
+export type GeoapifyMapFailureDescription = {
+  warning: string;
+  blocked: boolean;
+  httpStatus: number | null;
+  /** null means the caller should wait until the next UTC-day reset. */
+  retryDelayMs: number | null;
+};
+
+/** Convert map-preview failures into safe UI copy and a bounded retry policy.
+ * Route data is retained even when the optional static-map preview fails.
+ */
+export function describeGeoapifyMapFailure(
+  code: string,
+  usage: unknown = null,
+): GeoapifyMapFailureDescription {
+  const snapshot = record(usage);
+  const sharedUsed = finite(snapshot.sharedUsed ?? snapshot.shared_used);
+  const sharedCap = finite(snapshot.sharedCap ?? snapshot.shared_cap);
+  const clientUsed = finite(snapshot.clientUsed ?? snapshot.client_used);
+  const clientCap = finite(snapshot.clientCap ?? snapshot.client_cap);
+  const usageSuffix = (used: number | null, cap: number | null) =>
+    used !== null && cap !== null ? ` (${Math.floor(used)}/${Math.floor(cap)} daily credits used)` : "";
+
+  if (code === "GEOAPIFY_DAILY_CAP_REACHED") {
+    return {
+      warning: `The shared daily allowance for Geoapify map previews has been reached${usageSuffix(sharedUsed, sharedCap)}. Driving details remain available; the map preview can retry after the next UTC daily reset.`,
+      blocked: true,
+      httpStatus: null,
+      retryDelayMs: null,
+    };
+  }
+  if (code === "GEOAPIFY_CLIENT_DAILY_CAP_REACHED") {
+    return {
+      warning: `This visitor has reached the daily Geoapify map-preview allowance${usageSuffix(clientUsed, clientCap)}. Driving details remain available; the map preview can retry after the next UTC daily reset.`,
+      blocked: true,
+      httpStatus: null,
+      retryDelayMs: null,
+    };
+  }
+  if (code === "GEOAPIFY_DAILY_GATE_INCONSISTENT" || code === "GEOAPIFY_CLIENT_GATE_INCONSISTENT") {
+    return {
+      warning: "The Geoapify usage safeguard could not confirm a map-preview credit reservation. Driving details remain available; map preview is paused briefly to avoid duplicate usage.",
+      blocked: true,
+      httpStatus: null,
+      retryDelayMs: 60_000,
+    };
+  }
+  if (code === "GEOAPIFY_STATIC_MAP_HTTP_429" || code === "GEOAPIFY_PROVIDER_RATE_LIMITED" || code === "GEOAPIFY_REQUEST_RATE_LIMITED") {
+    return {
+      warning: "Geoapify is temporarily limiting map-preview requests. Driving details remain available; the map preview will retry after a cooldown.",
+      blocked: true,
+      httpStatus: 429,
+      retryDelayMs: 15 * 60_000,
+    };
+  }
+
+  const statusMatch = /^GEOAPIFY_(?:STATIC_MAP_)?HTTP_(\d{3})$/.exec(code);
+  const httpStatus = statusMatch ? Number(statusMatch[1]) : null;
+  if (code === "GEOAPIFY_NOT_CONFIGURED") {
+    return {
+      warning: "Map preview is unavailable because the Geoapify service is not configured. Driving details may still be available.",
+      blocked: false,
+      httpStatus: null,
+      retryDelayMs: 5 * 60_000,
+    };
+  }
+  return {
+    warning: "The route was calculated, but its map preview could not be generated. You can still use the available driving details.",
+    blocked: false,
+    httpStatus,
+    retryDelayMs: 5 * 60_000,
+  };
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 function record(value: unknown): UnknownRecord {
