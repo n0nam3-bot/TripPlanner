@@ -8,13 +8,17 @@ type CacheRow = { payload: JsonRecord | string; created_at: string };
 export type ProviderEventInput = {
   provider: string;
   category: string;
-  eventType: "provider_request" | "cache_hit" | "provider_error" | "request_blocked" | "account_check" | "local_parse" | "provider_fallback";
-  outcome: "success" | "error" | "blocked";
+  eventType: "provider_request" | "cache_hit" | "provider_error" | "request_blocked" | "account_check" | "local_parse" | "provider_fallback" | "trip_search_started" | "trip_search_completed" | "trip_search_failed" | "result_selected" | "trip_saved" | "trip_updated" | "outbound_click" | "outbound_redirect";
+  outcome: "success" | "error" | "blocked" | "started" | "partial" | "empty" | "selected" | "updated" | "fallback";
   cacheStatus?: "hit" | "miss" | "stale" | "bypass" | "none";
   httpStatus?: number | null;
   durationMs?: number | null;
   promptTokens?: number | null;
   completionTokens?: number | null;
+  /** Random per-results-page UUID. Only a SHA-256 digest is persisted. */
+  journeyId?: string | null;
+  /** Numeric result counts only; never include names, URLs, search terms or prices. */
+  resultCounts?: { flights?: number; stays?: number; activities?: number; restaurants?: number } | null;
 };
 
 let schemaReady: Promise<void> | null = null;
@@ -70,6 +74,9 @@ async function ensureTravelTables() {
       )`;
       await sql`ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS prompt_tokens integer`;
       await sql`ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS completion_tokens integer`;
+      await sql`ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS journey_key text`;
+      await sql`ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS result_counts jsonb`;
+      await sql`CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_journey_idx ON tripfinder_api_event_log (journey_key, event_type, created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_created_idx ON tripfinder_api_event_log (created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_provider_idx ON tripfinder_api_event_log (provider, category, created_at DESC)`;
       await sql`CREATE TABLE IF NOT EXISTS tripfinder_admin_login_attempts (
@@ -491,12 +498,21 @@ export async function recordProviderEvent(event: ProviderEventInput): Promise<vo
       : Math.max(100, Math.min(599, Math.floor(event.httpStatus)));
     const promptTokens = event.promptTokens === undefined || event.promptTokens === null ? null : Math.max(0, Math.min(10000000, Math.floor(event.promptTokens)));
     const completionTokens = event.completionTokens === undefined || event.completionTokens === null ? null : Math.max(0, Math.min(10000000, Math.floor(event.completionTokens)));
+    const journeyId = typeof event.journeyId === "string" && /^[a-f0-9-]{36}$/i.test(event.journeyId)
+      ? createHash("sha256").update("tripfinder-journey-v1:").update(event.journeyId.toLowerCase()).digest("hex")
+      : null;
+    const counts = event.resultCounts ? {
+      flights: Math.max(0, Math.min(500, Math.floor(Number(event.resultCounts.flights) || 0))),
+      stays: Math.max(0, Math.min(500, Math.floor(Number(event.resultCounts.stays) || 0))),
+      activities: Math.max(0, Math.min(500, Math.floor(Number(event.resultCounts.activities) || 0))),
+      restaurants: Math.max(0, Math.min(500, Math.floor(Number(event.resultCounts.restaurants) || 0))),
+    } : null;
     const inserted = await sql`INSERT INTO tripfinder_api_event_log
-      (provider, category, event_type, outcome, cache_status, http_status, duration_ms, prompt_tokens, completion_tokens)
+      (provider, category, event_type, outcome, cache_status, http_status, duration_ms, prompt_tokens, completion_tokens, journey_key, result_counts)
       VALUES (
         ${event.provider.slice(0, 40)}, ${event.category.slice(0, 60)},
         ${event.eventType}, ${event.outcome}, ${event.cacheStatus ?? "none"},
-        ${status}, ${duration}, ${promptTokens}, ${completionTokens}
+        ${status}, ${duration}, ${promptTokens}, ${completionTokens}, ${journeyId}, ${counts ? JSON.stringify(counts) : null}::jsonb
       ) RETURNING id`;
     const insertedId = Number((inserted[0] as unknown as { id?: number } | undefined)?.id ?? 0);
     // Keep the event history bounded without running a cleanup query on every request.
@@ -551,6 +567,8 @@ export type AdminDashboardSnapshot = {
   geoapifyUsage: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; visitorCreditsToday: number; activeVisitorsToday: number; clientDailyCap: number };
   providerHealth: Array<{ provider: string; category: string; attempts: number; successes: number; failures: number; staleFallbacks: number; fallbackEvents: number; successRate: number | null; lastSuccessAt: string | null; lastFailureAt: string | null }>;
   savedTripHealth: { activeShares: number; created24h: number; updated24h: number; expiring7d: number; visitorSavesToday: number; visitorBucketsToday: number; ipSavesToday: number; ipBucketsToday: number };
+  productFunnel: { searchesStarted: number; searchesWithResults: number; searchesEmpty: number; searchesFailed: number; journeysWithSelection: number; journeysSaved: number; outboundClicks: number; flightRedirectSuccesses: number; flightRedirectFallbacks: number; flightRedirectErrors: number };
+  outboundHealth: Array<{ provider: string; category: string; clicks: number; redirectSuccesses: number; redirectFallbacks: number; redirectErrors: number }>;
   aiUsage: {
     openRouter: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
     gemini: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number };
@@ -571,7 +589,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
   const now = new Date();
   const month = now.toISOString().slice(0, 7);
   const usageDate = now.toISOString().slice(0, 10);
-  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows, aiDailyRows, aiMinuteRows, geoapifyRows, providerHealthRows, savedTripHealthRows] = await Promise.all([
+  const [usageRows, hourlyRows, clientRows, totalsRows, breakdownRows, trendRows, recentRows, cacheRows, aiDailyRows, aiMinuteRows, geoapifyRows, providerHealthRows, savedTripHealthRows, productFunnelRows, outboundHealthRows] = await Promise.all([
     sql`SELECT search_count FROM tripfinder_provider_usage WHERE month_key = ${month} LIMIT 1`,
     sql`SELECT search_count FROM tripfinder_provider_hourly_usage WHERE hour_bucket = date_trunc('hour', now()) LIMIT 1`,
     sql`SELECT count(*)::int AS active_clients, COALESCE(sum(day_count), 0)::int AS reserved_today
@@ -582,7 +600,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE category = 'Account quota' AND event_type IN ('account_check', 'provider_error'))::int AS account_checks,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale' AND category <> 'Account quota')::int AS stale_cache_hits,
-        count(*) FILTER (WHERE outcome = 'error')::int AS failures,
+        count(*) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'error')::int AS failures,
         count(*) FILTER (WHERE outcome = 'blocked')::int AS blocked,
         round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms,
         COALESCE(sum(prompt_tokens), 0)::int AS prompt_tokens,
@@ -593,18 +611,20 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         count(*) FILTER (WHERE category = 'Account quota' AND event_type IN ('account_check', 'provider_error'))::int AS account_checks,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND cache_status = 'stale' AND category <> 'Account quota')::int AS stale_cache_hits,
-        count(*) FILTER (WHERE outcome = 'error')::int AS failures,
+        count(*) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'error')::int AS failures,
         count(*) FILTER (WHERE outcome = 'blocked')::int AS blocked,
         round(avg(duration_ms) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota'))::int AS avg_ms,
         COALESCE(sum(prompt_tokens), 0)::int AS prompt_tokens,
         COALESCE(sum(completion_tokens), 0)::int AS completion_tokens
       FROM tripfinder_api_event_log WHERE created_at >= now() - interval '30 days'
+        AND event_type IN ('provider_request','provider_error','cache_hit','provider_fallback','request_blocked','account_check')
       GROUP BY provider, category ORDER BY api_calls DESC, cache_hits DESC LIMIT 24`,
     sql`SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS hour,
         count(*) FILTER (WHERE event_type IN ('provider_request', 'provider_error') AND category <> 'Account quota')::int AS api_calls,
         count(*) FILTER (WHERE event_type = 'cache_hit' AND category <> 'Account quota')::int AS cache_hits,
-        count(*) FILTER (WHERE outcome = 'error')::int AS failures
+        count(*) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'error')::int AS failures
       FROM tripfinder_api_event_log WHERE created_at >= now() - interval '24 hours'
+        AND event_type IN ('provider_request','provider_error','cache_hit')
       GROUP BY date_trunc('hour', created_at AT TIME ZONE 'UTC') ORDER BY date_trunc('hour', created_at AT TIME ZONE 'UTC') ASC`,
     sql`SELECT id, provider, category, event_type, outcome, cache_status, http_status, duration_ms, prompt_tokens, completion_tokens, created_at::text AS created_at
       FROM tripfinder_api_event_log ORDER BY created_at DESC LIMIT 60`,
@@ -629,6 +649,7 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         max(created_at) FILTER (WHERE event_type IN ('provider_request','provider_error') AND outcome = 'error')::text AS last_failure_at
       FROM tripfinder_api_event_log
       WHERE created_at >= now() - interval '7 days' AND category <> 'Account quota'
+        AND event_type IN ('provider_request','provider_error','cache_hit','provider_fallback')
       GROUP BY provider, category ORDER BY failures DESC, attempts DESC LIMIT 20`,
     sql`SELECT
         (SELECT count(*) FROM tripfinder_saved_trips WHERE expires_at > now())::int AS active_shares,
@@ -639,6 +660,25 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         (SELECT count(*) FROM tripfinder_saved_trip_daily_usage WHERE usage_date = ${usageDate} AND save_count > 0)::int AS visitor_buckets_today,
         (SELECT COALESCE(sum(save_count),0) FROM tripfinder_saved_trip_ip_daily_usage WHERE usage_date = ${usageDate})::int AS ip_saves_today,
         (SELECT count(*) FROM tripfinder_saved_trip_ip_daily_usage WHERE usage_date = ${usageDate} AND save_count > 0)::int AS ip_buckets_today`,
+    sql`SELECT
+        count(DISTINCT journey_key) FILTER (WHERE event_type = 'trip_search_started')::int AS searches_started,
+        count(DISTINCT journey_key) FILTER (WHERE event_type = 'trip_search_completed' AND outcome IN ('success','partial'))::int AS searches_with_results,
+        count(DISTINCT journey_key) FILTER (WHERE event_type = 'trip_search_completed' AND outcome = 'empty')::int AS searches_empty,
+        count(DISTINCT journey_key) FILTER (WHERE event_type = 'trip_search_failed')::int AS searches_failed,
+        count(DISTINCT journey_key) FILTER (WHERE event_type = 'result_selected')::int AS journeys_with_selection,
+        count(DISTINCT journey_key) FILTER (WHERE event_type = 'trip_saved')::int AS journeys_saved,
+        count(*) FILTER (WHERE event_type = 'outbound_click')::int AS outbound_clicks,
+        count(*) FILTER (WHERE event_type = 'outbound_redirect' AND outcome = 'success')::int AS flight_redirect_successes,
+        count(*) FILTER (WHERE event_type = 'outbound_redirect' AND outcome = 'fallback')::int AS flight_redirect_fallbacks,
+        count(*) FILTER (WHERE event_type = 'outbound_redirect' AND outcome = 'error')::int AS flight_redirect_errors
+      FROM tripfinder_api_event_log WHERE created_at >= now() - interval '7 days' AND event_type IN ('trip_search_started','trip_search_completed','trip_search_failed','result_selected','trip_saved','outbound_click','outbound_redirect')`,
+    sql`SELECT provider, category,
+        count(*) FILTER (WHERE event_type = 'outbound_click')::int AS clicks,
+        count(*) FILTER (WHERE event_type = 'outbound_redirect' AND outcome = 'success')::int AS redirect_successes,
+        count(*) FILTER (WHERE event_type = 'outbound_redirect' AND outcome = 'fallback')::int AS redirect_fallbacks,
+        count(*) FILTER (WHERE event_type = 'outbound_redirect' AND outcome = 'error')::int AS redirect_errors
+      FROM tripfinder_api_event_log WHERE created_at >= now() - interval '7 days' AND event_type IN ('outbound_click','outbound_redirect')
+      GROUP BY provider, category ORDER BY clicks DESC, redirect_errors DESC LIMIT 12`,
   ]);
   const usage = usageRows[0] as unknown as { search_count?: number } | undefined;
   const hourly = hourlyRows[0] as unknown as { search_count?: number } | undefined;
@@ -732,6 +772,20 @@ export async function getAdminDashboardSnapshot(): Promise<AdminDashboardSnapsho
         ipSavesToday: asNumber(row?.ip_saves_today), ipBucketsToday: asNumber(row?.ip_buckets_today),
       };
     })(),
+    productFunnel: (() => {
+      const row = productFunnelRows[0] as unknown as Record<string, unknown> | undefined;
+      return {
+        searchesStarted: asNumber(row?.searches_started), searchesWithResults: asNumber(row?.searches_with_results),
+        searchesEmpty: asNumber(row?.searches_empty), searchesFailed: asNumber(row?.searches_failed), journeysWithSelection: asNumber(row?.journeys_with_selection),
+        journeysSaved: asNumber(row?.journeys_saved), outboundClicks: asNumber(row?.outbound_clicks),
+        flightRedirectSuccesses: asNumber(row?.flight_redirect_successes),
+        flightRedirectFallbacks: asNumber(row?.flight_redirect_fallbacks), flightRedirectErrors: asNumber(row?.flight_redirect_errors),
+      };
+    })(),
+    outboundHealth: (outboundHealthRows as unknown as Array<Record<string, unknown>>).map((row) => ({
+      provider: String(row.provider), category: String(row.category), clicks: asNumber(row.clicks),
+      redirectSuccesses: asNumber(row.redirect_successes), redirectFallbacks: asNumber(row.redirect_fallbacks), redirectErrors: asNumber(row.redirect_errors),
+    })),
     aiUsage: {
       openRouter: { configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "openrouter"), dailyCap: openRouterCap, remainingToday: Math.max(0, openRouterCap - aiUsed(aiDaily, "openrouter")), usedThisMinute: aiUsed(aiMinute, "openrouter"), minuteCap: 15 },
       gemini: { configured: Boolean(process.env.GEMINI_API_KEY?.trim()), usedToday: aiUsed(aiDaily, "gemini"), dailyCap: geminiCap, remainingToday: Math.max(0, geminiCap - aiUsed(aiDaily, "gemini")), usedThisMinute: aiUsed(aiMinute, "gemini"), minuteCap: 10 },

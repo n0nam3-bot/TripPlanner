@@ -26,8 +26,8 @@ test("admin quality view reports provider outcome history and stale fallbacks wi
   assert.doesNotMatch(db.slice(db.indexOf("providerHealth: (providerHealthRows"), db.indexOf("aiUsage:")), /search_text|booking_token|raw_ip/);
 });
 
-test("roadmap leaves click-through and end-to-end trip outcome tracking open", () => {
+test("roadmap marks privacy-preserving click-through and trip outcome tracking complete", () => {
   const roadmap = read("docs/PRODUCT-ROADMAP.md");
   assert.match(roadmap, /\[x\] Extend the authenticated admin dashboard with 7-day provider outcome rates/);
-  assert.match(roadmap, /\[ \] Add outbound-link click\/redirect-health monitoring and explicit end-to-end trip-search outcome tracking/);
+  assert.match(roadmap, /\[x\] Add privacy-preserving outbound-link click\/redirect-health monitoring and end-to-end trip-search funnel tracking/);
 });

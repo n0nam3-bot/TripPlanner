@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordProviderEvent } from "@/lib/db/travel-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,12 +42,21 @@ function redirectNoStore(url: URL) {
  */
 export async function POST(request: Request) {
   let fallbackUrl: URL | null = null;
+  const startedAt = Date.now();
+  let journeyId = "";
+  const logRedirect = (outcome: "success" | "fallback" | "error", httpStatus: number) => recordProviderEvent({
+    provider: "google_flights", category: "flight_booking", eventType: "outbound_redirect", outcome,
+    httpStatus, durationMs: Date.now() - startedAt, journeyId,
+  });
   try {
     const form = await request.formData();
+    const rawJourneyId = form.get("journeyId");
+    journeyId = typeof rawJourneyId === "string" && /^[a-f0-9-]{36}$/i.test(rawJourneyId) ? rawJourneyId : "";
     const bookingUrl = validatedGoogleBookingUrl(form.get("url"));
     fallbackUrl = validatedGoogleFlightsFallback(form.get("fallbackUrl"));
     const rawPostData = form.get("postData");
     if (!bookingUrl || typeof rawPostData !== "string" || !rawPostData || rawPostData.length > 30000) {
+      await logRedirect(fallbackUrl ? "fallback" : "error", fallbackUrl ? 303 : 400);
       return fallbackUrl
         ? redirectNoStore(fallbackUrl)
         : new NextResponse("The booking request is incomplete. Return to Tripfinder and choose another seller option.", { status: 400 });
@@ -70,9 +80,11 @@ export async function POST(request: Request) {
     const finalUrl = new URL(upstream.url || bookingUrl.toString());
     const isGoogleHost = ["www.google.com", "google.com"].includes(finalUrl.hostname.toLowerCase());
     if (finalUrl.protocol === "https:" && !isGoogleHost) {
+      await logRedirect("success", upstream.status || 302);
       return redirectNoStore(finalUrl);
     }
 
+    await logRedirect(fallbackUrl ? "fallback" : "error", fallbackUrl ? 303 : 502);
     return fallbackUrl
       ? redirectNoStore(fallbackUrl)
       : new NextResponse("Google did not return a seller destination. Return to Tripfinder and open the exact flight search.", {
@@ -80,6 +92,7 @@ export async function POST(request: Request) {
         headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
       });
   } catch {
+    await logRedirect(fallbackUrl ? "fallback" : "error", fallbackUrl ? 303 : 502);
     return fallbackUrl
       ? redirectNoStore(fallbackUrl)
       : new NextResponse("Unable to resolve this booking link right now. Return to Tripfinder and use the exact Google Flights search.", {

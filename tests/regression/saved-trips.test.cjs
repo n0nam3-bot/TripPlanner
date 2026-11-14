@@ -336,7 +336,7 @@ test("copied trip stays an unsaved local draft until Save trip is explicitly pre
   assert.match(ui, /clearPendingSharedCopySession\(\)/);
   assert.match(ui, /restoringCopiedTrip/);
   assert.match(ui, /Restoring selections/);
-  assert.match(ui, /const payload: Record<string, unknown> = \{ search, snapshot \}/);
+  assert.match(ui, /const payload: Record<string, unknown> = \{ search, snapshot, journeyId: getJourneyId\(\) \}/);
 });
 
 

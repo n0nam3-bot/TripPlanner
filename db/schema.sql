@@ -50,12 +50,22 @@ CREATE TABLE IF NOT EXISTS tripfinder_api_event_log (
   cache_status text NOT NULL DEFAULT 'none',
   http_status integer,
   duration_ms integer,
+  prompt_tokens integer,
+  completion_tokens integer,
+  journey_key text,
+  result_counts jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS prompt_tokens integer;
+ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS completion_tokens integer;
+ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS journey_key text;
+ALTER TABLE tripfinder_api_event_log ADD COLUMN IF NOT EXISTS result_counts jsonb;
 CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_created_idx
   ON tripfinder_api_event_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_provider_idx
   ON tripfinder_api_event_log (provider, category, created_at DESC);
+CREATE INDEX IF NOT EXISTS tripfinder_api_event_log_journey_idx
+  ON tripfinder_api_event_log (journey_key, event_type, created_at DESC);
 
 -- Persistent login throttling, keyed by a one-way client-address hash.
 CREATE TABLE IF NOT EXISTS tripfinder_admin_login_attempts (

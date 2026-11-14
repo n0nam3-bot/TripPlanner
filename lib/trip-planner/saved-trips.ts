@@ -85,7 +85,7 @@ function addDateDays(value: string, days: number): string {
 
 /**
  * Shift a copied itinerary when the traveler changes the frozen overview's
- * date range. Activity/restaurants retain their day offset from departure;
+ * date range. Activities/restaurants retain their day offset from departure;
  * hotel milestones follow the new endpoints. Flights and fare quotes tied to
  * old travel dates are retained for context but require a fresh selection.
  */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { motion } from "framer-motion";
 import { Activity, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, Copy, ExternalLink, Hotel, MapPin, Plane, RefreshCw, Save, ShieldAlert, Star, Users, Wallet, Wind, CloudRain, ClipboardList, type LucideIcon } from "lucide-react";
 import type { FlightBookingOption, HotelBookingOption, LiveExperience, LiveFlight, LiveHotel, LiveTravelSearchResult, ReturnFlightSearchResult } from "@/lib/providers/serpapi";
@@ -289,21 +289,23 @@ function bookingOptionKey(option: FlightBookingOption): string {
   return `${option.seller}|${option.type}|${option.price ?? ""}|${option.departingPrice ?? ""}|${option.returningPrice ?? ""}|${option.url ?? ""}`;
 }
 
-function BookingContinue({ option }: { option: FlightBookingOption }) {
+function BookingContinue({ option, journeyId }: { option: FlightBookingOption; journeyId?: string }) {
   if (!option.url) return null;
   if (option.postData) {
     return <form action="/api/travel/flight-booking-redirect" method="post" target="_blank">
       <input type="hidden" name="url" value={option.url}/>
       <input type="hidden" name="postData" value={option.postData}/>
       {option.fallbackUrl && <input type="hidden" name="fallbackUrl" value={option.fallbackUrl}/>}
+      {journeyId && <input type="hidden" name="journeyId" value={journeyId}/>}
       <button className="booking-submit-button" type="submit">Continue <ArrowUpRight size={12}/></button>
     </form>;
   }
   return <a href={option.url} target="_blank" rel="noreferrer">Continue <ArrowUpRight size={12}/></a>;
 }
 
-function BookingOptions({ state, currency, selectedOption, onSelectSeller }: {
+function BookingOptions({ state, currency, selectedOption, journeyId, onSelectSeller }: {
   state?: BookingState;
+  journeyId?: string;
   currency: string;
   selectedOption?: FlightBookingOption | null;
   onSelectSeller: (option: FlightBookingOption) => void;
@@ -325,7 +327,7 @@ function BookingOptions({ state, currency, selectedOption, onSelectSeller }: {
         </span>
         <b>{option.price !== null ? money(option.price, option.currency || currency) : "See seller"}</b>
         <button type="button" className="booking-select-button" onClick={() => onSelectSeller(option)}>{selected ? <><Check size={11}/> Selected</> : "Select seller"}</button>
-        <BookingContinue option={option}/>
+        <BookingContinue option={option} journeyId={journeyId}/>
       </div>;
     }) : <small>No direct seller links were returned for this selection. Open the exact Google Flights search above to compare booking options.</small>}
   </div>;
@@ -355,9 +357,10 @@ function ReturnOptions({ state, onSelectReturn, selectedReturnId }: {
   </div>;
 }
 
-function FlightResult({ flight, currency, returnState, bookingStates, selectedOutbound, selectedReturnFlight, selectedSeller, onSelectOutbound, onSelectReturn, onLoadBookingOptions, onSelectSeller }: {
+function FlightResult({ flight, currency, journeyId, returnState, bookingStates, selectedOutbound, selectedReturnFlight, selectedSeller, onSelectOutbound, onSelectReturn, onLoadBookingOptions, onSelectSeller }: {
   flight: LiveFlight;
   currency: string;
+  journeyId?: string;
   returnState?: ReturnState;
   bookingStates: Record<string, BookingState>;
   selectedOutbound: boolean;
@@ -383,7 +386,7 @@ function FlightResult({ flight, currency, returnState, bookingStates, selectedOu
       {selectedOutbound && selectedReturnFlight && !sellerLookupFlight && <small className="seller-compare-hint">Seller booking links were not supplied for this return option. Use the exact Google Flights search above.</small>}
     </div>
     <FlightLegDetails flight={flight}/>
-    {selectedOutbound && sellerLookupFlight && <BookingOptions state={sellerState} currency={currency} selectedOption={selectedSeller?.flightId === sellerLookupFlight.id ? selectedSeller.option : null} onSelectSeller={(option) => onSelectSeller(sellerLookupFlight, option)}/>}
+    {selectedOutbound && sellerLookupFlight && <BookingOptions state={sellerState} currency={currency} journeyId={journeyId} selectedOption={selectedSeller?.flightId === sellerLookupFlight.id ? selectedSeller.option : null} onSelectSeller={(option) => onSelectSeller(sellerLookupFlight, option)}/>}
     {selectedOutbound && <ReturnOptions state={returnState} onSelectReturn={onSelectReturn} selectedReturnId={selectedReturnFlight?.id}/>}
   </article>;
 }
@@ -607,12 +610,13 @@ function experienceBookingUrl(experience: LiveExperience): string {
   return experience.mapsUrl;
 }
 
-function SelectedTripSummary({ selection, experiences, currency, nights, search }: {
+function SelectedTripSummary({ selection, experiences, currency, nights, search, journeyId }: {
   selection: DestinationSelection;
   experiences: LiveExperience[];
   currency: string;
   nights: number;
   search: TripSearchInput;
+  journeyId?: string;
 }) {
   const selectedExperiences = experiences.filter((experience) => Boolean(selection.experiences[experience.id]));
   const activities = selectedExperiences.filter((item) => item.kind === "activity");
@@ -643,7 +647,7 @@ function SelectedTripSummary({ selection, experiences, currency, nights, search 
         {selection.flightSeller && <div className="trip-selection-inline-note">
           <span>Seller offer: {selection.flightSeller.option.seller} · {selection.flightSeller.option.price !== null ? money(selection.flightSeller.option.price, selection.flightSeller.option.currency || currency) : "Price not supplied"}</span>
           {selection.flightSeller.option.separateTickets && <small>Separate tickets{selection.flightSeller.option.departingPrice !== null && selection.flightSeller.option.departingPrice !== undefined ? ` · Outbound ${money(selection.flightSeller.option.departingPrice, selection.flightSeller.option.currency || currency)}` : ""}{selection.flightSeller.option.returningPrice !== null && selection.flightSeller.option.returningPrice !== undefined ? ` · Return ${money(selection.flightSeller.option.returningPrice, selection.flightSeller.option.currency || currency)}` : ""}. The legs are ticketed separately.</small>}
-          <BookingContinue option={selection.flightSeller.option}/>
+          <BookingContinue option={selection.flightSeller.option} journeyId={journeyId}/>
         </div>}
       </article>}
       {selection.hotel && <article className="trip-selection-card">
@@ -1420,6 +1424,57 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const nights = Math.max(1, Math.round((new Date(`${search.returnDate}T00:00:00Z`).getTime() - new Date(`${search.departureDate}T00:00:00Z`).getTime()) / 86400000));
   const totalBudget = search.budgetMode === "per_person" ? search.budget * people : search.budget;
   const singleDestination = recommendations.length === 1;
+  const journeyIdRef = useRef("");
+
+  function getJourneyId(): string {
+    if (!journeyIdRef.current) {
+      try {
+        journeyIdRef.current = window.crypto.randomUUID();
+      } catch {
+        const bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        journeyIdRef.current = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+      }
+    }
+    return journeyIdRef.current;
+  }
+
+  function sendProductEvent(eventType: "outbound_click" | "result_selected", category: string, provider = "other") {
+    const body = JSON.stringify({ eventType, category, provider, journeyId: getJourneyId() });
+    try {
+      const queued = navigator.sendBeacon?.("/api/telemetry", new Blob([body], { type: "application/json" }));
+      if (queued) return;
+    } catch { /* Fall through to a keepalive request. */ }
+    void fetch("/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => undefined);
+  }
+
+  function trackOutboundClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const anchor = target.closest("a[href]");
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+    let url: URL;
+    try { url = new URL(anchor.href, window.location.href); } catch { return; }
+    if (url.protocol !== "https:" || url.origin === window.location.origin) return;
+
+    const host = url.hostname.toLowerCase();
+    let provider = "official_site";
+    if (host === "google.com" || host.endsWith(".google.com")) {
+      provider = url.pathname.includes("/maps") ? "google_maps" : url.pathname.includes("/travel/clk") || url.pathname.includes("/travel/flights") ? "google_flights" : "google_hotels";
+    } else if (host === "booking.com" || host.endsWith(".booking.com")) provider = "booking_com";
+    else if (host === "viator.com" || host.endsWith(".viator.com")) provider = "viator";
+    else if (host === "getyourguide.com" || host.endsWith(".getyourguide.com")) provider = "getyourguide";
+    else if (host === "openstreetmap.org" || host.endsWith(".openstreetmap.org")) provider = "openstreetmap";
+    else if (host === "geoapify.com" || host.endsWith(".geoapify.com")) provider = "geoapify";
+
+    const section = anchor.closest("details[data-section-key]")?.getAttribute("data-section-key");
+    const category = section === "flights" || section === "stays" || section === "activities" || section === "restaurants"
+      ? section : provider === "google_maps" ? "maps" : provider === "google_flights" ? "flights" : provider === "google_hotels" || provider === "booking_com" ? "stays" : "other";
+    sendProductEvent("outbound_click", category, provider);
+  }
 
   useEffect(() => {
     const key = `tripfinder:saved-trip-owner:v1:${window.location.pathname}${window.location.search}`;
@@ -1547,7 +1602,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setSaveTripMessage("");
     try {
       const snapshot = buildSavedTripSnapshot(search, recommendations, states, selections);
-      const payload: Record<string, unknown> = { search, snapshot };
+      const payload: Record<string, unknown> = { search, snapshot, journeyId: getJourneyId() };
       if (savedTripCredentials) {
         payload.shareToken = savedTripCredentials.shareToken;
         payload.ownerToken = savedTripCredentials.ownerToken;
@@ -1601,7 +1656,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setExpanded(id);
     setStates((current) => ({ ...current, [id]: { loading: true, error: "", result: current[id]?.result ?? null } }));
     try {
-      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: formatDestinationLabel(recommendation.destination.city, recommendation.destination.country), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode, forceRefresh }) });
+      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: formatDestinationLabel(recommendation.destination.city, recommendation.destination.country), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode, forceRefresh, journeyId: getJourneyId() }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to search this trip right now.");
       setStates((current) => ({ ...current, [id]: { loading: false, error: "", result: data as LiveTravelSearchResult } }));
@@ -1724,28 +1779,33 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   function selectOutbound(destinationId: string, flight: LiveFlight, destinationAirportCode: string) {
     const alreadySelected = selections[destinationId]?.outbound?.id === flight.id;
     updateSelection(destinationId, (current) => ({ ...current, outbound: alreadySelected ? null : flight, returnFlight: null, flightSeller: null }));
-    if (!alreadySelected) void loadReturnFlights(flight, destinationAirportCode);
+    if (!alreadySelected) { sendProductEvent("result_selected", "flights", "tripfinder"); void loadReturnFlights(flight, destinationAirportCode); }
   }
 
   function selectFlightSeller(destinationId: string, flight: LiveFlight, option: FlightBookingOption) {
     updateSelection(destinationId, (current) => ({ ...current, flightSeller: { flightId: flight.id, option } }));
+    sendProductEvent("result_selected", "flights", "tripfinder");
   }
 
   function selectReturn(destinationId: string, flight: LiveFlight) {
+    const alreadySelected = selections[destinationId]?.returnFlight?.id === flight.id;
     updateSelection(destinationId, (current) => ({
       ...current,
-      returnFlight: current.returnFlight?.id === flight.id ? null : flight,
+      returnFlight: alreadySelected ? null : flight,
       flightSeller: null,
     }));
+    if (!alreadySelected) sendProductEvent("result_selected", "flights", "tripfinder");
   }
 
   function selectHotel(destinationId: string, hotel: LiveHotel) {
+    const alreadySelected = selections[destinationId]?.hotel?.id === hotel.id;
     updateSelection(destinationId, (current) => ({
       ...current,
-      hotel: current.hotel?.id === hotel.id ? null : hotel,
+      hotel: alreadySelected ? null : hotel,
       checkInTime: undefined,
       checkOutTime: undefined,
     }));
+    if (!alreadySelected) sendProductEvent("result_selected", "stays", "tripfinder");
   }
 
   function updateExperienceSelection(destinationId: string, experience: LiveExperience, plan: SelectedExperience | null) {
@@ -1755,6 +1815,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       else delete next[experience.id];
       return { ...current, experiences: next };
     });
+    if (plan) sendProductEvent("result_selected", experience.kind === "restaurant" ? "restaurants" : "activities", "tripfinder");
   }
 
   useEffect(() => {
@@ -2028,7 +2089,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     },
   } : null;
 
-  return <div className="planner-results-workspace">
+  return <div className="planner-results-workspace" onClick={trackOutboundClick}>
     {forkRestoreNotice && <p className="fork-restore-notice" role="status">{forkRestoreNotice}</p>}
     <aside className="results-left-sidebar" aria-label="Trip overview and section navigation">
       <ResultsTripOverview
@@ -2096,7 +2157,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 <p className="flight-timezone-note">{destinationTimezoneNotice(destinationLabel, airportCode, search.departureDate)}</p>
                 <FlexibleFlightDatePanel search={search} destinationAirportCode={airportCode} hasSelections={Boolean(selection.outbound || selection.returnFlight || selection.hotel || Object.keys(selection.experiences).length)}/>
                 <p className="flight-roundtrip-note">Tripfinder sends one round-trip search with both dates. Google Flights returns outbound choices first; selecting one uses its departure token to retrieve matching return choices. The initial result price is indicative, not a confirmed combined fare. After choosing both legs, compare seller offers: they identify whether the booking is one combined ticket or separate outbound and return tickets, and show each leg's price when the provider supplies it.</p>
-                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected, forceRefresh) => loadBookingOptions(destination.id, selected, airportCode, forceRefresh)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
+                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} journeyId={journeyIdRef.current} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected, forceRefresh) => loadBookingOptions(destination.id, selected, airportCode, forceRefresh)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
               </details>}
 
               {search.components.includes("stays") && <details id={`trip-section-${destination.id}-stays`} data-section-key="stays" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
@@ -2131,7 +2192,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               </details>
               <details id={`trip-section-${destination.id}-plan`} data-section-key="plan" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><ClipboardList size={17}/><strong>Your plan</strong><span>Selected trip items</span><ChevronDown size={16} className="group-chevron"/></summary>
-                <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} search={search}/>
+                <SelectedTripSummary selection={selection} experiences={state.result.experiences} currency={search.currency} nights={nights} search={search} journeyId={journeyIdRef.current}/>
                 {!selection.outbound && !selection.returnFlight && !selection.hotel && Object.keys(selection.experiences).length === 0 && <p className="empty-inline results-plan-empty">Your plan is empty. Select flights, a place to stay, activities or restaurants to add them here.</p>}
               </details>
               <details id={`trip-section-${destination.id}-cost`} data-section-key="cost" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>

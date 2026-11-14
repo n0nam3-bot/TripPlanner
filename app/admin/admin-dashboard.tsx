@@ -14,6 +14,8 @@ type DashboardData = {
   geoapifyUsage: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; visitorCreditsToday: number; activeVisitorsToday: number; clientDailyCap: number };
   providerHealth: Array<{ provider: string; category: string; attempts: number; successes: number; failures: number; staleFallbacks: number; fallbackEvents: number; successRate: number | null; lastSuccessAt: string | null; lastFailureAt: string | null }>;
   savedTripHealth: { activeShares: number; created24h: number; updated24h: number; expiring7d: number; visitorSavesToday: number; visitorBucketsToday: number; ipSavesToday: number; ipBucketsToday: number };
+  productFunnel: { searchesStarted: number; searchesWithResults: number; searchesEmpty: number; searchesFailed: number; journeysWithSelection: number; journeysSaved: number; outboundClicks: number; flightRedirectSuccesses: number; flightRedirectFallbacks: number; flightRedirectErrors: number };
+  outboundHealth: Array<{ provider: string; category: string; clicks: number; redirectSuccesses: number; redirectFallbacks: number; redirectErrors: number }>;
   aiUsage: { openRouter: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number }; gemini: { configured: boolean; usedToday: number; dailyCap: number; remainingToday: number; usedThisMinute: number; minuteCap: number }; clientDailyCap: number };
   cache: { totalEntries: number; validEntries: number; expiredEntries: number; lastUpdatedAt: string | null };
   clientUsage: { activeClientsToday: number; reservedSearchesToday: number };
@@ -29,7 +31,7 @@ function shortTime(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function eventLabel(type: string): string {
-  return ({ provider_request: "Provider call", cache_hit: "Cache hit", provider_error: "Provider error", request_blocked: "Request blocked", account_check: "Account check", local_parse: "Local parse", provider_fallback: "Local fallback" } as Record<string, string>)[type] ?? type;
+  return ({ provider_request: "Provider call", cache_hit: "Cache hit", provider_error: "Provider error", request_blocked: "Request blocked", account_check: "Account check", local_parse: "Local parse", provider_fallback: "Local fallback", trip_search_started: "Trip search started", trip_search_completed: "Trip search results", trip_search_failed: "Trip search failed", result_selected: "Result selected", trip_saved: "Trip saved", trip_updated: "Trip updated", outbound_click: "Outbound click", outbound_redirect: "Flight redirect" } as Record<string, string>)[type] ?? type;
 }
 
 export default function AdminDashboard() {
@@ -189,6 +191,25 @@ export default function AdminDashboard() {
                   <div className="admin-detail-line"><span>Secondary network safety counter</span><strong>{number(data.savedTripHealth.ipSavesToday)} saves · {number(data.savedTripHealth.ipBucketsToday)} networks</strong></div>
                   <div className="admin-detail-line"><span>Share links expiring within 7 days</span><strong>{number(data.savedTripHealth.expiring7d)}</strong></div>
                   <p className="admin-footnote">Normal allowance: five new saves per persistent anonymous browser identity per UTC day. Secondary abuse guard: 25 new saves per IP/network per UTC day. Visitor and network identifiers are hashed; this panel never displays them.</p>
+                </article>
+              </section>
+
+              <section className="admin-section-grid admin-quality-grid">
+                <article className="admin-panel admin-table-panel">
+                  <div className="admin-panel-heading"><div><p className="admin-eyebrow">TRIP SEARCH FUNNEL · LAST 7 DAYS</p><h2>End-to-end planning outcomes</h2></div><span className="admin-subtle-label">Unique tab journeys</span></div>
+                  <div className="admin-quota-numbers"><div><small>Journeys started</small><strong>{number(data.productFunnel.searchesStarted)}</strong></div><div><small>Journeys with results</small><strong>{number(data.productFunnel.searchesWithResults)}</strong></div></div>
+                  <div className="admin-detail-line"><span>Journeys with no results</span><strong>{number(data.productFunnel.searchesEmpty)}</strong></div>
+                  <div className="admin-detail-line"><span>Journeys with errors</span><strong>{number(data.productFunnel.searchesFailed)}</strong></div>
+                  <div className="admin-detail-line"><span>Journeys with a selection</span><strong>{number(data.productFunnel.journeysWithSelection)}</strong></div>
+                  <div className="admin-detail-line"><span>Journeys that saved a trip</span><strong>{number(data.productFunnel.journeysSaved)}</strong></div>
+                  <p className="admin-footnote">A journey is a random ID for one results-tab session. Only its SHA-256 hash is stored; destinations, search text, prices, traveler details and selected item names are not collected. One search can issue multiple destination requests.</p>
+                </article>
+                <article className="admin-panel admin-table-panel">
+                  <div className="admin-panel-heading"><div><p className="admin-eyebrow">OUTBOUND LINK HEALTH · LAST 7 DAYS</p><h2>Provider handoffs</h2></div><span className="admin-subtle-label">Click events, not uptime probes</span></div>
+                  <div className="admin-quota-numbers"><div><small>Outbound clicks</small><strong>{number(data.productFunnel.outboundClicks)}</strong></div><div><small>Flight redirects succeeded</small><strong>{number(data.productFunnel.flightRedirectSuccesses)}</strong></div></div>
+                  <div className="admin-detail-line"><span>Flight redirect fallbacks / errors</span><strong>{number(data.productFunnel.flightRedirectFallbacks)} / {number(data.productFunnel.flightRedirectErrors)}</strong></div>
+                  {data.outboundHealth.length ? <div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>Provider</th><th>Link type</th><th>Clicks</th><th>Redirect ok</th><th>Fallback</th><th>Errors</th></tr></thead><tbody>{data.outboundHealth.map((row) => <tr key={`${row.provider}-${row.category}`}><td><strong>{row.provider.replaceAll("_", " ")}</strong></td><td>{row.category}</td><td>{number(row.clicks)}</td><td>{number(row.redirectSuccesses)}</td><td>{number(row.redirectFallbacks)}</td><td>{number(row.redirectErrors)}</td></tr>)}</tbody></table></div> : <div className="admin-empty-state">No outbound provider clicks recorded in the last seven days.</div>}
+                  <p className="admin-footnote">Tripfinder can record clicks on external links and the outcome of its own Google Flights seller-redirect handoff. It cannot verify that an external provider page loaded or that a booking completed.</p>
                 </article>
               </section>
 

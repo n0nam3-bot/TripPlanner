@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { hashClientAddress } from "@/lib/db/travel-cache";
+import { hashClientAddress, recordProviderEvent } from "@/lib/db/travel-cache";
 import { findDestination } from "@/lib/trip-planner/destinations";
 import { getDestinationGateways } from "@/lib/trip-planner/location-suggestions";
 import { searchLiveTravel } from "@/lib/providers/serpapi";
@@ -9,9 +9,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  let journeyId = "";
+  let searchStartedAt = 0;
+  let searchCategory = "Trip search";
   try {
     const body: unknown = await request.json();
     const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    journeyId = typeof record.journeyId === "string" && /^[a-f0-9-]{36}$/i.test(record.journeyId) ? record.journeyId : "";
     const validated = validateTripSearchInput(record.search);
     if (!validated.input) return NextResponse.json({ error: "Please correct the trip details.", details: validated.errors }, { status: 400 });
 
@@ -32,9 +36,27 @@ export async function POST(request: Request) {
 
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
     const forceRefresh = record.forceRefresh === true;
+    searchCategory = validated.input.components.slice().sort().join(" + ") || "Trip search";
+    searchStartedAt = Date.now();
+    await recordProviderEvent({ provider: "Tripfinder", category: "Trip search · " + searchCategory, eventType: "trip_search_started", outcome: "started", journeyId });
     const result = await searchLiveTravel(validated.input, airportCode, destinationName, hashClientAddress(address), forceRefresh);
+    await recordProviderEvent({
+      provider: "Tripfinder", category: "Trip search · " + searchCategory, eventType: "trip_search_completed",
+      outcome: result.status === "live" ? "success" : result.status === "partial" ? "partial" : "empty",
+      durationMs: Date.now() - searchStartedAt, journeyId,
+      resultCounts: {
+        flights: result.flights.length,
+        stays: result.hotels.length,
+        activities: result.experiences.filter((item) => item.kind === "activity").length,
+        restaurants: result.experiences.filter((item) => item.kind === "restaurant").length,
+      },
+    });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    if (searchStartedAt > 0) await recordProviderEvent({
+      provider: "Tripfinder", category: "Trip search · " + searchCategory, eventType: "trip_search_failed",
+      outcome: "error", durationMs: Date.now() - searchStartedAt, journeyId,
+    });
     const message = error instanceof Error ? error.message : "Unexpected travel search error.";
     if (message === "SERPAPI_NOT_CONFIGURED") {
       return NextResponse.json({ error: "Live search is not connected yet. Add SERPAPI_API_KEY in Vercel to enable it.", code: "PROVIDER_NOT_CONFIGURED" }, { status: 503 });

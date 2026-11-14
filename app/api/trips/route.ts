@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveAnonymousTripDraft } from "@/lib/db/saved-trips";
+import { recordProviderEvent } from "@/lib/db/travel-cache";
 import { validateSavedTripDraft } from "@/lib/trip-planner/saved-trips";
 import { ANONYMOUS_VISITOR_COOKIE, ANONYMOUS_VISITOR_COOKIE_MAX_AGE, createAnonymousVisitorId, isValidAnonymousVisitorId } from "@/lib/trip-planner/anonymous-visitor";
 
@@ -46,6 +47,8 @@ export async function POST(request: NextRequest) {
   };
   try {
     const saved = await saveAnonymousTripDraft(validation.draft, { shareToken, ownerToken, visitorId, clientAddress: clientAddress(request) });
+    const journeyId = typeof record.journeyId === "string" && /^[a-f0-9-]{36}$/i.test(record.journeyId) ? record.journeyId : "";
+    await recordProviderEvent({ provider: "Tripfinder", category: "Saved trip", eventType: shareToken ? "trip_updated" : "trip_saved", outcome: shareToken ? "updated" : "success", journeyId });
     const baseUrl = canonicalBaseUrl(request);
     return withVisitorCookie(NextResponse.json({
       success: true,

@@ -58,8 +58,8 @@ test("owner feedback tools require the saved-trip owner credentials", () => {
   const inviteRoute = read("app/api/trips/feedback/invite/route.ts");
   const reviewRoute = read("app/api/trips/feedback/review/route.ts");
   assert.match(workspace, /feedbackCredentials=\{savedTripCredentials\}/);
-  assert.match(workspace, /Invite traveler feedback/);
-  assert.match(workspace, /View feedback/);
+  assert.match(workspace, /Traveler feedback/);
+  assert.match(workspace, /View inbox/);
   assert.match(inviteRoute, /createTripFeedbackInvite/);
   assert.match(reviewRoute, /reviewTripFeedback/);
   assert.match(reviewRoute, /409/);
