@@ -74,3 +74,12 @@ export function sortByStraightLineProximity<T extends { latitude?: number | null
     })
     .map(({ item }) => item);
 }
+/** True only when provider status explicitly says the business is not operating.
+ * Normal daily states such as "Closed · Opens 3 PM" are retained because the
+ * traveler may be visiting later, and hours can differ on the trip date.
+ */
+export function isUnavailablePlaceStatus(value: unknown): boolean {
+  if (typeof value !== "string" || !value.trim()) return false;
+  const normalized = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+  return /\b(?:temporarily closed|permanently closed|closed permanently|permanently shut|no longer open|no longer operating|out of business)\b/.test(normalized);
+}

@@ -92,3 +92,37 @@ test("an unresolved beach does not silently fall back to the selected stay", () 
   assert.match(answer, /won't substitute your selected stay/i);
   assert.doesNotMatch(answer, /Closest loaded restaurants to your selected stay/);
 });
+
+
+test("a similarity follow-up explicitly about the Airbnb switches away from the previously discussed beach", () => {
+  const context = makeContext();
+  context.experiences.push(
+    { id: "rest-cuisine-dominican", kind: "restaurant", name: "La Cocina Caribeña", category: "Dominican restaurant", address: "Las Terrenas 32000", rating: 4.7, price: "", latitude: 19.2910, longitude: -69.5990 },
+    { id: "rest-cuisine-spanish", kind: "restaurant", name: "Casa Española", category: "Spanish restaurant", address: "Las Terrenas 32000", rating: 4.6, price: "", latitude: 19.2950, longitude: -69.6000 },
+    { id: "rest-closed-eclectic", kind: "restaurant", name: "Groovy Garden", category: "Eclectic restaurant", address: "Las Terrenas 32000", rating: 4.6, price: "", openState: "Temporarily closed", latitude: 19.2911, longitude: -69.5991 },
+  );
+  context.selected.schedule.push({ id: "rest-el-cayuco", name: "El Cayuco de la Bonita", kind: "restaurant", date: "2026-12-26", slot: "Dinner" });
+  const history = [
+    { role: "user", content: "what's the closest restaurant to the beach i selected?" },
+    { role: "assistant", content: "Closest loaded restaurants to Playa Bonita: El Cayuco de la Bonita — 510 ft straight-line." },
+    { role: "user", content: "I already have El Cayuco de la Bonita selected so which is the next closest to the beach playa bonita?" },
+    { role: "assistant", content: "Closest loaded restaurants to Playa Bonita: Comedor América. El gustico de la abuela — 0.66 mi straight-line." },
+  ];
+  const answer = buildTripAssistantLocalFallback("Which restaurant is also nearby the Airbnb but similar to El Cayuco de la Bonita?", context, history);
+  assert.match(answer, /Restaurants similar to El Cayuco de la Bonita near your selected Airbnb\/stay/);
+  assert.match(answer, /Casa Española/);
+  assert.doesNotMatch(answer, /Playa Bonita as the proximity origin/i);
+  assert.doesNotMatch(answer, /Comedor América/);
+  assert.doesNotMatch(answer, /Groovy Garden/);
+});
+
+test("temporarily closed restaurants are excluded while normal daily closed hours remain eligible", () => {
+  const context = makeContext();
+  context.experiences.push(
+    { id: "rest-temp", kind: "restaurant", name: "Temporarily Closed Cafe", category: "Spanish restaurant", address: "Las Terrenas", rating: 4.9, price: "", openState: "Temporarily closed", latitude: 19.2901, longitude: -69.6001 },
+    { id: "rest-daily-closed", kind: "restaurant", name: "Opens Later Bistro", category: "Spanish restaurant", address: "Las Terrenas", rating: 4.8, price: "", openState: "Closed · Opens 3 PM", latitude: 19.2902, longitude: -69.6002 },
+  );
+  const answer = buildTripAssistantLocalFallback("Which restaurant is closest to my selected stay?", context);
+  assert.match(answer, /Opens Later Bistro/);
+  assert.doesNotMatch(answer, /Temporarily Closed Cafe/);
+});

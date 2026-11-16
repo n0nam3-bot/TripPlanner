@@ -16,7 +16,7 @@ import type { FlexibleFlightDateSearchResult } from "@/lib/providers/serpapi";
 import type { FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
 import { normalizeSavedTripSnapshot, shiftSavedTripSnapshotDateRange, sortSavedTripItemsChronologically, type SavedTripSnapshot, type SavedTripItem, type SavedTripSelectionReference } from "@/lib/trip-planner/saved-trips";
 import { isValidProximityStartingPoint, type ProximityStartingPoint } from "@/lib/trip-planner/proximity";
-import { sortByStraightLineProximity } from "@/lib/trip-planner/place-quality";
+import { isUnavailablePlaceStatus, sortByStraightLineProximity } from "@/lib/trip-planner/place-quality";
 import { milesForProximityLimit, parseProximityRequirement, parseRouteDurationMinutes, type ProximityRequirement } from "@/lib/trip-planner/proximity-filter";
 
 type Props = {
@@ -1091,6 +1091,7 @@ function UnifiedTripSchedule({ search, selection, experiences, days, nights, cur
         <div className="itinerary-travel-copy">
           <strong><a className="itinerary-selected-link" href={`#${getTripAssistantResultAnchor(experience.kind, experience.id)}`}>{experience.name} <ArrowUpRight size={11}/></a></strong>
           <p>{exactTime} · {[experience.category, experience.address].filter(Boolean).join(" · ") || "Check current opening hours and booking details."}</p>
+          {isUnavailablePlaceStatus(experience.openState) && <small className="selected-place-availability-warning">Provider currently lists this place as temporarily or permanently closed. Verify its operating status or choose a replacement before relying on this itinerary item.</small>}
           <div className="itinerary-activity-actions">
             <a href={experienceBookingUrl(experience)} target="_blank" rel="noreferrer">Open listing <ExternalLink size={10}/></a>
             <label className="itinerary-date-select"><span>Scheduled date</span><select value={plan.date} onChange={(event) => onUpdateExperience(experience, { ...plan, date: event.target.value })} aria-label={`Change scheduled date for ${experience.name}`}>
@@ -2193,6 +2194,9 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     ?? null;
   const assistantResult = assistantRecommendation ? states[assistantRecommendation.destination.id]?.result ?? null : null;
   const assistantSelection = assistantRecommendation ? selections[assistantRecommendation.destination.id] ?? emptySelection() : emptySelection();
+  // Keep the complete loaded snapshot for reference resolution (including a
+  // selected closed place used as a similarity example); recommendation logic
+  // and visible cards independently exclude unavailable listings.
   const assistantExperiences = assistantResult?.experiences ?? [];
   // Send balanced place categories and retain the selected property even when it
   // is beyond the first page of provider results. The assistant needs both the
@@ -2263,6 +2267,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       externalUrl: experience.website || experience.mapsUrl,
       externalUrlLabel: experience.website ? "Open official site" : "Open in Maps",
       category: experience.category, address: experience.address, rating: experience.rating, price: experience.price ?? "",
+      openState: experience.openState,
       latitude: experience.latitude, longitude: experience.longitude,
     })),
     selected: {
@@ -2299,7 +2304,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
         const destination = recommendation.destination;
         const state = states[destination.id];
         const selection = selections[destination.id] ?? emptySelection();
-        const resultExperiences = state?.result?.experiences ?? [];
+        const allResultExperiences = state?.result?.experiences ?? [];
+        const resultExperiences = allResultExperiences.filter((experience) => !isUnavailablePlaceStatus(experience.openState));
         const itineraryDates = recommendation.itinerary.map((day, dayIndex) => ({ date: day.date, label: `Day ${dayIndex + 1} · ${dateShort(day.date)}` }));
         // A resolved custom starting point overrides the selected stay; otherwise
         // the selected hotel/Airbnb is the default origin for local result ranking.
@@ -2383,7 +2389,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
                 </details>
                 <details id={`trip-section-${destination.id}-restaurants`} data-section-key="restaurants" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}><summary className="live-result-group-summary"><Users size={17}/><strong>Restaurants & dining</strong><span>{restaurantExperiences.length} options · {Object.keys(selection.experiences).filter((id) => state.result!.experiences.some((item) => item.id === id && item.kind === "restaurant")).length} selected</span><ChevronDown size={16} className="group-chevron"/></summary>
                   {search.planningNotes.some((note) => /^Restaurant proximity:/i.test(note)) && <p className="restaurant-proximity-note">{proximityOrigin ? `Restaurants are sorted nearest-first by straight-line distance from ${proximityOriginLabel}. Use each restaurant's driving-route control to verify the requested time limit; straight-line distance is not driving time.` : "Set Your starting point above or select a property to sort restaurants by proximity. Use each restaurant's driving-route control to verify the requested time limit; straight-line distance is not driving time."}</p>}
-                  {restaurantExperiences.length ? restaurantProximityRequirement ? <ProximityCheckedExperienceResults destinationId={destination.id} kind="restaurant" experiences={restaurantExperiences} requirement={restaurantProximityRequirement} origin={proximityOrigin} originLabel={proximityOriginLabel} originAddress={proximityOriginAddress} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selectedItems={selection.experiences} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/> : restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No restaurant results were returned. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
+                  {restaurantExperiences.length ? restaurantProximityRequirement ? <ProximityCheckedExperienceResults destinationId={destination.id} kind="restaurant" experiences={restaurantExperiences} requirement={restaurantProximityRequirement} origin={proximityOrigin} originLabel={proximityOriginLabel} originAddress={proximityOriginAddress} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selectedItems={selection.experiences} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/> : restaurantExperiences.map((experience) => <ExperienceResult key={experience.id} experience={experience} hotels={state.result!.hotels} selectedHotel={selection.hotel} startingPoint={startingPoints[destination.id]} airportCode={airportCode} search={search} days={itineraryDates} selected={selection.experiences[experience.id]} onSelectionChange={(item, plan) => updateExperienceSelection(destination.id, item, plan)}/>) : <div className="empty-category"><p>No eligible restaurant results were returned. Listings marked temporarily or permanently closed are excluded; ordinary daily opening hours remain visible for your trip dates. Open Maps to search current dining options in this destination.</p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`Restaurants in ${destinationLabel}`)}`} target="_blank" rel="noreferrer">Search restaurants in Maps <ArrowUpRight size={12}/></a></div>}
                 </details>
               </>}
               <details id={`trip-section-${destination.id}-weather`} data-section-key="weather" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
