@@ -1,5 +1,3 @@
-import { isRestaurantCategory } from "../trip-planner/place-quality";
-
 export type AIProviderName = "OpenRouter" | "Gemini";
 
 export type TripAssistantContext = {
@@ -69,7 +67,7 @@ export type TripAssistantContext = {
     returnFlight?: string;
     stay?: string;
     stayId?: string;
-    schedule?: Array<{ name: string; kind: string; date: string; slot: string }>;
+    schedule?: Array<{ id?: string; name: string; kind: string; date: string; slot: string }>;
   };
 };
 
@@ -176,7 +174,8 @@ function isActualBeachPlace(place: { name: string; category: string }): boolean 
 }
 
 function isRestaurantPlace(place: { name: string; category: string }): boolean {
-  return isRestaurantCategory(place.category);
+  const category = place.category.trim();
+  return /\b(?:restaurant|cafe|café|bistro|pizzeria|diner|eatery|tapas|seafood|grill|brasserie|gastropub|food court|bar and grill|bar & grill)\b/i.test(category);
 }
 
 function parseDurationMinutes(value: string): number | null {
@@ -242,143 +241,187 @@ function selectedStay(context: TripAssistantContext) {
     ?? (selectedName ? (context.stays ?? []).find((stay) => stay.name.toLocaleLowerCase() === selectedName) : undefined);
 }
 
-function normalizedLandmarkTokens(value: string): string[] {
-  const normalized = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const stopWords = new Set(["the", "a", "an", "to", "by", "near", "around", "in", "at", "from", "of", "and", "or", "is", "are", "be", "would", "will", "closest", "nearest", "stay", "stays", "hotel", "hotels", "airbnb", "airbnbs", "rental", "rentals", "property", "properties", "accommodation", "accommodations", "beach", "beaches", "area"]);
-  return normalized.replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((token) => token.length > 2 && !stopWords.has(token));
+type AssistantExperience = NonNullable<TripAssistantContext["experiences"]>[number];
+
+function normalizePlaceName(value: string): string {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function extractStayLandmarkTarget(question: string): string | null {
-  const patterns = [
-    /\b(?:which|what|find|show|compare|rank)\b.{0,100}\b(?:stays?|hotels?|airbnbs?|vacation rentals?|rentals?|properties|accommodations?)\b.{0,90}\b(?:closest|nearest)\s+(?:to|by|around)?\s*(.+?)[?.!]*$/i,
-    /\b(?:which|what)\b.{0,70}\b(?:stay|hotel|airbnb|rental|property|accommodation)\b.{0,90}\b(?:closest|nearest)\s+(?:to|by|around)\s+(.+?)[?.!]*$/i,
-    /\b(?:which|what|find|show|compare|rank)\b.{0,100}\b(?:stays?|hotels?|airbnbs?|vacation rentals?|rentals?|properties|accommodations?)\b.{0,90}\b(?:within|under|no more than|up to)\s+\d+\s*(?:min|mins|minutes?)\s+(?:of|from)\s+(.+?)[?.!]*$/i,
-  ];
-  for (const pattern of patterns) {
-    const match = question.match(pattern);
-    if (!match?.[1]) continue;
-    let target = match[1].replace(/[?.!]+$/g, "").trim();
-    target = target.replace(/^(?:(?:by|via)\s+)?(?:driving|drive|walking|walk|on foot|by car|car|taxi)\s+(?:to\s+)?/i, "").trim();
-    // A city appended to a named landmark is useful for human display but
-    // should not be required to match the landmark's loaded result name.
-    target = target.replace(/\s+\b(?:in|at)\s+(?:the\s+)?[\p{L}][\p{L}\s,'-]{2,}$/u, "").trim();
-    if (normalizedLandmarkTokens(target).length >= 1) return target.slice(0, 120);
-  }
-  return null;
+function hasCoordinates<T extends { latitude?: number | null; longitude?: number | null }>(item: T): item is T & { latitude: number; longitude: number } {
+  return typeof item.latitude === "number" && Number.isFinite(item.latitude) && item.latitude >= -90 && item.latitude <= 90
+    && typeof item.longitude === "number" && Number.isFinite(item.longitude) && item.longitude >= -180 && item.longitude <= 180;
 }
 
-function landmarkMatchScore(targetTokens: string[], name: string): number {
-  const candidateTokens = new Set(normalizedLandmarkTokens(name));
-  if (!candidateTokens.size) return 0;
-  const matched = targetTokens.filter((token) => candidateTokens.has(token)).length;
-  if (matched < Math.min(2, targetTokens.length)) return 0;
-  return matched / targetTokens.length;
-}
-
-function buildStayToLandmarkProximityAnswer(question: string, context: TripAssistantContext): string | null {
-  const target = extractStayLandmarkTarget(question);
-  if (!target) return null;
-  const targetTokens = normalizedLandmarkTokens(target);
-  const targetMatches = (context.experiences ?? [])
-    .filter((item) => item.latitude !== null && item.latitude !== undefined && item.longitude !== null && item.longitude !== undefined)
-    .map((item) => ({ item, score: landmarkMatchScore(targetTokens, item.name) }))
-    .filter((match) => match.score >= 0.5)
-    .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
-
-  const limitMatch = question.match(/\b(?:within|under|no more than|up to)\s+(\d+)\s*(?:min|mins|minutes?)\b/i);
-  const requestedLimitMinutes = limitMatch ? Number(limitMatch[1]) : null;
-  const requestedMode = /\b(?:walk|walking|on foot)\b/i.test(question)
-    ? "walk"
-    : /\b(?:drive|driving|by car|taxi)\b/i.test(question) ? "drive" : "";
-  const requestedRouteMeasurement = Boolean(requestedMode || requestedLimitMinutes !== null
-    || /\b(?:minutes? away|travel time|route time)\b/i.test(question));
-
-  let coordinateRanking: Array<{ stay: NonNullable<TripAssistantContext["stays"]>[number]; miles: number }> = [];
-  let matchedLandmarkName = target;
-  if (targetMatches.length) {
-    const landmark = targetMatches[0].item;
-    matchedLandmarkName = landmark.name;
-    coordinateRanking = (context.stays ?? [])
-      .filter((stay) => stay.latitude !== null && stay.latitude !== undefined && stay.longitude !== null && stay.longitude !== undefined)
-      .map((stay) => ({ stay, miles: haversineMiles(landmark.latitude!, landmark.longitude!, stay.latitude!, stay.longitude!) }))
-      .sort((a, b) => a.miles - b.miles)
-      .slice(0, 3);
-    if (coordinateRanking.length && !requestedRouteMeasurement) {
-      const lines = coordinateRanking.map(({ stay, miles }, index) => `${index + 1}. **${stay.name}** — ${miles < 0.1 ? `${(miles * 5280).toFixed(0)} ft` : `${miles.toFixed(2)} mi`} straight-line`).join("\n");
-      return `**Closest loaded stays to ${landmark.name}:**\n${lines}\n\nRanked by straight-line distance between the loaded property and landmark coordinates, not walking or driving time. Use a property route check for road travel estimates.`;
-    }
-  }
-
-  // Some accommodation feeds supply a nearby-place route but not the
-  // landmark's own coordinates. Compare only like-for-like transport modes.
-  const nearbyMatches = (context.stays ?? []).flatMap((stay) => (stay.nearbyPlaces ?? [])
-    .filter((place) => landmarkMatchScore(targetTokens, place.name) >= 0.5)
-    .flatMap((place) => place.transportations.map((route) => ({ stay, place: place.name, type: route.type, duration: route.duration, minutes: parseDurationMinutes(route.duration) })))
-    .filter((route) => route.minutes !== null));
-  const modeMatches = requestedMode
-    ? nearbyMatches.filter((route) => requestedMode === "walk" ? /walk|foot/i.test(route.type) : /drive|car|taxi/i.test(route.type))
-    : nearbyMatches;
-  const modeCounts = new Map<string, number>();
-  for (const item of modeMatches) modeCounts.set(item.type.toLowerCase(), (modeCounts.get(item.type.toLowerCase()) ?? 0) + 1);
-  const comparableMode = requestedMode ? "" : [...modeCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-  const comparable = modeMatches
-    .filter((item) => requestedMode || item.type.toLowerCase() === comparableMode)
-    .sort((a, b) => (a.minutes ?? Infinity) - (b.minutes ?? Infinity));
-
-  if (comparable.length) {
-    const modeLabel = requestedMode || comparable[0].type.toLowerCase();
-    if (requestedLimitMinutes !== null) {
-      const withinLimit = comparable.filter((item) => (item.minutes ?? Infinity) <= requestedLimitMinutes);
-      if (withinLimit.length) {
-        const uniqueWithinLimit = [...new Map(withinLimit.map((item) => [item.stay.id, item])).values()];
-        return `**Loaded ${modeLabel} routes to ${target} within ${requestedLimitMinutes} minutes:**\n${uniqueWithinLimit.slice(0, 5).map((item, index) => `${index + 1}. **${item.stay.name}** — ${item.place}: ${item.duration}`).join("\n")}\n\nThese are provider-listed nearby-place route details. Only properties with comparable route data and a reported duration at or below the requested limit are included.`;
+function dedupeAssistantExperiences(items: AssistantExperience[]): AssistantExperience[] {
+  const unique: AssistantExperience[] = [];
+  for (const item of items) {
+    const key = normalizePlaceName(item.name);
+    if (!key) continue;
+    const duplicateIndex = unique.findIndex((existing) => {
+      if (existing.kind !== item.kind || normalizePlaceName(existing.name) !== key) return false;
+      if (item.kind === "activity" && isActualBeachPlace({ name: item.name, category: item.category })
+        && isActualBeachPlace({ name: existing.name, category: existing.category })) return true;
+      if (hasCoordinates(existing) && hasCoordinates(item)) {
+        return haversineMiles(existing.latitude, existing.longitude, item.latitude, item.longitude) <= 0.25;
       }
-      return `**No loaded ${modeLabel} route to ${target} is reported within ${requestedLimitMinutes} minutes.** I found comparable provider-listed routes, but none meet the requested time limit. I will not substitute straight-line distance for route time.`;
-    }
-    const unique = [...new Map(comparable.map((item) => [item.stay.id, item])).values()].slice(0, 3);
-    return `**Loaded ${modeLabel} routes to ${target}:**\n${unique.map((item, index) => `${index + 1}. **${item.stay.name}** — ${item.place}: ${item.duration}`).join("\n")}\n\nThese are provider-listed nearby-place route details. Only properties with comparable route data are shown.`;
+      return true;
+    });
+    if (duplicateIndex < 0) unique.push(item);
+    else if (!hasCoordinates(unique[duplicateIndex]) && hasCoordinates(item)) unique[duplicateIndex] = item;
   }
-
-  if (coordinateRanking.length) {
-    const lines = coordinateRanking.map(({ stay, miles }, index) => `${index + 1}. **${stay.name}** — ${miles < 0.1 ? `${(miles * 5280).toFixed(0)} ft` : `${miles.toFixed(2)} mi`} straight-line`).join("\n");
-    const requestedDescription = requestedMode ? `${requestedMode} distance` : "travel time";
-    const limitText = requestedLimitMinutes !== null ? ` or whether any property is within ${requestedLimitMinutes} minutes` : "";
-    return `**Closest loaded stays to ${matchedLandmarkName} by geographic distance:**\n${lines}\n\nThese coordinates do not establish ${requestedDescription}${limitText}. No comparable provider-listed route to this landmark is loaded, so I cannot verify a walking or driving time. The distances above are straight-line estimates only.`;
-  }
-
-  return `I couldn't find **${target}** as a mapped landmark or in the nearby-place details attached to the loaded stays. I can't reliably rank these properties against that location yet. Refresh the activities/attractions results or check the landmark name; I won't guess using unrelated beach or business records.`;
+  return unique;
 }
 
-function buildRestaurantProximityAnswer(question: string, context: TripAssistantContext): string {
+function beachCandidates(context: TripAssistantContext): AssistantExperience[] {
+  return dedupeAssistantExperiences((context.experiences ?? []).filter((item) =>
+    item.kind === "activity" && isActualBeachPlace({ name: item.name, category: item.category }),
+  ));
+}
+
+function findSelectedBeach(context: TripAssistantContext, candidates: AssistantExperience[]): AssistantExperience[] {
+  const schedule = (context.selected?.schedule ?? []).filter((item) =>
+    /^(?:activity|attraction|beach)$/i.test(item.kind.trim()) && isActualBeachPlace({ name: item.name, category: "" }),
+  );
+  const selected = schedule.flatMap((entry) => {
+    const match = (entry.id ? candidates.find((candidate) => candidate.id === entry.id) : undefined)
+      ?? candidates.find((candidate) => normalizePlaceName(candidate.name) === normalizePlaceName(entry.name));
+    return match ? [match] : [];
+  });
+  return dedupeAssistantExperiences(selected);
+}
+
+function resolveBeachTarget(
+  question: string,
+  context: TripAssistantContext,
+  history: TripAssistantMessage[],
+): { target?: AssistantExperience; problem?: string } {
+  const candidates = beachCandidates(context);
+  const currentText = normalizePlaceName(question);
+  const explicitCurrent = candidates.filter((candidate) => {
+    const name = normalizePlaceName(candidate.name);
+    return name.length >= 5 && currentText.includes(name);
+  });
+  if (explicitCurrent.length === 1) return { target: explicitCurrent[0] };
+  if (explicitCurrent.length > 1) return { target: explicitCurrent[0] };
+
+  const asksSelectedBeach = /\b(?:my selected beach|selected beach|the beach i (?:selected|picked)|beach i (?:selected|picked)|my picked beach)\b/i.test(question);
+  const selected = findSelectedBeach(context, candidates);
+  if (asksSelectedBeach) {
+    if (selected.length === 1) return { target: selected[0] };
+    if (selected.length > 1) return { problem: `More than one beach is selected in your itinerary: ${selected.slice(0, 5).map((item) => item.name).join(", ")}. Tell me which one to use.` };
+  }
+
+  const recentUserMessages = history.filter((message) => message.role === "user").slice(-6).reverse();
+  for (const message of recentUserMessages) {
+    const normalized = normalizePlaceName(message.content);
+    const mentioned = candidates.filter((candidate) => {
+      const name = normalizePlaceName(candidate.name);
+      return name.length >= 5 && normalized.includes(name);
+    });
+    if (mentioned.length === 1) return { target: mentioned[0] };
+  }
+
+  if (selected.length === 1 && /\b(?:beach|playa|shore|coast)\b/i.test(question)) return { target: selected[0] };
+  if (candidates.length === 1) return { target: candidates[0] };
+  if (candidates.length > 1) {
+    return { problem: `I found multiple beach results, but I can't tell which one you mean. Please name the beach: ${candidates.slice(0, 5).map((item) => item.name).join(", ")}.` };
+  }
+  return { problem: "I can't identify a beach with usable coordinates in the currently loaded activity results. Select or load the beach first, or give me its exact name or address. I won't substitute your selected stay as the beach location." };
+}
+
+function selectedRestaurantExclusions(
+  question: string,
+  context: TripAssistantContext,
+  history: TripAssistantMessage[],
+  restaurants: AssistantExperience[],
+): Set<string> {
+  const excluded = new Set<string>();
+  const selectedSchedule = (context.selected?.schedule ?? []).filter((item) => /^(?:restaurant|dining|food)$/i.test(item.kind.trim()));
+  for (const item of restaurants) {
+    if (selectedSchedule.some((selected) => (selected.id && selected.id === item.id)
+      || normalizePlaceName(selected.name) === normalizePlaceName(item.name))) excluded.add(item.id);
+  }
+
+  const selectionPattern = /\b(?:already\s+(?:have|selected|picked|booked)|(?:i|we)\s+(?:already\s+)?(?:have|selected|picked|booked|chose|chosen)|on my itinerary|in my schedule)\b/i;
+  const selectionMessages = [question, ...history.filter((message) => message.role === "user").slice(-6).map((message) => message.content)]
+    .filter((message) => selectionPattern.test(message));
+  for (const item of restaurants) {
+    const name = normalizePlaceName(item.name);
+    if (name.length >= 5 && selectionMessages.some((message) => normalizePlaceName(message).includes(name))) excluded.add(item.id);
+  }
+
+  const asksNext = /\b(?:next closest|next nearest|another|other than|besides|alternative|alternatives|different one)\b/i.test(question);
+  if (asksNext) {
+    const lastAssistant = [...history].reverse().find((message) => message.role === "assistant");
+    if (lastAssistant) {
+      const previousAnswer = normalizePlaceName(lastAssistant.content);
+      for (const item of restaurants) {
+        const name = normalizePlaceName(item.name);
+        if (name.length >= 5 && previousAnswer.includes(name)) excluded.add(item.id);
+      }
+    }
+  }
+  return excluded;
+}
+
+function buildRestaurantProximityAnswer(question: string, context: TripAssistantContext, history: TripAssistantMessage[] = []): string {
+  const restaurants = dedupeAssistantExperiences((context.experiences ?? []).filter((item) =>
+    item.kind === "restaurant" && isRestaurantPlace({ name: item.name, category: item.category }),
+  ));
+
+  // A beach named or selected by the traveler is the origin for this question.
+  // It must take precedence over the normal selected-stay/custom-start origin.
+  const recentBeachRestaurantQuestion = history.filter((message) => message.role === "user").slice(-4).reverse()
+    .some((message) => hasBeachKeyword(message.content) && /\b(?:restaurant|restaurants|dining|food)\b/i.test(message.content));
+  const followsBeachOrigin = recentBeachRestaurantQuestion && /\b(?:next|another|other|one|ones|same|closest|nearest|which|what)\b/i.test(question);
+  if (hasBeachKeyword(question) || followsBeachOrigin) {
+    const resolved = resolveBeachTarget(question, context, history);
+    if (!resolved.target) return resolved.problem ?? "I could not resolve the beach you mean from the loaded results.";
+    if (!hasCoordinates(resolved.target)) {
+      return `I found **${resolved.target.name}**, but its coordinates are not available in the loaded result snapshot, so I cannot rank restaurants around it. I won't substitute the selected stay as the origin.`;
+    }
+    const excluded = selectedRestaurantExclusions(question, context, history, restaurants);
+    const eligible = restaurants.filter((item) => hasCoordinates(item) && !excluded.has(item.id));
+    const ranked = eligible.map((item) => ({ item, miles: haversineMiles(resolved.target!.latitude!, resolved.target!.longitude!, item.latitude!, item.longitude!) }))
+      .sort((a, b) => a.miles - b.miles)
+      .slice(0, /\b(?:restaurants|options|alternatives|compare|which ones)\b/i.test(question) ? 3 : 1);
+    if (!ranked.length) {
+      return excluded.size
+        ? `I identified **${resolved.target.name}**, but there are no other coordinate-backed restaurants in the loaded results after excluding restaurants already selected or previously recommended. Load more restaurant results to compare alternatives.`
+        : `I identified **${resolved.target.name}**, but none of the currently loaded restaurant results has usable coordinates. Refresh the restaurant results or open a place card to verify its location.`;
+    }
+    const lines = ranked.map(({ item, miles }, index) => `${index + 1}. **${item.name}** — ${miles < 0.1 ? `${(miles * 5280).toFixed(0)} ft` : `${miles.toFixed(2)} mi`} straight-line${item.category ? ` · ${item.category}` : ""}${item.address ? ` · ${item.address}` : ""}`).join("\n");
+    const qualifier = excluded.size ? " (excluding restaurants already selected or previously recommended)" : "";
+    return `**Closest loaded restaurants to ${resolved.target.name}${qualifier}:**\n${lines}\n\nRanked by straight-line distance from the beach coordinates, not walking or driving time. Ask for a driving-time comparison to check road routes.`;
+  }
+
   const stay = selectedStay(context);
   const customStart = context.startingPoint;
   const origin = customStart
     ? { label: customStart.label, latitude: customStart.latitude, longitude: customStart.longitude, description: "your starting point" }
-    : stay && stay.latitude !== null && stay.latitude !== undefined && stay.longitude !== null && stay.longitude !== undefined
+    : stay && hasCoordinates(stay)
       ? { label: stay.name, latitude: stay.latitude, longitude: stay.longitude, description: "your selected stay" }
       : null;
-  if (!origin) return "I can compare nearby restaurants without requiring a hotel booking. Enter a hotel, Airbnb, college, venue, landmark, or street address in Your starting point, or tell me where you are staying (for example, I am staying at Northeast College of Health Sciences).";
+  if (!origin) return "I can compare nearby restaurants without requiring a hotel booking. Enter a hotel, Airbnb, college, venue, landmark, or street address in Your starting point, or tell me where you are staying.";
 
-  const restaurants = (context.experiences ?? []).filter((item) => item.kind === "restaurant" && isRestaurantPlace({ name: item.name, category: item.category }));
+  const excluded = selectedRestaurantExclusions(question, context, history, restaurants);
   const ranked = restaurants
-    .filter((item) => item.latitude !== null && item.latitude !== undefined && item.longitude !== null && item.longitude !== undefined)
+    .filter((item) => hasCoordinates(item) && !excluded.has(item.id))
     .map((item) => ({ item, miles: haversineMiles(origin.latitude, origin.longitude, item.latitude!, item.longitude!) }))
     .sort((a, b) => a.miles - b.miles)
     .slice(0, /\b(?:restaurants|options|alternatives|compare)\b/i.test(question) ? 3 : 1);
   if (ranked.length) {
     const lines = ranked.map(({ item, miles }, index) => `${index + 1}. **${item.name}** — ${miles < 0.1 ? `${(miles * 5280).toFixed(0)} ft` : `${miles.toFixed(2)} mi`} straight-line${item.category ? ` · ${item.category}` : ""}${item.address ? ` · ${item.address}` : ""}`).join("\n");
-    const correction = /\bthose aren['’]?t restaurants\b/i.test(question) ? "You are right — my earlier reply used the wrong category. Here are the restaurant results only.\n\n" : "";
-    return `${correction}**Closest loaded restaurants to ${origin.description}, ${origin.label}:**\n${lines}\n\nRanked by straight-line distance from the supplied coordinates, not walking or driving time. Use Show driving route from your starting point on a result card for a road-route estimate.`;
+    return `**Closest loaded restaurants to ${origin.description}, ${origin.label}:**\n${lines}\n\nRanked by straight-line distance, not walking or driving time. Use the result card's driving-route check for a road-route estimate.`;
   }
-
   if (stay && !customStart) {
     const nearbyRestaurants = (stay.nearbyPlaces ?? []).filter((place) => isRestaurantPlace(place));
     if (nearbyRestaurants.length) {
       const lines = nearbyRestaurants.slice(0, 5).map((place) => `${place.name}${place.category ? ` · ${place.category}` : ""}${place.transportations.length ? ` · ${place.transportations.map((route) => `${route.type} ${route.duration}`).join(" / ")}` : ""}`).join("\n");
-      return `**Restaurant businesses listed near your selected stay, ${stay.name}:**\n${lines}\n\nThese are the provider's nearby-place references. The feed does not supply comparable coordinates for a verified nearest-to-farthest ranking.`;
+      return `**Restaurant businesses listed near your selected stay, ${stay.name}:**\n${lines}\n\nThese are provider nearby-place references, not a verified nearest-to-farthest ranking.`;
     }
   }
-  return `I do not have restaurant coordinates tied to **${origin.label}** in the loaded result snapshot, so I cannot rank the nearest places yet. Check that the restaurant results have loaded, or use the result cards to open their locations.`;
+  return `I do not have enough restaurant coordinates tied to **${origin.label}** to rank nearby places yet. Check that the restaurant results have loaded, or use the result cards to open their locations.`;
 }
 
 function buildActivityProximityAnswer(question: string, context: TripAssistantContext): string {
@@ -462,14 +505,17 @@ function buildBeachAnswer(question: string, context: TripAssistantContext): stri
 }
 
 export function buildTripAssistantLocalFallback(question: string, context: TripAssistantContext, history: TripAssistantMessage[] = []): string | null {
-  const stayLandmarkAnswer = buildStayToLandmarkProximityAnswer(question, context);
-  if (stayLandmarkAnswer) return stayLandmarkAnswer;
   const explicitRestaurantIntent = /\b(?:restaurant|restaurants|dining|caf(?:e|es)|bistros?|pizzerias?|eateries|food options)\b/i.test(question);
-  const restaurantProximityIntent = /\b(?:closest|nearest|near|nearby|distance|how far|walking|walk|minutes? away|close to|around|within)\b/i.test(question);
-  const restaurantCorrection = /\bthose (?:are|aren['’]?t|were|weren['’]?t) restaurants\b/i.test(question)
+  const restaurantProximityIntent = /\b(?:closest|nearest|near|nearby|distance|how far|walking|walk|minutes? away|close to|around|within|next)\b/i.test(question);
+  const restaurantCorrection = /\bthose (?:are|aren[’']?t|were|weren[’']?t) restaurants\b/i.test(question)
     || /\bnot restaurants\b/i.test(question);
-  if (explicitRestaurantIntent && (restaurantProximityIntent || restaurantCorrection)) {
-    return buildRestaurantProximityAnswer(question, context);
+  const recentRestaurantDiscussion = history.slice(-5).some((message) =>
+    message.role === "assistant" && /\b(?:closest|nearest) loaded restaurants\b/i.test(message.content),
+  );
+  const restaurantFollowUp = !explicitRestaurantIntent && recentRestaurantDiscussion
+    && /\b(?:next|another|other|one|ones|which|what|that|those|nearest|closest)\b/i.test(question);
+  if ((explicitRestaurantIntent && (restaurantProximityIntent || restaurantCorrection)) || restaurantFollowUp) {
+    return buildRestaurantProximityAnswer(question, context, history);
   }
   const explicitActivityIntent = /\b(?:activity|activities|attraction|attractions|things to do|tours?)\b/i.test(question);
   const activityProximityIntent = /\b(?:closest|nearest|near|nearby|distance|how far|minutes? away|close to|around|within)\b/i.test(question);
@@ -540,8 +586,25 @@ export function buildTripAssistantResultActions(
     });
   }
 
+  const restaurantRows = (context.experiences ?? []).filter((item) => item.kind === "restaurant");
+  const excludedRestaurants = selectedRestaurantExclusions(question, context, history, restaurantRows);
+  const matchedExperiences: AssistantExperience[] = [];
   for (const experience of context.experiences ?? []) {
-    if (!experience.id || !experience.name || experience.name.length < 5 || !referenceText.includes(experience.name.toLocaleLowerCase())) continue;
+    if (!experience.id || !experience.name || experience.name.length < 5) continue;
+    const normalizedName = normalizePlaceName(experience.name);
+    if (!normalizedName || !normalizePlaceName(referenceText).includes(normalizedName)) continue;
+    if (experience.kind === "restaurant" && excludedRestaurants.has(experience.id) && !isNavigationFollowUp) continue;
+    const duplicate = matchedExperiences.some((existing) => {
+      if (existing.kind !== experience.kind || normalizePlaceName(existing.name) !== normalizedName) return false;
+      if (experience.kind === "activity" && isActualBeachPlace({ name: experience.name, category: experience.category })
+        && isActualBeachPlace({ name: existing.name, category: existing.category })) return true;
+      if (hasCoordinates(existing) && hasCoordinates(experience)) {
+        return haversineMiles(existing.latitude, existing.longitude, experience.latitude, experience.longitude) <= 0.25;
+      }
+      return true;
+    });
+    if (duplicate) continue;
+    matchedExperiences.push(experience);
     matches.push({
       kind: experience.kind, label: experience.name,
       anchor: getTripAssistantResultAnchor(experience.kind, experience.id),
@@ -550,16 +613,6 @@ export function buildTripAssistantResultActions(
     });
   }
 
-  // If a beach-specific answer uses a shorthand instead of repeating full property
-  // names, attach actions only to listings with explicit beach evidence in the snapshot.
-  if (!matches.length && /\b(?:beach|beachfront|beach front|beach access)\b/i.test(question + " " + referenceText)) {
-    for (const stay of context.stays ?? []) {
-      if (!stay.id || !stay.name) continue;
-      const evidence = beachEvidence(stay);
-      if (!evidence.frontMatch && !evidence.accessMatch && !evidence.genericAccessMatch && !evidence.distance) continue;
-      matches.push({ kind: "stay", label: stay.name, anchor: getTripAssistantStayAnchor(stay.id), externalUrl: isSafeExternalUrl(stay.externalUrl), externalUrlLabel: stay.externalUrlLabel || "Open property listing" });
-    }
-  }
 
   const unique = new Set<string>();
   return matches.filter((action) => {
@@ -708,7 +761,7 @@ export function sanitizeTripAssistantContext(value: unknown): TripAssistantConte
   const selected = root.selected && typeof root.selected === "object" ? root.selected as Record<string, unknown> : {};
   const selectedSchedule = Array.isArray(selected.schedule) ? selected.schedule.slice(0, 16).map((item) => {
     const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
-    return { name: text(row.name, 160), kind: text(row.kind, 30), date: text(row.date, 20), slot: text(row.slot, 20) };
+    return { id: text(row.id, 180) || undefined, name: text(row.name, 160), kind: text(row.kind, 30), date: text(row.date, 20), slot: text(row.slot, 20) };
   }) : [];
   const rawStartingPoint = root.startingPoint && typeof root.startingPoint === "object" && !Array.isArray(root.startingPoint) ? root.startingPoint as Record<string, unknown> : null;
   const startingPoint = rawStartingPoint

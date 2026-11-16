@@ -2200,10 +2200,18 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
   const assistantStayRows = assistantResult
     ? [...(assistantSelection.hotel ? [assistantSelection.hotel] : []), ...assistantResult.hotels.filter((hotel) => hotel.id !== assistantSelection.hotel?.id)].slice(0, 14)
     : [];
+  // Keep every selected activity/restaurant available to the assistant even when
+  // it falls beyond the first provider-result page. Fill the remaining context
+  // evenly by category so a selected beach can be resolved by its exact result ID.
+  const selectedAssistantExperienceRows = Object.keys(assistantSelection.experiences)
+    .flatMap((experienceId) => assistantExperiences.filter((experience) => experience.id === experienceId).slice(0, 1));
+  const selectedActivityIds = new Set(selectedAssistantExperienceRows.filter((experience) => experience.kind === "activity").map((experience) => experience.id));
+  const selectedRestaurantIds = new Set(selectedAssistantExperienceRows.filter((experience) => experience.kind === "restaurant").map((experience) => experience.id));
   const assistantExperienceRows = [
-    ...assistantExperiences.filter((experience) => experience.kind === "activity").slice(0, 30),
-    ...assistantExperiences.filter((experience) => experience.kind === "restaurant").slice(0, 30),
-  ];
+    ...selectedAssistantExperienceRows,
+    ...assistantExperiences.filter((experience) => experience.kind === "activity" && !selectedActivityIds.has(experience.id)).slice(0, Math.max(0, 30 - selectedActivityIds.size)),
+    ...assistantExperiences.filter((experience) => experience.kind === "restaurant" && !selectedRestaurantIds.has(experience.id)).slice(0, Math.max(0, 30 - selectedRestaurantIds.size)),
+  ].slice(0, 60);
   const assistantContext: TripAssistantContext | null = assistantRecommendation && assistantResult ? {
     destination: formatDestinationLabel(assistantRecommendation.destination.city, assistantRecommendation.destination.country),
     ...(startingPoints[assistantRecommendation.destination.id] ? { startingPoint: startingPoints[assistantRecommendation.destination.id] } : {}),
@@ -2264,7 +2272,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       stayId: assistantSelection.hotel?.id,
       schedule: Object.entries(assistantSelection.experiences).flatMap(([experienceId, plan]) => {
         const experience = assistantExperiences.find((item) => item.id === experienceId);
-        return experience ? [{ name: experience.name, kind: experience.kind, date: plan.date, slot: plan.slot }] : [];
+        return experience ? [{ id: experience.id, name: experience.name, kind: experience.kind, date: plan.date, slot: plan.slot }] : [];
       }).slice(0, 16),
     },
   } : null;
