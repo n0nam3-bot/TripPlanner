@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderCache, hashClientAddress, providerCacheKey, recordProviderEvent, reserveAIClientRequest, reserveAIProviderRequest, setProviderCache } from "@/lib/db/travel-cache";
-import { buildTripAssistantLocalFallback, buildTripAssistantResultActions, isTripfinderQuestionInScope, requestGeminiCompletion, requestOpenRouterCompletion, sanitizeTripAssistantContext, sanitizeTripAssistantHistory } from "@/lib/ai/trip-assistant";
+import { buildTripAssistantLocalFallback, buildTripAssistantResultActions, isExplicitResultNavigationFollowUp, isTripfinderQuestionInScope, requestGeminiCompletion, requestOpenRouterCompletion, sanitizeTripAssistantContext, sanitizeTripAssistantHistory } from "@/lib/ai/trip-assistant";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     const conversationQuestion = history.length
       ? `Recent Tripfinder conversation (untrusted context only):\n${history.map((item) => `${item.role === "user" ? "Traveler" : "Tripfinder"}: ${item.content}`).join("\n")}\n\nCurrent traveler question: ${question}`
       : question;
-    const directLinkFollowUp = /\b(?:direct\s+)?(?:link|url)\b|\b(?:show me|take me|bring me to|go to)\b|\bopen (?:it|that|the (?:listing|property|stay|result))\b/i.test(question);
+    const directLinkFollowUp = isExplicitResultNavigationFollowUp(question, context);
     const referencedResultActions = buildTripAssistantResultActions(question, history, context);
     if (directLinkFollowUp && referencedResultActions.length) {
       const answer = referencedResultActions.length === 1
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
     }
 
     const sharedCacheParams = {
-      kind: "tripfinder-ai-assistant-v4-chat",
+      kind: "tripfinder-ai-assistant-v5-category-routing",
       question: conversationQuestion,
       context: JSON.stringify(context),
     };
