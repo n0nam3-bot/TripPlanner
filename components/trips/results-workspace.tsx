@@ -2439,7 +2439,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       })}
     </div>
 
-    {assistantContext && assistantRecommendation && <AITripAssistant key={assistantRecommendation.destination.id} context={assistantContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured} onSetStartingPoint={(location) => resolveStartingPoint(assistantRecommendation.destination.id, location)}/>}
+    {assistantContext && assistantRecommendation && <AITripAssistant key={assistantRecommendation.destination.id} context={assistantContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured} onSetStartingPoint={async (location) => { await resolveStartingPoint(assistantRecommendation.destination.id, location); }}/>}
 
     <div className="planner-method-note"><p><strong>How to read these results.</strong> Flights, properties and places come from the selected providers. Straight-line distances are geographic estimates, not driving times. Weather is only shown when the forecast provider can cover the requested dates. Confirm final terms with the booking provider.</p></div>
   </div>;
