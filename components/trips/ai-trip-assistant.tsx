@@ -11,6 +11,7 @@ type Props = {
   databaseAvailable: boolean;
   geminiAvailable: boolean;
   openRouterAvailable: boolean;
+  onSetStartingPoint?: (location: string) => void | Promise<void>;
 };
 type ChatMessage = TripAssistantMessage & { id: string; provider?: string; cached?: boolean; welcome?: boolean; actions?: TripAssistantResultAction[] };
 

@@ -25,7 +25,6 @@ type Props = {
   liveSearchConfigured: boolean;
   providerKeyConfigured: boolean;
   databaseConfigured: boolean;
-  weatherKeyConfigured: boolean;
   aiProviderConfigured: boolean;
   geminiProviderConfigured: boolean;
   openRouterProviderConfigured: boolean;
@@ -35,8 +34,9 @@ type ReturnState = { loading: boolean; error: string; result: ReturnFlightSearch
 type SupplierLookupState = { checkedAt?: string; dataAsOf?: string; servedFromCache?: boolean; stale?: boolean };
 type BookingState = { loading: boolean; error: string; options: FlightBookingOption[] | null } & SupplierLookupState;
 type HotelBookingState = { loading: boolean; error: string; options: HotelBookingOption[] | null } & SupplierLookupState;
-type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null };
-type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attribution?: string };
+type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null; source?: "WeatherAPI" | "Visual Crossing"; basis?: "forecast" | "seasonal" };
+type WeatherAttribution = { label: string; url: string };
+type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attributions?: WeatherAttribution[] };
 type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string; source?: string; mapImageDataUrl?: string; mapWarning?: string; directions?: string[]; startAddress?: string; endAddress?: string };
 type ExperienceSlot = "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening";
 type SelectedExperience = { date: string; slot: ExperienceSlot; time?: string };
@@ -1108,29 +1108,33 @@ function UnifiedTripSchedule({ search, selection, experiences, days, nights, cur
   </div>;
 }
 
-function WeatherPanel({ location, startDate, endDate, configured }: { location: string; startDate: string; endDate: string; configured: boolean }) {
+function WeatherPanel({ location, startDate, endDate }: { location: string; startDate: string; endDate: string }) {
   const [state, setState] = useState<WeatherState | null>(null);
-  const attempted = useRef(false);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const daysUntilTrip = Math.ceil((new Date(`${startDate}T00:00:00`).getTime() - today.getTime()) / 86400000);
+  const attemptedFor = useRef("");
+  const requestKey = `${location.toLocaleLowerCase("en-US")}|${startDate}|${endDate}`;
   const load = useCallback(async (forceRefresh = false) => {
     setState((current) => ({ loading: true, status: "loading", days: current?.days ?? [] }));
     try {
       const response = await fetch("/api/travel/weather", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location, startDate, endDate, forceRefresh }) });
-      const data = await response.json();
-      setState({ loading: false, status: String(data.status || "error"), message: typeof data.message === "string" ? data.message : undefined, days: Array.isArray(data.days) ? data.days as WeatherDay[] : [], attribution: typeof data.attribution === "string" ? data.attribution : undefined });
-    } catch { setState({ loading: false, status: "error", message: "Weather information is unavailable right now.", days: [] }); }
+      const data = await response.json() as Record<string, unknown>;
+      const attributions = Array.isArray(data.attributions) ? data.attributions.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const source = item as Record<string, unknown>;
+        if (typeof source.label !== "string" || typeof source.url !== "string" || !/^https:\/\//i.test(source.url)) return [];
+        return [{ label: source.label, url: source.url }];
+      }) : [];
+      setState({ loading: false, status: String(data.status || "error"), message: typeof data.message === "string" ? data.message : undefined, days: Array.isArray(data.days) ? data.days as WeatherDay[] : [], attributions });
+    } catch { setState({ loading: false, status: "error", message: "Weather information is unavailable right now. Try refreshing later.", days: [], attributions: [] }); }
   }, [location, startDate, endDate]);
   useEffect(() => {
-    if (configured && !attempted.current) { attempted.current = true; void load(); }
-  }, [configured, load]);
+    if (attemptedFor.current !== requestKey) { attemptedFor.current = requestKey; void load(); }
+  }, [requestKey, load]);
   return <section className="weather-panel">
-    <div className="weather-panel-heading"><div><h4>Weather</h4><p>{location}</p></div>{configured && <button className="text-action" type="button" onClick={() => { attempted.current = true; void load(true); }} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={12} className="spin"/> Checking</> : "Refresh"}</button>}</div>
-    {!configured && <p className="weather-explainer">{daysUntilTrip > 2 ? `A day-by-day forecast for ${dateLabel(startDate)} is too far ahead to be dependable. Add WEATHERAPI_API_KEY in Vercel for short-range forecasts, then check again closer to departure. Tripfinder will not substitute a made-up forecast.` : "Live forecasts are not connected. Add WEATHERAPI_API_KEY in Vercel to retrieve the short-range forecast."}</p>}
+    <div className="weather-panel-heading"><div><h4>Weather</h4><p>{location}</p></div><button className="text-action" type="button" onClick={() => { attemptedFor.current = requestKey; void load(true); }} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={12} className="spin"/> Checking</> : "Refresh"}</button></div>
     {state?.loading && <p className="inline-loading"><RefreshCw size={13} className="spin"/> Checking the forecast…</p>}
     {state?.message && <p className="weather-explainer">{state.message}</p>}
-    {state && state.days.length > 0 && <div className="weather-days">{state.days.map((day) => <div className="weather-day" key={day.date}>{day.icon && <img src={`https:${day.icon}`} alt=""/>}<strong>{dateShort(day.date)}</strong><span>{day.condition}</span><b>{day.highF !== null ? `${Math.round(day.highF)}°F` : "—"} <small>{day.lowF !== null ? `${Math.round(day.lowF)}°F` : ""}</small></b>{day.rainChance !== null && <small><CloudRain size={11}/> {day.rainChance}% rain</small>}{day.maxWindKph !== null && <small><Wind size={11}/> {Math.round(day.maxWindKph)} km/h wind</small>}</div>)}</div>}
-    {state?.attribution && <p className="weather-attribution">{state.attribution}</p>}
+    {state && state.days.length > 0 && <div className="weather-days">{state.days.map((day) => <div className={`weather-day ${day.basis === "seasonal" ? "is-seasonal-weather" : ""}`} key={day.date}>{day.icon && /^https?:\/\//i.test(day.icon.startsWith("//") ? `https:${day.icon}` : day.icon) && <img src={day.icon.startsWith("//") ? `https:${day.icon}` : day.icon} alt=""/>}<strong>{dateShort(day.date)}</strong>{day.basis === "seasonal" && <small className="weather-basis-label">Seasonal estimate</small>}<span>{day.condition}</span><b>{day.highF !== null ? `${Math.round(day.highF)}°F` : "—"} <small>{day.lowF !== null ? `${Math.round(day.lowF)}°F` : ""}</small></b>{day.rainChance !== null && <small><CloudRain size={11}/> {Math.round(day.rainChance)}% rain</small>}{day.maxWindKph !== null && <small><Wind size={11}/> {Math.round(day.maxWindKph)} km/h wind</small>}{day.source && <small className="weather-source-label">{day.source}</small>}</div>)}</div>}
+    {Boolean(state?.attributions?.length) && <p className="weather-attribution">{state!.attributions!.map((item, index) => <span key={item.url}>{index > 0 ? " · " : ""}<a href={item.url} target="_blank" rel="noreferrer">{item.label}</a></span>)}</p>}
   </section>;
 }
 
@@ -1575,7 +1579,7 @@ function FlexibleFlightDatePanel({ search, destinationAirportCode, hasSelections
   </section>;
 }
 
-export function ResultsWorkspace({ search, recommendations, liveSearchConfigured, providerKeyConfigured, databaseConfigured, weatherKeyConfigured, aiProviderConfigured, geminiProviderConfigured, openRouterProviderConfigured }: Props) {
+export function ResultsWorkspace({ search, recommendations, liveSearchConfigured, providerKeyConfigured, databaseConfigured, aiProviderConfigured, geminiProviderConfigured, openRouterProviderConfigured }: Props) {
   const [expanded, setExpanded] = useState<string | null>(recommendations.length === 1 ? recommendations[0]?.destination.id ?? null : null);
   const [states, setStates] = useState<Record<string, SearchState>>({});
   const [returnStates, setReturnStates] = useState<Record<string, ReturnState>>({});
@@ -2360,10 +2364,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
 
               {search.components.includes("flights") && <details id={`trip-section-${destination.id}-flights`} data-section-key="flights" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><Plane size={17}/><strong>Flights</strong><span>{state.result.flights.length} outbound options{selection.outbound ? " · 1 selected" : ""}{selection.returnFlight ? " + return selected" : ""}</span><ChevronDown size={16} className="group-chevron"/></summary>
+                <p className="flight-route-confirmation">Search route: <strong>{originCode.toUpperCase()} → {arrivalCode.toUpperCase()}</strong> · {dateLabel(search.departureDate)} – {dateLabel(search.returnDate)}</p>
                 <p className="flight-timezone-note">{destinationTimezoneNotice(destinationLabel, airportCode, search.departureDate)}</p>
                 <FlexibleFlightDatePanel search={search} destinationAirportCode={airportCode} hasSelections={Boolean(selection.outbound || selection.returnFlight || selection.hotel || Object.keys(selection.experiences).length)}/>
                 <p className="flight-roundtrip-note">Tripfinder sends one round-trip search with both dates. Google Flights returns outbound choices first; selecting one uses its departure token to retrieve matching return choices. The initial result price is indicative, not a confirmed combined fare. After choosing both legs, compare seller offers: they identify whether the booking is one combined ticket or separate outbound and return tickets, and show each leg's price when the provider supplies it.</p>
-                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} journeyId={journeyIdRef.current} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected, forceRefresh) => loadBookingOptions(destination.id, selected, airportCode, forceRefresh)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for this route and date combination.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this route on Google Flights <ArrowUpRight size={12}/></a><small>The link uses the route and dates submitted to the provider. You can adjust passenger or fare details on Google Flights if needed.</small></div>}
+                {state.result.flights.length ? <>{state.result.providerSearchLinks?.flights && <p className="provider-search-link"><a href={state.result.providerSearchLinks.flights} target="_blank" rel="noreferrer">Open this exact search in Google Flights <ArrowUpRight size={12}/></a></p>}{availableAirlines.length > 1 && <div className="airline-filter" aria-label="Filter outbound flights by airline"><span>Airline</span><button type="button" className={selectedAirline === "all" ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: "all" }))}>All ({state.result.flights.length})</button>{availableAirlines.map((airline) => <button type="button" key={airline} className={selectedAirline === airline ? "is-active" : ""} onClick={() => setFlightAirlineFilters((current) => ({ ...current, [destination.id]: airline }))}>{airline} ({state.result!.flights.filter((flight) => flight.airlines.includes(airline)).length})</button>)}</div>}{visibleFlights.map((flight) => <FlightResult key={flight.id} flight={flight} currency={search.currency} journeyId={journeyIdRef.current} returnState={returnStates[flight.id]} bookingStates={bookingStates} selectedOutbound={selection.outbound?.id === flight.id} selectedReturnFlight={selection.outbound?.id === flight.id ? selection.returnFlight : null} selectedSeller={selection.flightSeller} onSelectOutbound={(selected) => selectOutbound(destination.id, selected, airportCode)} onSelectReturn={(selected) => selectReturn(destination.id, selected)} onLoadBookingOptions={(selected, forceRefresh) => loadBookingOptions(destination.id, selected, airportCode, forceRefresh)} onSelectSeller={(selectedFlight, option) => selectFlightSeller(destination.id, selectedFlight, option)}/>)}</> : <div className="empty-category"><p>No flight options were returned for <strong>{originCode.toUpperCase()} → {arrivalCode.toUpperCase()}</strong> on {dateLabel(search.departureDate)} – {dateLabel(search.returnDate)}.</p><a href={state.result.providerSearchLinks?.flights || directFlightUrl.toString()} target="_blank" rel="noreferrer">Search this exact route on Google Flights <ArrowUpRight size={12}/></a><small>Verify that the destination airport above is the one you intended. The link uses this route, dates and passenger count; you can adjust fare details on Google Flights.</small></div>}
               </details>}
 
               {search.components.includes("stays") && <details id={`trip-section-${destination.id}-stays`} data-section-key="stays" className="live-result-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
@@ -2394,7 +2399,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               </>}
               <details id={`trip-section-${destination.id}-weather`} data-section-key="weather" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><CloudRain size={17}/><strong>Weather</strong><span>Forecast for your trip dates</span><ChevronDown size={16} className="group-chevron"/></summary>
-                <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
+                <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate}/>
               </details>
               <details id={`trip-section-${destination.id}-plan`} data-section-key="plan" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><ClipboardList size={17}/><strong>Your plan</strong><span>Selected trip items</span><ChevronDown size={16} className="group-chevron"/></summary>

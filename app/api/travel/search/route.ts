@@ -21,12 +21,16 @@ export async function POST(request: Request) {
 
     const destinationName = typeof record.destinationName === "string" ? record.destinationName.slice(0, 120) : validated.input.destination;
     const destination = findDestination(destinationName);
-    const suppliedAirportCode = typeof record.destinationAirportCode === "string" ? record.destinationAirportCode.toUpperCase() : "";
+    const searchAirportCode = typeof validated.input.destinationAirportCode === "string" ? validated.input.destinationAirportCode.trim().toUpperCase() : "";
+    const suppliedAirportCode = typeof record.destinationAirportCode === "string" ? record.destinationAirportCode.trim().toUpperCase() : "";
     const isRegionSearch = getDestinationGateways(validated.input.destination).length > 0;
-    // Do not resolve a country/state name to the first curated city inside it
-    // (for example, "United States" must not silently become Orlando).
+    // The reviewed form/search object is authoritative. The top-level field is
+    // a compatibility fallback for older clients; a curated destination's
+    // default airport must never override a traveler-selected IATA code.
+    // Do not resolve a country/state name to the first curated city inside it.
     const inferredCityAirport = isRegionSearch ? "" : destination?.airportCode || "";
-    const airportCode = suppliedAirportCode || inferredCityAirport;
+    const airportCode = searchAirportCode || suppliedAirportCode || inferredCityAirport;
+    const searchInput = { ...validated.input, destinationAirportCode: airportCode };
     // An IATA airport is mandatory only for a flight request. Hotels, rentals,
     // attractions and restaurants can be searched against a state, country or
     // other text destination without inventing an airport.
@@ -39,7 +43,7 @@ export async function POST(request: Request) {
     searchCategory = validated.input.components.slice().sort().join(" + ") || "Trip search";
     searchStartedAt = Date.now();
     await recordProviderEvent({ provider: "Tripfinder", category: "Trip search · " + searchCategory, eventType: "trip_search_started", outcome: "started", journeyId });
-    const result = await searchLiveTravel(validated.input, airportCode, destinationName, hashClientAddress(address), forceRefresh);
+    const result = await searchLiveTravel(searchInput, airportCode, destinationName, hashClientAddress(address), forceRefresh);
     await recordProviderEvent({
       provider: "Tripfinder", category: "Trip search · " + searchCategory, eventType: "trip_search_completed",
       outcome: result.status === "live" ? "success" : result.status === "partial" ? "partial" : "empty",

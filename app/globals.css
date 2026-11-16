@@ -2861,3 +2861,14 @@ article.trip-ai-result-highlight { outline: 3px solid #a65a3b; outline-offset: 4
   .proximity-filter-heading { flex-direction: column; }
   .proximity-filter-heading button { width: 100%; }
 }
+
+
+/* Weather fallback clarity and exact flight-route confirmation. */
+.weather-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; margin-top: 12px; }
+.weather-day { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+.weather-day .weather-basis-label { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 7px; background: #fff3d8; color: #805c1e; font-size: 9px; font-weight: 700; }
+.weather-day .weather-source-label { color: #87958b; font-size: 9px; }
+.weather-attribution { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+.weather-attribution a { color: #355f46; text-decoration: underline; text-underline-offset: 2px; }
+.flight-route-confirmation { margin: 6px 0 4px; color: #53675b; font-size: 12px; line-height: 1.5; }
+.flight-route-confirmation strong { color: #1f3b2c; font-variant-numeric: tabular-nums; }

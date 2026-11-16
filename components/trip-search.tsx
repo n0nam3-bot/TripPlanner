@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, RotateCcw, Sparkles, Users, Wallet } from "lucide-react";
+import { Activity, ArrowRight, CalendarDays, ChevronDown, Hotel, MapPin, PlaneTakeoff, RefreshCw, Sparkles, Users, Wallet } from "lucide-react";
 import type { TripComponent, StayAmenity, StaySpaceType, StayType } from "@/lib/trip-planner/types";
 import type { SearchPreferenceDraft } from "@/lib/ai/search-preferences";
 import { getDestinationGateways, getDestinationRegionScope, getLocationSuggestions, type LocationSuggestion } from "@/lib/trip-planner/location-suggestions";
@@ -150,7 +150,6 @@ export function TripSearch() {
   const [preferenceParseError, setPreferenceParseError] = useState("");
   const [preferenceDraft, setPreferenceDraft] = useState<SearchPreferenceDraft | null>(null);
   const [preferenceParseSource, setPreferenceParseSource] = useState("");
-  const [planningNotes, setPlanningNotes] = useState<string[]>([]);
   const [draftRestored, setDraftRestored] = useState(false);
 
   // Keep the complete form draft in this tab session so Edit search / browser
@@ -177,7 +176,6 @@ export function TripSearch() {
         strings("preferredLayoverCountries", setPreferredLayoverCountries); strings("avoidLayoverCountries", setAvoidLayoverCountries);
         text("staySpaceType", (value) => { if (["any", "entire_place", "private_room", "shared_room"].includes(value)) setStaySpaceType(value as StaySpaceType); });
         if (draft.preferenceDraft && typeof draft.preferenceDraft === "object") setPreferenceDraft(draft.preferenceDraft as SearchPreferenceDraft);
-        if (Array.isArray(draft.planningNotes)) setPlanningNotes(draft.planningNotes.filter((item): item is string => typeof item === "string").slice(0, 5));
       }
     } catch { /* Ignore an unavailable or malformed tab draft. */ }
     setDraftRestored(true);
@@ -187,34 +185,10 @@ export function TripSearch() {
     if (!draftRestored) return;
     try {
       window.sessionStorage.setItem("tripfinder:search-draft:v2", JSON.stringify({
-        origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries, planningNotes,
+        origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries,
       }));
     } catch { /* Storage can be disabled or full; the form remains usable. */ }
-  }, [draftRestored, origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries, planningNotes]);
-
-  function resetSearchFields(clearDescription = true) {
-    setOrigin("New York (NYC)"); setOriginAirportCode("NYC");
-    setDestination("Anywhere"); setDestinationAirportCode(""); setDestinationArea("");
-    setDepart(dateAfter(45)); setReturnDate(dateAfter(50));
-    setAdults("2"); setChildrenAges(""); setRooms("1");
-    setBudget("2500"); setBudgetMode("total"); setCurrency("USD");
-    setStyle("any"); setFlexibleDays("0"); setCabin("economy"); setStops("any");
-    setPreferredLayoverCountries([]); setAvoidLayoverCountries([]);
-    setPreferredLayoverCountryDraft(""); setAvoidLayoverCountryDraft("");
-    setHotelRating("0"); setFreeCancellation(false);
-    setTemperatureMin(""); setTemperatureMax(""); setTemperatureUnit("F");
-    setComponents(["flights", "stays", "activities"]);
-    setStayTypes(["hotels"]); setStaySpaceType("any");
-    setStayMustHaveAmenities([]); setStayPreferredAmenities([]);
-    setPlanningNotes([]); setPreferenceDraft(null); setPreferenceParseSource("");
-    setPreferenceParseError(""); setParsingPreferences(false); setError("");
-    if (clearDescription) setPlainLanguageDescription("");
-  }
-
-  function resetSearch() {
-    try { window.sessionStorage.removeItem("tripfinder:search-draft:v2"); } catch { /* Ignore unavailable storage. */ }
-    resetSearchFields(true);
-  }
+  }, [draftRestored, origin, originAirportCode, destination, destinationAirportCode, destinationArea, depart, returnDate, adults, childrenAges, rooms, budget, budgetMode, currency, style, flexibleDays, cabin, stops, hotelRating, freeCancellation, temperatureMin, temperatureMax, temperatureUnit, components, stayTypes, staySpaceType, stayMustHaveAmenities, stayPreferredAmenities, plainLanguageDescription, allowGeminiPreferenceParsing, preferenceDraft, preferenceParseSource, preferredLayoverCountries, avoidLayoverCountries]);
 
   function toggleComponent(value: TripComponent) {
     setComponents((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
@@ -286,22 +260,18 @@ export function TripSearch() {
   function applyParsedPreferences() {
     if (!preferenceDraft) return;
     const draft = preferenceDraft;
-    // Each interpreted description represents a new, self-contained trip request.
-    // Clear prior criteria first so old destinations, cabin classes and layover
-    // exclusions cannot leak into a different traveler's search.
-    resetSearchFields(false);
-    setPlanningNotes(draft.notes || []);
     if (draft.origin) setOrigin(draft.origin);
-    const includesFlights = Boolean(draft.components?.includes("flights"));
-    if (includesFlights && draft.originAirportCode) setOriginAirportCode(draft.originAirportCode);
-    else if (includesFlights && draft.origin) setOriginAirportCode(resolveAirportCode(draft.origin) || "");
-    else setOriginAirportCode("");
+    if (draft.originAirportCode) setOriginAirportCode(draft.originAirportCode);
+    else if (draft.origin) setOriginAirportCode(resolveAirportCode(draft.origin) || "");
+    const nextDestination = draft.destination ?? destination;
+    const nextArea = draft.destinationArea !== undefined ? draft.destinationArea : draft.destination ? "" : destinationArea;
+    const destinationScopeChanged = nextDestination.trim().toLocaleLowerCase() !== destination.trim().toLocaleLowerCase()
+      || nextArea.trim().toLocaleLowerCase() !== destinationArea.trim().toLocaleLowerCase();
     if (draft.destination) setDestination(draft.destination);
     if (draft.destinationArea !== undefined) setDestinationArea(draft.destinationArea);
     else if (draft.destination) setDestinationArea("");
-    if (includesFlights && draft.destinationAirportCode) setDestinationAirportCode(draft.destinationAirportCode);
-    else if (includesFlights && (draft.destination || draft.destinationArea)) setDestinationAirportCode(resolveAirportCode(draft.destinationArea || draft.destination || "") || "");
-    else setDestinationAirportCode("");
+    if (draft.destinationAirportCode) setDestinationAirportCode(draft.destinationAirportCode);
+    else if (destinationScopeChanged) setDestinationAirportCode(resolveAirportCode(nextArea || nextDestination) || "");
     if (draft.departureDate) setDepart(draft.departureDate);
     if (draft.returnDate) setReturnDate(draft.returnDate);
     if (draft.adults !== undefined) setAdults(String(draft.adults));
@@ -339,32 +309,27 @@ export function TripSearch() {
 
   const parsedPreferenceSummary = preferenceDraft ? [
     preferenceDraft.destinationArea ? `Area: ${preferenceDraft.destinationArea}${preferenceDraft.destination ? `, ${preferenceDraft.destination}` : ""}` : preferenceDraft.destination ? `Destination: ${preferenceDraft.destination}` : "",
-    preferenceDraft.origin ? `${preferenceDraft.notes?.some((note) => /^Driving trip:/i.test(note)) ? "Driving from" : "Leaving from"}: ${preferenceDraft.origin}${preferenceDraft.originAirportCode ? ` (${preferenceDraft.originAirportCode})` : ""}` : "",
+    preferenceDraft.origin ? `Leaving from: ${preferenceDraft.origin}${preferenceDraft.originAirportCode ? ` (${preferenceDraft.originAirportCode})` : ""}` : "",
     preferenceDraft.destinationAirportCode ? `Arrival airport: ${preferenceDraft.destinationAirportCode}` : "",
-    preferenceDraft.departureDate || preferenceDraft.returnDate ? `${preferenceDraft.components?.includes("flights") ? "Depart" : "Start"}: ${preferenceDraft.departureDate || "keep current date"} · ${preferenceDraft.components?.includes("flights") ? "Return" : "End"}: ${preferenceDraft.returnDate || "keep current date"}` : "",
+    preferenceDraft.departureDate || preferenceDraft.returnDate ? `Depart: ${preferenceDraft.departureDate || "keep current date"} · Return: ${preferenceDraft.returnDate || "keep current date"}` : "",
     preferenceDraft.adults !== undefined ? `${preferenceDraft.adults} travelers` : "",
     preferenceDraft.childrenAges ? `Children's ages: ${preferenceDraft.childrenAges.join(", ")}` : "",
     preferenceDraft.budget !== undefined ? `Budget: ${preferenceDraft.currency || currency} ${preferenceDraft.budget.toLocaleString()}${preferenceDraft.budgetMode === "per_person" ? " per person" : preferenceDraft.budgetMode === "total" ? " total" : ""}` : "",
     preferenceDraft.rooms !== undefined ? `${preferenceDraft.rooms} rooms` : "",
-    preferenceDraft.components ? `Search: ${[
-      ...(preferenceDraft.components.includes("flights") ? ["Flights"] : []),
-      ...(preferenceDraft.components.includes("stays") ? ["Places to stay"] : []),
-      ...(preferenceDraft.components.includes("activities") ? [preferenceDraft.restaurantsRequested ? "Activities & attractions + Restaurants & dining" : "Activities & attractions"] : []),
-    ].join(" + ")}` : "",
+    preferenceDraft.components ? `Search: ${preferenceDraft.components.join(" + ")}` : "",
     preferenceDraft.staySpaceType && preferenceDraft.staySpaceType !== "any" ? `Space: ${preferenceDraft.staySpaceType.replaceAll("_", " ")}` : "",
     preferenceDraft.mustHaveAmenities?.length ? `Must have: ${preferenceDraft.mustHaveAmenities.join(", ").replaceAll("_", " ")}` : "",
     preferenceDraft.preferredAmenities?.length ? `Prefer: ${preferenceDraft.preferredAmenities.join(", ").replaceAll("_", " ")}` : "",
     preferenceDraft.stayTypes ? `Accommodation: ${preferenceDraft.stayTypes.join(" + ").replaceAll("_", " ")}` : "",
     preferenceDraft.tripStyle && preferenceDraft.tripStyle !== "any" ? `Trip style: ${preferenceDraft.tripStyle}` : "",
-    preferenceDraft.cabinClass ? `Cabin: ${preferenceDraft.cabinClass.replaceAll("_", " ")}` : preferenceDraft.components?.includes("flights") ? "Cabin: Economy (default)" : "",
+    preferenceDraft.cabinClass ? `Cabin: ${preferenceDraft.cabinClass.replaceAll("_", " ")}` : "",
     preferenceDraft.stops ? `Stops: ${preferenceDraft.stops.replaceAll("_", " ")}` : "",
     preferenceDraft.preferredLayoverCountries?.length ? `Preferred connections: ${preferenceDraft.preferredLayoverCountries.join(", ")}` : "",
     preferenceDraft.avoidLayoverCountries?.length ? `Avoid connections through: ${preferenceDraft.avoidLayoverCountries.join(", ")}` : "",
-    preferenceDraft.components?.includes("flights") && !preferenceDraft.preferredLayoverCountries?.length && !preferenceDraft.avoidLayoverCountries?.length ? "Connection countries: No preference (default)" : "",
     preferenceDraft.minimumHotelRating !== undefined && preferenceDraft.minimumHotelRating > 0 ? `${preferenceDraft.minimumHotelRating}-star minimum` : "",
     preferenceDraft.freeCancellation ? "Free cancellation preferred" : "",
     preferenceDraft.temperatureMin !== undefined || preferenceDraft.temperatureMax !== undefined ? `Typical daytime high: ${preferenceDraft.temperatureMin ?? "no minimum"} to ${preferenceDraft.temperatureMax ?? "no maximum"}°${preferenceDraft.temperatureUnit || temperatureUnit}` : "",
-    ...(preferenceDraft.notes || []).map((note) => /^(Restaurant proximity:|Driving trip:)/i.test(note) ? note : `Please confirm: ${note}`),
+    ...(preferenceDraft.notes || []).map((note) => `Please confirm: ${note}`),
   ].filter(Boolean) : [];
 
   function changeTemperatureUnit(nextUnit: "F" | "C") {
@@ -386,12 +351,11 @@ export function TripSearch() {
     setError("");
     if (submitting) return;
     if (components.length === 0) return setError("Choose at least one search: flights, places to stay or things to do.");
-    const searchingFlights = components.includes("flights");
-    const selectedOriginCode = searchingFlights ? (originAirportCode || resolveAirportCode(origin) || "") : "";
+    const selectedOriginCode = originAirportCode || resolveAirportCode(origin) || "";
     const typedArea = destinationArea.trim();
-    const parentSuffix = destination.trim() ? new RegExp(`,\\s*${destination.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i") : null;
-    const normalizedArea = parentSuffix && parentSuffix.test(typedArea) ? typedArea.replace(parentSuffix, "").trim() : typedArea;
-    const selectedDestination = normalizedArea ? `${normalizedArea}, ${destination.trim()}` : destination.trim();
+    const selectedDestination = typedArea
+      ? (typedArea.includes(",") || typedArea.toLocaleLowerCase() === destination.trim().toLocaleLowerCase() ? typedArea : `${typedArea}, ${destination.trim()}`)
+      : destination.trim();
     const hasLocalTravelComponents = components.includes("stays") || components.includes("activities");
     if (destinationScope && hasLocalTravelComponents && !typedArea) {
       return setError(`Choose a city or area within ${destinationScope} so Tripfinder can return nearby stays, attractions and restaurants instead of unrelated results across the entire region.`);
@@ -420,14 +384,13 @@ export function TripSearch() {
     setSubmitting(true);
     const params = new URLSearchParams({
       origin: origin.trim(), originAirportCode: selectedOriginCode,
-      destination: destination.trim(), destinationArea: normalizedArea, destinationAirportCode: searchingFlights ? (destinationAirportCode || resolveAirportCode(selectedDestination) || "") : "",
+      destination: selectedDestination, destinationAirportCode: destinationAirportCode || resolveAirportCode(selectedDestination) || "",
       depart, return: returnDate, adults, childrenAges: ages.join(","), rooms, budget, budgetMode, currency, style,
-      flexibleDays, cabin, stops, hotelRating, freeCancellation: String(freeCancellation),
+      flexibleDays: "0", cabin, stops, hotelRating, freeCancellation: String(freeCancellation),
       preferLayovers: preferredLayoverCountries.join(","), avoidLayovers: avoidLayoverCountries.join(","),
       components: components.join(","), stayTypes: stayTypes.join(","), staySpaceType,
       stayMust: stayMustHaveAmenities.join(","), stayPrefer: stayPreferredAmenities.join(","),
       temperatureMin: temperatureMin.trim(), temperatureMax: temperatureMax.trim(), temperatureUnit,
-      planningNotes: planningNotes.join(" | "),
     });
     router.push(`/results?${params.toString()}`);
   }
@@ -436,7 +399,7 @@ export function TripSearch() {
     <form className="search-card search-card-product" onSubmit={submit} id="plan">
       <div className="search-card-top">
         <div><span className="eyebrow">TRIP SEARCH</span><h2>What are you looking to book?</h2></div>
-        <div className="search-card-top-actions"><span className="search-step-note">Choose flights, stays, activities or any combination. U.S. states can be narrowed to a city or area; flights use a separate airport gateway.</span><button type="button" className="search-reset-button" onClick={resetSearch}><RotateCcw size={14}/> Start over</button></div>
+        <span className="search-step-note">Choose flights, stays, activities or any combination. U.S. states can be narrowed to a city or area; flights use a separate airport gateway.</span>
       </div>
 
       <div className="search-presets" aria-label="Common search combinations">
@@ -516,7 +479,7 @@ export function TripSearch() {
       <div className={`search-fields ${components.includes("flights") ? "has-origin" : "no-origin"}`}>
         {components.includes("flights") && <LocationField field="origin" label="Leaving from" value={origin} airportCode={originAirportCode} placeholder="City or airport" onChange={(value) => { setOrigin(value); setOriginAirportCode(resolveAirportCode(value) || ""); }} onSelect={(item) => { setOrigin(item.value); setOriginAirportCode(item.airportCode); }}/ >}
         <LocationField field="destination" label="Going to" value={destination} airportCode={components.includes("flights") ? destinationAirportCode : ""} placeholder="Country, state, city or area" includeAttractions={components.includes("activities")} includeAirports={components.includes("flights")} onChange={(value) => { setDestination(value); setDestinationArea(""); setDestinationAirportCode(""); }} onSelect={(item) => { setDestination(item.value); setDestinationArea(""); setDestinationAirportCode(item.airportCode); }}/>
-        {destinationScope && <LocationField field="destination" label={`City or area in ${destinationScope}`} value={destinationArea} airportCode="" placeholder="Choose or type a city, town, resort or nearby area" scope={destinationScope} onChange={(value) => { setDestinationArea(value); setDestinationAirportCode(""); }} onSelect={(item) => { setDestinationArea(item.label || item.value.split(",")[0]); if (components.includes("flights") && item.airportCode) setDestinationAirportCode(item.airportCode); }}/ >}
+        {destinationScope && <LocationField field="destination" label={`City or area in ${destinationScope}`} value={destinationArea} airportCode="" placeholder="Choose or type a city, town, resort or nearby area" scope={destinationScope} onChange={(value) => { setDestinationArea(value); setDestinationAirportCode(""); }} onSelect={(item) => { setDestinationArea(item.value); if (item.airportCode) setDestinationAirportCode(item.airportCode); }}/ >}
         {components.includes("flights") && destinationGateways.length > 0 && <label className="search-field gateway-field"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">Suggested arrival airports</span><select value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value)} aria-label="Choose suggested arrival airport"><option value="">Choose a gateway</option>{destinationAirportCode && !destinationGateways.some((gateway) => gateway.code === destinationAirportCode) && <option value={destinationAirportCode}>Custom airport · {destinationAirportCode}</option>}{destinationGateways.map((gateway) => <option value={gateway.code} key={gateway.code}>{gateway.label}</option>)}</select></span><ChevronDown className="select-chevron" size={14}/></label>}
         {components.includes("flights") && (destinationArea || destination).trim().toLowerCase() !== "anywhere" && <label className="search-field gateway-field airport-code-entry"><span className="field-icon"><PlaneTakeoff size={17}/></span><span className="field-copy"><span className="field-label">{destinationGateways.length ? "Or enter a different arrival airport" : "Arrival airport code"}</span><input value={destinationAirportCode} onChange={(event) => setDestinationAirportCode(event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3))} placeholder="3-letter IATA code (e.g. TIA)" maxLength={3} autoCapitalize="characters" spellCheck={false} aria-label="Arrival airport three-letter IATA code"/><small className="location-code">You can type or edit the three-letter airport code here. This field remains visible after typing.</small></span></label>}
 
@@ -550,7 +513,7 @@ export function TripSearch() {
           {components.includes("stays") && <label>Rooms <select value={rooms} onChange={(e) => setRooms(e.target.value)}>{Array.from({ length: 8 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1} {i === 0 ? "room" : "rooms"}</option>)}</select></label>}
           <label>Budget applies to <select value={budgetMode} onChange={(e) => setBudgetMode(e.target.value)}><option value="total">Entire trip / all travelers</option><option value="per_person">Per traveler</option></select></label>
           <label>Currency <select value={currency} onChange={(e) => setCurrency(e.target.value)}><option value="USD">USD · US Dollar</option><option value="CAD">CAD · Canadian Dollar</option><option value="EUR">EUR · Euro</option><option value="GBP">GBP · British Pound</option></select></label>
-          {components.includes("flights") && <><label>Cabin <select value={cabin} onChange={(e) => setCabin(e.target.value)}><option value="economy">Economy</option><option value="premium_economy">Premium economy</option><option value="business">Business</option><option value="first">First class</option></select></label><label>Flight stops <select value={stops} onChange={(e) => setStops(e.target.value)}><option value="any">Any</option><option value="nonstop">Nonstop only</option><option value="one_stop">Up to 1 stop</option><option value="two_stops">Up to 2 stops</option></select></label><label>Flexible dates <select value={flexibleDays} onChange={(e) => setFlexibleDays(e.target.value)}><option value="0">Exact dates</option><option value="1">Compare ±1 day</option><option value="2">Compare ±2 days</option><option value="3">Compare ±3 days</option></select><small>One calendar search compares the same trip length. Exact flight results are searched only after you choose dates.</small></label></>}
+          {components.includes("flights") && <><label>Cabin <select value={cabin} onChange={(e) => setCabin(e.target.value)}><option value="economy">Economy</option><option value="premium_economy">Premium economy</option><option value="business">Business</option><option value="first">First class</option></select></label><label>Flight stops <select value={stops} onChange={(e) => setStops(e.target.value)}><option value="any">Any</option><option value="nonstop">Nonstop only</option><option value="one_stop">Up to 1 stop</option><option value="two_stops">Up to 2 stops</option></select></label></>}
           {components.includes("flights") && <div className="layover-preferences">
             <div className="layover-preferences-heading"><strong>Connection preferences</strong><small>Choose countries the traveler prefers to connect through or wants to avoid. These settings check airport stopovers only—not aircraft overflight airspace or live security conditions.</small></div>
             <div className="layover-preference-row"><label>Prefer a connection through <select value={preferredLayoverCountryDraft} onChange={(event) => setPreferredLayoverCountryDraft(event.target.value)}><option value="">Choose a country</option>{LAYOVER_COUNTRY_OPTIONS.filter((country) => !preferredLayoverCountries.includes(country)).map((country) => <option value={country} key={country}>{country}</option>)}</select></label><button type="button" className="layover-add-button" disabled={!preferredLayoverCountryDraft} onClick={() => { setPreferredLayoverCountries((current) => current.includes(preferredLayoverCountryDraft) ? current : [...current, preferredLayoverCountryDraft]); setAvoidLayoverCountries((current) => current.filter((item) => item !== preferredLayoverCountryDraft)); setPreferredLayoverCountryDraft(""); }}>Add preference</button></div>
