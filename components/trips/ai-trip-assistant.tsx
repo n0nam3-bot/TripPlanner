@@ -127,7 +127,7 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
     });
   }
 
-  return <div className="trip-ai-dock">
+  return <div className={`trip-ai-dock ${open ? "is-expanded" : "is-minimized"}`}>
     {open && <section className="trip-ai-panel" role="dialog" aria-label="Tripfinder travel assistant" aria-modal="false">
       <header className="trip-ai-chat-header">
         <span className="trip-ai-chat-mark"><Sparkles size={17}/></span>
