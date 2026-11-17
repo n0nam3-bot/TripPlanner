@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { hashClientAddress } from "@/lib/db/travel-cache";
 import { searchFlexibleFlightDates } from "@/lib/providers/serpapi";
+import { resolveAuthoritativeArrivalAirportCode } from "@/lib/trip-planner/flight-search-params";
 import { validateTripSearchInput } from "@/lib/trip-planner/validation";
 
 export const runtime = "nodejs";
@@ -15,15 +16,18 @@ export async function POST(request: Request) {
     if (!validated.input.components.includes("flights")) return NextResponse.json({ error: "Choose flights to compare flexible travel dates." }, { status: 400 });
     if (validated.input.flexibleDays < 1 || validated.input.flexibleDays > 3) return NextResponse.json({ error: "Choose a date window from ±1 to ±3 days." }, { status: 400 });
 
-    const destinationAirportCode = typeof body.destinationAirportCode === "string"
-      ? body.destinationAirportCode.toUpperCase()
-      : validated.input.destinationAirportCode;
+    const destinationAirportCode = resolveAuthoritativeArrivalAirportCode(
+      validated.input.destinationAirportCode,
+      body.destinationAirportCode,
+      "",
+    );
+    const authoritativeInput = { ...validated.input, destinationAirportCode };
     if (!/^[A-Z]{3}$/.test(destinationAirportCode)) {
       return NextResponse.json({ error: "Choose a valid destination airport before comparing flight dates." }, { status: 422 });
     }
 
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
-    const result = await searchFlexibleFlightDates(validated.input, destinationAirportCode, hashClientAddress(address));
+    const result = await searchFlexibleFlightDates(authoritativeInput, destinationAirportCode, hashClientAddress(address));
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const code = error instanceof Error ? error.message : "FLEXIBLE_DATE_SEARCH_FAILED";

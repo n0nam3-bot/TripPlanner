@@ -1,6 +1,21 @@
 import { AIRPORT_METRO_GROUPS } from "./airports";
 import type { TripSearchInput } from "./types";
 
+
+/** The confirmed search object is the source of truth for the arrival airport.
+ * An outer request field is only a compatibility fallback; a destination
+ * catalog default must never replace an airport the traveler explicitly chose. */
+export function resolveAuthoritativeArrivalAirportCode(
+  confirmedSearchAirportCode: unknown,
+  requestAirportCode: unknown,
+  inferredDestinationAirportCode: unknown,
+): string {
+  const normalize = (value: unknown) => typeof value === "string" ? value.trim().toUpperCase() : "";
+  const candidates = [confirmedSearchAirportCode, requestAirportCode, inferredDestinationAirportCode]
+    .map(normalize);
+  return candidates.find((value) => /^[A-Z]{3}$/.test(value)) ?? "";
+}
+
 const METRO_AIRPORTS: Record<string, string> = Object.fromEntries(
   AIRPORT_METRO_GROUPS.map((group) => [group.code, group.airportCodes.join(",")]),
 );

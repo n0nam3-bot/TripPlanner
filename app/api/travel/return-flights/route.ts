@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { hashClientAddress } from "@/lib/db/travel-cache";
 import { searchReturnFlights } from "@/lib/providers/serpapi";
+import { resolveAuthoritativeArrivalAirportCode } from "@/lib/trip-planner/flight-search-params";
 import { validateTripSearchInput } from "@/lib/trip-planner/validation";
 
 export const runtime = "nodejs";
@@ -12,13 +13,18 @@ export async function POST(request: Request) {
     const body = rawBody && typeof rawBody === "object" ? rawBody as Record<string, unknown> : {};
     const validated = validateTripSearchInput(body.search);
     if (!validated.input) return NextResponse.json({ error: "Please correct the trip details.", details: validated.errors }, { status: 400 });
-    const destinationAirportCode = typeof body.destinationAirportCode === "string" ? body.destinationAirportCode.toUpperCase() : "";
+    const destinationAirportCode = resolveAuthoritativeArrivalAirportCode(
+      validated.input.destinationAirportCode,
+      body.destinationAirportCode,
+      "",
+    );
+    const authoritativeInput = { ...validated.input, destinationAirportCode };
     const departureToken = typeof body.departureToken === "string" ? body.departureToken : "";
     if (!/^[A-Z]{3}$/.test(destinationAirportCode)) return NextResponse.json({ error: "A valid destination airport code is required." }, { status: 400 });
     if (!departureToken || departureToken.length > 12000) return NextResponse.json({ error: "A valid outbound flight selection is required." }, { status: 400 });
 
     const address = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
-    const result = await searchReturnFlights(validated.input, destinationAirportCode, departureToken, hashClientAddress(address));
+    const result = await searchReturnFlights(authoritativeInput, destinationAirportCode, departureToken, hashClientAddress(address));
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected return-flight search error.";

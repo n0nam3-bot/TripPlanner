@@ -154,7 +154,9 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   const budgetMode = enumValue(raw.budgetMode, new Set(["total", "per_person"] as const));
   const currency = enumValue(raw.currency, currencies) as SearchPreferenceDraft["currency"];
   let components = enumList(raw.components, tripComponents, 3);
-  const tripStyle = enumValue(raw.tripStyle, tripStyles);
+  const tripStyle = /\bromantic\b|\bdate[- ]night\b|\bcouples? getaway\b/i.test(sourceText)
+    ? "romantic" as const
+    : enumValue(raw.tripStyle, tripStyles);
   const restaurantsRequested = raw.restaurantsRequested === true || /\b(restaurants?|dining|places to eat|where to eat|food options)\b/i.test(sourceText);
   if (restaurantsRequested) draft.restaurantsRequested = true;
   const parsedStayTypes = enumList(raw.stayTypes, stayTypes, 2);
@@ -434,13 +436,20 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
   if (requestsActivitiesOrDining) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "activities"])];
   if (/\b(restaurants?|dining|places to eat|where to eat|food options)\b/i.test(source)) raw.restaurantsRequested = true;
 
+  // Preserve an explicitly requested trip style even when the traveler also
+  // describes a beachfront property. Accommodation location and activity style
+  // are separate preferences: romantic activities can coexist with beach access.
+  const explicitlyRomantic = /\bromantic\b|\bdate[- ]night\b|\bcouples? getaway\b/i.test(source);
+  if (explicitlyRomantic) raw.tripStyle = "romantic";
   if (/\b(beachfront|on the beach|oceanfront|steps from the beach|direct beach access)\b/i.test(source)) {
-    raw.tripStyle = "beach";
-    raw.mustHaveAmenities = ["beach_access"];
+    if (!explicitlyRomantic) raw.tripStyle = "beach";
+    const existingMust = Array.isArray(raw.mustHaveAmenities) ? raw.mustHaveAmenities as string[] : [];
+    raw.mustHaveAmenities = [...new Set([...existingMust, "beach_access"])];
   } else if (/\b(by|near|close to|nearby) the beach\b/i.test(source) || /\bbeach\b/i.test(source)) {
-    raw.tripStyle = "beach";
-    raw.preferredAmenities = ["beach_access"];
-    raw.notes = ["Beach proximity was requested. Confirm the property's actual walking distance and whether beach access is direct."];
+    if (!explicitlyRomantic) raw.tripStyle = "beach";
+    const existingPreferred = Array.isArray(raw.preferredAmenities) ? raw.preferredAmenities as string[] : [];
+    raw.preferredAmenities = [...new Set([...existingPreferred, "beach_access"])];
+    raw.notes = [...(Array.isArray(raw.notes) ? raw.notes as string[] : []), "Beach proximity was requested. Confirm the property's actual walking distance and whether beach access is direct."];
   }
 
   const privatePool = /\bprivate pool\b/i.test(source) && !/\b(no|not|without|don't|do not)\b.{0,30}\bprivate pool\b/i.test(source);
@@ -537,6 +546,9 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
   if (restaurantDistance) {
     const minutes = Number(restaurantDistance[1]);
     raw.notes = [...(Array.isArray(raw.notes) ? raw.notes as string[] : []), `Restaurant proximity: target within ${minutes} minutes of the selected Airbnb. Verify drive time after choosing a property with a known address.`];
+  } else if (/\brestaurants?\b[^.!?;]{0,70}\b(?:near|nearby|close to|around)\b[^.!?;]{0,45}\b(?:airbnb|rental|property|hotel|stay)\b/i.test(source)
+    || /\b(?:near|nearby|close to|around)\b[^.!?;]{0,45}\b(?:airbnb|rental|property|hotel|stay)\b[^.!?;]{0,70}\brestaurants?\b/i.test(source)) {
+    raw.notes = [...(Array.isArray(raw.notes) ? raw.notes as string[] : []), "Restaurant proximity: rank loaded restaurants nearest-first from the selected Airbnb after a property is chosen. No fixed drive-time limit was specified."];
   }
 
   if (/\b(entire|whole) (house|home|property|place|cabin|condo|villa)\b|\bprivate (house|home|property|cabin|condo|villa)\b/i.test(source)) raw.staySpaceType = "entire_place";

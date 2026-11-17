@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const { parseDeterministicSearchPreferenceDraft, sanitizeSearchPreferenceDraft } = require("../../.test-build/lib/ai/search-preferences.js");
 const { getLocationSuggestions } = require("../../.test-build/lib/trip-planner/location-suggestions.js");
 const { airportCountry, airportTimeZone, formatFlightTimeAtAirport, flightLayoverDuration, flightTimeSortTimestamp } = require("../../.test-build/lib/trip-planner/flight-routing.js");
-const { makeFlightParams, makeReturnFlightParams, makeFlightBookingParams } = require("../../.test-build/lib/trip-planner/flight-search-params.js");
+const { makeFlightParams, makeReturnFlightParams, makeFlightBookingParams, resolveAuthoritativeArrivalAirportCode } = require("../../.test-build/lib/trip-planner/flight-search-params.js");
 const { applyLayoverPreferences } = require("../../.test-build/lib/trip-planner/flight-search-policy.js");
 const { safeGoogleBookingUrl } = require("../../.test-build/lib/trip-planner/flight-booking-url.js");
 const { parseTripSearch } = require("../../.test-build/lib/trip-planner/validation.js");
@@ -200,4 +200,54 @@ test("Seneca Falls review displays driving origin, start/end dates, and both req
   assert.match(source, /components\?\.includes\("flights"\) \? "Return" : "End"/);
   assert.match(source, /const selectedOriginCode = searchingFlights \?/);
   assert.match(source, /destinationAirportCode: searchingFlights \?/);
+});
+
+
+test("confirmed arrival airport in the search object outranks stale request and destination defaults", () => {
+  assert.equal(resolveAuthoritativeArrivalAirportCode("STI", "PUJ", "SDQ"), "STI");
+  assert.equal(resolveAuthoritativeArrivalAirportCode("", "STI", "SDQ"), "STI");
+  assert.equal(resolveAuthoritativeArrivalAirportCode("", "", "SDQ"), "SDQ");
+});
+
+test("Las Terrenas romantic Airbnb prompt retains STI, date range, budget and both beach and romantic intent", () => {
+  const draft = parseDeterministicSearchPreferenceDraft(
+    "flight from jfk to sti for 2 people for 3 days starting from 12/26 and airbnb beachfront in las terrenas dominican republic with romantic activities and restaurants near the airbnb. budget is 2.5k",
+    "2026-11-17",
+  );
+  assert.equal(draft.originAirportCode, "JFK");
+  assert.equal(draft.destination, "Dominican Republic");
+  assert.equal(draft.destinationArea, "Las Terrenas");
+  assert.equal(draft.destinationAirportCode, "STI");
+  assert.equal(draft.departureDate, "2026-12-26");
+  assert.equal(draft.returnDate, "2026-12-28");
+  assert.equal(draft.adults, 2);
+  assert.equal(draft.budget, 2500);
+  assert.equal(draft.budgetMode, "total");
+  assert.deepEqual([...draft.components].sort(), ["activities", "flights", "stays"]);
+  assert.equal(draft.tripStyle, "romantic");
+  assert.deepEqual(draft.stayTypes, ["vacation_rentals"]);
+  assert.ok(draft.mustHaveAmenities.includes("beach_access"));
+  assert.equal(draft.restaurantsRequested, true);
+  assert.ok(draft.notes.some((note) => /restaurants nearest-first from the selected Airbnb/i.test(note)));
+  assert.ok(draft.notes.some((note) => /No year was specified/i.test(note)));
+});
+
+test("the explicitly dated JFK to STI Airbnb prompt keeps the chosen airport and exact end date", () => {
+  const draft = parseDeterministicSearchPreferenceDraft(
+    "flight from jfk to sti with an airbnb beachfront in las terrenas dominican republic for 2 people from 12/26 to 12/28. restaurants near the airbnb and budget is 2.5k",
+    "2026-11-17",
+  );
+  assert.equal(draft.originAirportCode, "JFK");
+  assert.equal(draft.destinationAirportCode, "STI");
+  assert.equal(draft.destination, "Dominican Republic");
+  assert.equal(draft.destinationArea, "Las Terrenas");
+  assert.equal(draft.departureDate, "2026-12-26");
+  assert.equal(draft.returnDate, "2026-12-28");
+  assert.equal(draft.adults, 2);
+  assert.equal(draft.budget, 2500);
+  assert.equal(draft.budgetMode, "total");
+  assert.deepEqual(draft.stayTypes, ["vacation_rentals"]);
+  assert.ok(draft.mustHaveAmenities.includes("beach_access"));
+  assert.equal(draft.restaurantsRequested, true);
+  assert.ok(draft.notes.some((note) => /restaurants nearest-first from the selected Airbnb/i.test(note)));
 });

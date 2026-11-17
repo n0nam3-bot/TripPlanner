@@ -25,7 +25,6 @@ type Props = {
   liveSearchConfigured: boolean;
   providerKeyConfigured: boolean;
   databaseConfigured: boolean;
-  weatherKeyConfigured: boolean;
   aiProviderConfigured: boolean;
   geminiProviderConfigured: boolean;
   openRouterProviderConfigured: boolean;
@@ -35,8 +34,9 @@ type ReturnState = { loading: boolean; error: string; result: ReturnFlightSearch
 type SupplierLookupState = { checkedAt?: string; dataAsOf?: string; servedFromCache?: boolean; stale?: boolean };
 type BookingState = { loading: boolean; error: string; options: FlightBookingOption[] | null } & SupplierLookupState;
 type HotelBookingState = { loading: boolean; error: string; options: HotelBookingOption[] | null } & SupplierLookupState;
-type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null };
-type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attribution?: string };
+type WeatherDay = { date: string; condition: string; icon: string; highC: number | null; lowC: number | null; highF: number | null; lowF: number | null; rainChance: number | null; maxWindKph: number | null; uv: number | null; forecastType?: "forecast" | "seasonal_estimate"; source?: "WeatherAPI" | "Visual Crossing" };
+type WeatherAttribution = { label: string; url: string };
+type WeatherState = { loading: boolean; status: string; message?: string; days: WeatherDay[]; attributions?: WeatherAttribution[] };
 type RouteState = { loading: boolean; error?: string; distance?: string; duration?: string; durationInTraffic?: string; source?: string; mapImageDataUrl?: string; mapWarning?: string; directions?: string[]; startAddress?: string; endAddress?: string };
 type ExperienceSlot = "Morning" | "Lunch" | "Afternoon" | "Dinner" | "Evening";
 type SelectedExperience = { date: string; slot: ExperienceSlot; time?: string };
@@ -1108,29 +1108,31 @@ function UnifiedTripSchedule({ search, selection, experiences, days, nights, cur
   </div>;
 }
 
-function WeatherPanel({ location, startDate, endDate, configured }: { location: string; startDate: string; endDate: string; configured: boolean }) {
+function WeatherPanel({ location, startDate, endDate }: { location: string; startDate: string; endDate: string }) {
   const [state, setState] = useState<WeatherState | null>(null);
-  const attempted = useRef(false);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const daysUntilTrip = Math.ceil((new Date(`${startDate}T00:00:00`).getTime() - today.getTime()) / 86400000);
   const load = useCallback(async (forceRefresh = false) => {
     setState((current) => ({ loading: true, status: "loading", days: current?.days ?? [] }));
     try {
       const response = await fetch("/api/travel/weather", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location, startDate, endDate, forceRefresh }) });
       const data = await response.json();
-      setState({ loading: false, status: String(data.status || "error"), message: typeof data.message === "string" ? data.message : undefined, days: Array.isArray(data.days) ? data.days as WeatherDay[] : [], attribution: typeof data.attribution === "string" ? data.attribution : undefined });
-    } catch { setState({ loading: false, status: "error", message: "Weather information is unavailable right now.", days: [] }); }
+      setState({
+        loading: false,
+        status: String(data.status || "error"),
+        message: typeof data.message === "string" ? data.message : undefined,
+        days: Array.isArray(data.days) ? data.days as WeatherDay[] : [],
+        attributions: Array.isArray(data.attributions) ? data.attributions.filter((item: unknown): item is WeatherAttribution => Boolean(item && typeof item === "object" && typeof (item as WeatherAttribution).label === "string" && /^https?:\/\//i.test((item as WeatherAttribution).url))) : [],
+      });
+    } catch {
+      setState({ loading: false, status: "error", message: "Weather information is unavailable right now. Try again later.", days: [] });
+    }
   }, [location, startDate, endDate]);
-  useEffect(() => {
-    if (configured && !attempted.current) { attempted.current = true; void load(); }
-  }, [configured, load]);
+  useEffect(() => { void load(); }, [load]);
   return <section className="weather-panel">
-    <div className="weather-panel-heading"><div><h4>Weather</h4><p>{location}</p></div>{configured && <button className="text-action" type="button" onClick={() => { attempted.current = true; void load(true); }} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={12} className="spin"/> Checking</> : "Refresh"}</button>}</div>
-    {!configured && <p className="weather-explainer">{daysUntilTrip > 2 ? `A day-by-day forecast for ${dateLabel(startDate)} is too far ahead to be dependable. Add WEATHERAPI_API_KEY in Vercel for short-range forecasts, then check again closer to departure. Tripfinder will not substitute a made-up forecast.` : "Live forecasts are not connected. Add WEATHERAPI_API_KEY in Vercel to retrieve the short-range forecast."}</p>}
-    {state?.loading && <p className="inline-loading"><RefreshCw size={13} className="spin"/> Checking the forecast…</p>}
+    <div className="weather-panel-heading"><div><h4>Weather</h4><p>{location}</p></div><button className="text-action" type="button" onClick={() => void load(true)} disabled={state?.loading}>{state?.loading ? <><RefreshCw size={12} className="spin"/> Checking</> : "Refresh"}</button></div>
+    {state?.loading && <p className="inline-loading"><RefreshCw size={13} className="spin"/> Checking the forecast and seasonal outlook…</p>}
     {state?.message && <p className="weather-explainer">{state.message}</p>}
-    {state && state.days.length > 0 && <div className="weather-days">{state.days.map((day) => <div className="weather-day" key={day.date}>{day.icon && <img src={`https:${day.icon}`} alt=""/>}<strong>{dateShort(day.date)}</strong><span>{day.condition}</span><b>{day.highF !== null ? `${Math.round(day.highF)}°F` : "—"} <small>{day.lowF !== null ? `${Math.round(day.lowF)}°F` : ""}</small></b>{day.rainChance !== null && <small><CloudRain size={11}/> {day.rainChance}% rain</small>}{day.maxWindKph !== null && <small><Wind size={11}/> {Math.round(day.maxWindKph)} km/h wind</small>}</div>)}</div>}
-    {state?.attribution && <p className="weather-attribution">{state.attribution}</p>}
+    {state && state.days.length > 0 && <div className="weather-days">{state.days.map((day) => <div className={`weather-day ${day.forecastType === "seasonal_estimate" ? "is-seasonal-estimate" : "is-model-forecast"}`} key={day.date}>{day.icon && /^\/\//.test(day.icon) && <img src={`https:${day.icon}`} alt=""/>}<strong>{dateShort(day.date)}</strong><small className="weather-day-type">{day.forecastType === "seasonal_estimate" ? "Seasonal estimate" : "Model forecast"}</small><span>{day.condition}</span><b>{day.highF !== null ? `${Math.round(day.highF)}°F` : "—"} <small>{day.lowF !== null ? `${Math.round(day.lowF)}°F` : ""}</small></b>{day.rainChance !== null && <small><CloudRain size={11}/> {Math.round(day.rainChance)}% rain</small>}{day.maxWindKph !== null && <small><Wind size={11}/> {Math.round(day.maxWindKph)} km/h wind</small>}{day.source && <small className="weather-day-source">{day.source}</small>}</div>)}</div>}
+    {state?.attributions?.length ? <p className="weather-attribution">{state.attributions.map((item, index) => <span key={item.label}>{index > 0 ? " · " : ""}Weather data provided by <a href={item.url} target="_blank" rel="noreferrer">{item.label}</a></span>)}</p> : null}
   </section>;
 }
 
@@ -1575,7 +1577,7 @@ function FlexibleFlightDatePanel({ search, destinationAirportCode, hasSelections
   </section>;
 }
 
-export function ResultsWorkspace({ search, recommendations, liveSearchConfigured, providerKeyConfigured, databaseConfigured, weatherKeyConfigured, aiProviderConfigured, geminiProviderConfigured, openRouterProviderConfigured }: Props) {
+export function ResultsWorkspace({ search, recommendations, liveSearchConfigured, providerKeyConfigured, databaseConfigured, aiProviderConfigured, geminiProviderConfigured, openRouterProviderConfigured }: Props) {
   const [expanded, setExpanded] = useState<string | null>(recommendations.length === 1 ? recommendations[0]?.destination.id ?? null : null);
   const [states, setStates] = useState<Record<string, SearchState>>({});
   const [returnStates, setReturnStates] = useState<Record<string, ReturnState>>({});
@@ -1837,7 +1839,11 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     setExpanded(id);
     setStates((current) => ({ ...current, [id]: { loading: true, error: "", result: current[id]?.result ?? null } }));
     try {
-      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: formatDestinationLabel(recommendation.destination.city, recommendation.destination.country), destinationAirportCode: search.destinationAirportCode || recommendation.destination.airportCode, forceRefresh, journeyId: getJourneyId() }) });
+      // Keep the confirmed search airport in the search object and send it as
+      // the explicit request value as well. The API treats the search object as
+      // authoritative if these fields ever disagree.
+      const confirmedArrivalAirport = search.destinationAirportCode || recommendation.destination.airportCode;
+      const response = await fetch("/api/travel/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search, destinationName: formatDestinationLabel(recommendation.destination.city, recommendation.destination.country), destinationAirportCode: confirmedArrivalAirport, forceRefresh, journeyId: getJourneyId() }) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to search this trip right now.");
       setStates((current) => ({ ...current, [id]: { loading: false, error: "", result: data as LiveTravelSearchResult } }));
@@ -2147,6 +2153,29 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
     ?? null;
   const navigationDestinationId = navigationRecommendation?.destination.id ?? "";
   const navigationResult = navigationDestinationId ? states[navigationDestinationId]?.result ?? null : null;
+  function revealAssistantResult(destinationId: string, anchor: string) {
+    setExpanded(destinationId);
+    // Cards may not be mounted until their destination expands. Once mounted,
+    // open every ancestor disclosure section before scrolling to the target.
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const target = document.getElementById(anchor);
+      if (!(target instanceof HTMLElement)) return;
+      let ancestor: Element | null = target;
+      while (ancestor) {
+        if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+        ancestor = ancestor.parentElement;
+      }
+      window.requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.focus({ preventScroll: true });
+        target.classList.remove("trip-ai-result-highlight");
+        void target.offsetWidth;
+        target.classList.add("trip-ai-result-highlight");
+        window.setTimeout(() => target.classList.remove("trip-ai-result-highlight"), 3000);
+      });
+    }));
+  }
+
   const navigationSections: ResultSectionNavItem[] = navigationResult ? [
     ...(search.components.includes("flights") ? [{ key: "flights", id: `trip-section-${navigationDestinationId}-flights`, label: "Flights", icon: Plane }] : []),
     ...(search.components.includes("stays") ? [{ key: "stays", id: `trip-section-${navigationDestinationId}-stays`, label: "Places to stay", icon: Hotel }] : []),
@@ -2394,7 +2423,7 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
               </>}
               <details id={`trip-section-${destination.id}-weather`} data-section-key="weather" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><CloudRain size={17}/><strong>Weather</strong><span>Forecast for your trip dates</span><ChevronDown size={16} className="group-chevron"/></summary>
-                <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate} configured={weatherKeyConfigured}/>
+                <WeatherPanel location={destinationLabel} startDate={search.departureDate} endDate={search.returnDate}/>
               </details>
               <details id={`trip-section-${destination.id}-plan`} data-section-key="plan" className="live-result-group results-utility-group" open onToggle={(event) => { const sectionId = event.currentTarget.id; const isOpen = event.currentTarget.open; setNavOpenState((current) => ({ ...current, [sectionId]: isOpen })); }}>
                 <summary className="live-result-group-summary"><ClipboardList size={17}/><strong>Your plan</strong><span>Selected trip items</span><ChevronDown size={16} className="group-chevron"/></summary>
@@ -2434,8 +2463,8 @@ export function ResultsWorkspace({ search, recommendations, liveSearchConfigured
       })}
     </div>
 
-    {assistantContext && assistantRecommendation && <AITripAssistant key={assistantRecommendation.destination.id} context={assistantContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured} onSetStartingPoint={(location) => resolveStartingPoint(assistantRecommendation.destination.id, location)}/>}
+    {assistantContext && assistantRecommendation && <AITripAssistant key={assistantRecommendation.destination.id} context={assistantContext} configured={aiProviderConfigured && databaseConfigured} databaseAvailable={databaseConfigured} geminiAvailable={geminiProviderConfigured} openRouterAvailable={openRouterProviderConfigured} onSetStartingPoint={(location) => resolveStartingPoint(assistantRecommendation.destination.id, location)} onViewResult={(anchor) => revealAssistantResult(assistantRecommendation.destination.id, anchor)}/>}
 
-    <div className="planner-method-note"><p><strong>How to read these results.</strong> Flights, properties and places come from the selected providers. Straight-line distances are geographic estimates, not driving times. Weather is only shown when the forecast provider can cover the requested dates. Confirm final terms with the booking provider.</p></div>
+    <div className="planner-method-note"><p><strong>How to read these results.</strong> Flights, properties and places come from the selected providers. Straight-line distances are geographic estimates, not driving times. Weather may use a short-range model forecast or a clearly labeled longer-range seasonal estimate. Confirm final terms with the booking provider.</p></div>
   </div>;
 }

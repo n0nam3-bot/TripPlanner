@@ -1,24 +1,23 @@
 import { NextResponse } from "next/server";
-import { getProviderCache, getProviderCacheFallback, providerCacheKey, recordProviderEvent, setProviderCache } from "@/lib/db/travel-cache";
+import {
+  getProviderCache,
+  getProviderCacheFallback,
+  providerCacheKey,
+  recordProviderEvent,
+  setProviderCache,
+} from "@/lib/db/travel-cache";
+import {
+  normalizeVisualCrossingRange,
+  type NormalizedWeatherDay,
+} from "@/lib/trip-planner/weather";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type WeatherDay = {
-  date: string;
-  condition: string;
-  icon: string;
-  highC: number | null;
-  lowC: number | null;
-  highF: number | null;
-  lowF: number | null;
-  rainChance: number | null;
-  maxWindKph: number | null;
-  uv: number | null;
-};
-
 type JsonObject = Record<string, unknown>;
-const asObject = (value: unknown): JsonObject => value && typeof value === "object" ? value as JsonObject : {};
+type WeatherDay = NormalizedWeatherDay;
+type WeatherAttribution = { label: string; url: string };
+const asObject = (value: unknown): JsonObject => value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {};
 const asNumber = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) ? value : null;
 const asString = (value: unknown): string => typeof value === "string" ? value : "";
 
@@ -30,7 +29,7 @@ function utcDayOffset(date: string): number {
   return Math.floor((target - today) / 86400000);
 }
 
-function normalizeDay(raw: unknown, requestedDate: string): WeatherDay | null {
+function normalizeWeatherApiDay(raw: unknown, requestedDate: string): WeatherDay | null {
   const item = asObject(raw);
   const day = asObject(item.day);
   const condition = asObject(day.condition);
@@ -46,6 +45,8 @@ function normalizeDay(raw: unknown, requestedDate: string): WeatherDay | null {
     rainChance: asNumber(day.daily_chance_of_rain),
     maxWindKph: asNumber(day.maxwind_kph),
     uv: asNumber(day.uv),
+    forecastType: "forecast",
+    source: "WeatherAPI",
   };
 }
 
@@ -54,14 +55,128 @@ function weatherApiError(payload: JsonObject): { code: number; message: string }
   return typeof error.code === "number" ? { code: error.code, message: asString(error.message) } : null;
 }
 
+async function safeRecordProviderEvent(event: Parameters<typeof recordProviderEvent>[0]): Promise<void> {
+  try { await recordProviderEvent(event); } catch { /* Telemetry must not block weather results. */ }
+}
+
+function weatherAttributions(days: WeatherDay[]): WeatherAttribution[] {
+  const sources = new Set(days.map((day) => day.source));
+  const result: WeatherAttribution[] = [];
+  if (sources.has("WeatherAPI")) result.push({ label: "WeatherAPI.com", url: "https://www.weatherapi.com/" });
+  if (sources.has("Visual Crossing")) result.push({ label: "Visual Crossing Weather", url: "https://www.visualcrossing.com/" });
+  return result;
+}
+
+async function loadVisualCrossingRange(
+  location: string,
+  startDate: string,
+  endDate: string,
+  requestedDates: string[],
+  forceRefresh: boolean,
+): Promise<{ days: WeatherDay[]; stale: boolean; message?: string }> {
+  const cacheKey = providerCacheKey({
+    provider: "visualcrossing-timeline",
+    location: location.toLocaleLowerCase("en-US"),
+    startDate,
+    endDate,
+    unitGroup: "us",
+    include: "days",
+  });
+
+  let freshCachedDays: WeatherDay[] = [];
+  let fallbackCache: Awaited<ReturnType<typeof getProviderCacheFallback>> = null;
+  let cacheWarning = "";
+  try {
+    if (!forceRefresh) {
+      const cached = await getProviderCache(cacheKey);
+      freshCachedDays = normalizeVisualCrossingRange(cached?.payload.days, requestedDates);
+      if (freshCachedDays.length === requestedDates.length) {
+        await safeRecordProviderEvent({ provider: "Visual Crossing", category: "Daily weather range", eventType: "cache_hit", outcome: "success", cacheStatus: "hit" });
+        return { days: freshCachedDays, stale: false };
+      }
+    }
+    fallbackCache = await getProviderCacheFallback(cacheKey, 12 * 3600);
+  } catch {
+    // Neon improves efficiency but must not prevent a live weather lookup.
+    cacheWarning = "Neon weather caching is temporarily unavailable; this response will not be cached.";
+  }
+  const staleDays = normalizeVisualCrossingRange(fallbackCache?.payload.days, requestedDates);
+  const startedAt = Date.now();
+  const url = new URL(
+    `https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/${encodeURIComponent(location)}/${startDate}/${endDate}`,
+  );
+  url.searchParams.set("unitGroup", "us");
+  url.searchParams.set("include", "days");
+  url.searchParams.set("contentType", "json");
+  url.searchParams.set("elements", "datetime,conditions,description,tempmax,tempmin,precipprob,windspeed,uvindex,icon");
+  const registeredKey = process.env.VISUALCROSSING_API_KEY?.trim();
+  if (registeredKey) url.searchParams.set("key", registeredKey);
+
+  let failureMessage = "Visual Crossing could not refresh the requested weather range.";
+  try {
+    const response = await fetch(url.toString(), {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) {
+      failureMessage = response.status === 429
+        ? "Visual Crossing is temporarily rate-limiting anonymous or registered requests. Recent saved weather may still be available; try refreshing later."
+        : `Visual Crossing returned HTTP ${response.status}. Recent saved weather may still be available.`;
+      await safeRecordProviderEvent({ provider: "Visual Crossing", category: "Daily weather range", eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
+    } else {
+      const payload = asObject(await response.json());
+      const normalized = normalizeVisualCrossingRange(payload.days, requestedDates);
+      await safeRecordProviderEvent({ provider: "Visual Crossing", category: "Daily weather range", eventType: "provider_request", outcome: normalized.length ? "success" : "empty", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - startedAt });
+      if (normalized.length || freshCachedDays.length || staleDays.length) {
+        const merged = new Map<string, WeatherDay>();
+        for (const day of freshCachedDays) merged.set(day.date, day);
+        const liveDates = new Set(normalized.map((day) => day.date));
+        for (const day of staleDays) if (!merged.has(day.date) && !liveDates.has(day.date)) merged.set(day.date, day);
+        for (const day of normalized) merged.set(day.date, day);
+        const mergedDays = requestedDates.flatMap((date) => merged.has(date) ? [merged.get(date)!] : []);
+        const usedStale = staleDays.some((day) => !freshCachedDays.some((fresh) => fresh.date === day.date) && !liveDates.has(day.date));
+        // Cache only a complete fresh Visual Crossing response. Do not extend
+        // the TTL of older/partial cache entries by rewriting them as new data.
+        if (normalized.length === requestedDates.length) {
+          try {
+            await setProviderCache(cacheKey, { days: normalized }, 12 * 3600);
+          } catch { cacheWarning = "Neon weather caching is temporarily unavailable; this response will not be cached."; }
+        }
+        return {
+          days: mergedDays,
+          stale: usedStale,
+          message: usedStale
+            ? "Visual Crossing returned only part of the range, so Tripfinder filled remaining dates from a saved range less than 12 hours old. Those values may have changed."
+            : cacheWarning || undefined,
+        };
+      }
+      failureMessage = "Visual Crossing did not return daily weather for the requested destination and dates.";
+    }
+  } catch {
+    failureMessage = "Visual Crossing could not be reached. Recent saved weather may still be available.";
+    await safeRecordProviderEvent({ provider: "Visual Crossing", category: "Daily weather range", eventType: "provider_error", outcome: "error", cacheStatus: "miss", durationMs: Date.now() - startedAt });
+  }
+
+  if (staleDays.length || freshCachedDays.length) {
+    const merged = new Map<string, WeatherDay>();
+    for (const day of freshCachedDays) merged.set(day.date, day);
+    for (const day of staleDays) if (!merged.has(day.date)) merged.set(day.date, day);
+    const mergedDays = requestedDates.flatMap((date) => merged.has(date) ? [merged.get(date)!] : []);
+    if (staleDays.length) await safeRecordProviderEvent({ provider: "Visual Crossing", category: "Daily weather range", eventType: "cache_hit", outcome: "success", cacheStatus: "stale", durationMs: Date.now() - startedAt });
+    return { days: mergedDays, stale: Boolean(staleDays.length), message: `${failureMessage} Tripfinder is showing saved Visual Crossing data from within the last 12 hours; conditions and seasonal estimates may have changed.` };
+  }
+  return { days: [], stale: false, message: failureMessage };
+}
+
 export async function POST(request: Request) {
   try {
-    const raw: unknown = await request.json();
-    const body = asObject(raw);
-    const location = typeof body.location === "string" ? body.location.trim().slice(0, 160) : "";
-    const startDate = typeof body.startDate === "string" ? body.startDate : "";
-    const endDate = typeof body.endDate === "string" ? body.endDate : "";
-    const forceRefresh = body.forceRefresh === true;
+    const body: unknown = await request.json();
+    const record = asObject(body);
+    const location = typeof record.location === "string" ? record.location.trim().slice(0, 160) : "";
+    const startDate = typeof record.startDate === "string" ? record.startDate : "";
+    const endDate = typeof record.endDate === "string" ? record.endDate : "";
+    const forceRefresh = record.forceRefresh === true;
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
     const startTimestamp = Date.parse(`${startDate}T00:00:00Z`);
     const endTimestamp = Date.parse(`${endDate}T00:00:00Z`);
@@ -70,127 +185,156 @@ export async function POST(request: Request) {
     }
     const dayCount = Math.floor((endTimestamp - startTimestamp) / 86400000) + 1;
     if (dayCount < 1 || dayCount > 31) return NextResponse.json({ status: "error", days: [], message: "Weather requests are limited to trips of 31 days or fewer." }, { status: 400 });
+    if (Number(endDate.slice(0, 4)) > 2049) {
+      return NextResponse.json({ status: "unavailable", days: [], message: "Visual Crossing's published long-range climate-based data currently extends through 2049." });
+    }
     const firstOffset = utcDayOffset(startDate);
-    if (firstOffset < 0) return NextResponse.json({ status: "unavailable", days: [], message: "A forecast is not available for dates that have already passed." });
-    if (utcDayOffset(endDate) > 300) return NextResponse.json({ status: "unavailable", days: [], message: "WeatherAPI supports future trip weather up to 300 days ahead on eligible plans." });
+    if (firstOffset < 0) return NextResponse.json({ status: "unavailable", days: [], message: "Weather lookup is available for current and future trip dates, not dates that have already passed." });
 
     const requestedDates = Array.from({ length: dayCount }, (_, index) => {
       const date = new Date(`${startDate}T00:00:00Z`);
       date.setUTCDate(date.getUTCDate() + index);
       return date.toISOString().slice(0, 10);
     });
-    const days: WeatherDay[] = [];
-    const staleDates: string[] = [];
-    let planMessage = "";
-    const key = process.env.WEATHERAPI_API_KEY;
+    const daysByDate = new Map<string, WeatherDay>();
+    const staleWeatherApiDates: string[] = [];
+    let weatherApiMessage = "";
+    const weatherApiKey = process.env.WEATHERAPI_API_KEY?.trim();
 
-    // The one-hour fresh cache is date-specific. A saved forecast up to six
-    // hours old can be shown as a clearly labelled fallback if refresh fails.
-    for (const date of requestedDates) {
-      const offset = utcDayOffset(date);
-      const endpoint = offset <= 14 ? "forecast.json" : "future.json";
-      const cacheKey = providerCacheKey({ provider: "weatherapi", location: location.toLocaleLowerCase("en-US"), date, endpoint });
-      const cacheStartedAt = Date.now();
-      const cached = await getProviderCache(cacheKey);
-      const cachedDay = cached?.payload.normalizedDay;
-      if (!forceRefresh && cachedDay && typeof cachedDay === "object" && !Array.isArray(cachedDay)) {
-        const normalized = cachedDay as unknown as WeatherDay;
-        if (normalized.date === date && typeof normalized.condition === "string") {
-          days.push(normalized);
-          await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "cache_hit", outcome: "success", cacheStatus: "hit", durationMs: Date.now() - cacheStartedAt });
+    // Keep WeatherAPI as the primary short-range source. Dates beyond its
+    // standard 14-day forecast endpoint are deliberately sent to Visual
+    // Crossing, which identifies dates after Today+15 as seasonal estimates.
+    if (weatherApiKey) {
+      for (const date of requestedDates) {
+        const offset = utcDayOffset(date);
+        if (offset > 14) {
+          weatherApiMessage = "Dates beyond WeatherAPI's standard forecast window are being checked with Visual Crossing.";
           continue;
         }
-      }
-
-      const staleEntry = await getProviderCacheFallback(cacheKey, 6 * 3600);
-      const staleRaw = staleEntry?.payload.normalizedDay;
-      const staleDay = staleRaw && typeof staleRaw === "object" && !Array.isArray(staleRaw)
-        ? staleRaw as unknown as WeatherDay
-        : null;
-      const useStale = async () => {
-        if (!staleDay || staleDay.date !== date || typeof staleDay.condition !== "string") return false;
-        days.push(staleDay);
-        staleDates.push(date);
-        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "cache_hit", outcome: "success", cacheStatus: "stale", durationMs: Date.now() - cacheStartedAt });
-        return true;
-      };
-
-      if (!key) {
-        if (await useStale()) continue;
-        planMessage = "Weather is not connected. Add WEATHERAPI_API_KEY in Vercel to retrieve new forecasts.";
-        break;
-      }
-
-      const url = new URL(`https://api.weatherapi.com/v1/${endpoint}`);
-      url.searchParams.set("key", key);
-      url.searchParams.set("q", location);
-      url.searchParams.set("dt", date);
-      if (endpoint === "forecast.json") url.searchParams.set("days", "1");
-      url.searchParams.set("aqi", "no");
-      url.searchParams.set("alerts", "no");
-      const providerStartedAt = Date.now();
-      let response: Response;
-      try {
-        response = await fetch(url.toString(), { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15000) });
-      } catch {
-        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", durationMs: Date.now() - providerStartedAt });
-        if (await useStale()) continue;
-        return NextResponse.json({ status: "error", days, message: "The weather provider could not be reached. Try again later." }, { status: 502 });
-      }
-
-      const text = await response.text();
-      let payload: JsonObject;
-      try { payload = asObject(JSON.parse(text)); } catch {
-        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
-        if (await useStale()) continue;
-        return NextResponse.json({ status: "error", days, message: "The weather provider returned an unreadable response. Try again later." }, { status: 502 });
-      }
-      const providerError = weatherApiError(payload);
-      if (!response.ok || providerError) {
-        await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
-        if (providerError?.code === 2009) {
-          planMessage = endpoint === "future.json"
-            ? "Your WeatherAPI plan does not include future weather for these dates. The Free plan provides a 3-day forecast; Pro+ is required for dates 14–300 days ahead."
-            : "Your WeatherAPI plan does not cover the selected forecast dates. The Free plan provides 3 days, Starter provides 7 days, and Pro+ supports longer-range trip forecasts.";
-        } else if (providerError?.code === 2006) {
-          planMessage = "WeatherAPI rejected the key. Check WEATHERAPI_API_KEY in Vercel and redeploy.";
-        } else if (providerError?.code === 2007) {
-          planMessage = "The WeatherAPI monthly request allowance has been reached.";
-        } else {
-          planMessage = providerError?.message || `Weather provider returned HTTP ${response.status}.`;
-        }
-        if (await useStale()) continue;
-        break;
-      }
-
-      const forecast = asObject(payload.forecast);
-      const forecastDays = Array.isArray(forecast.forecastday) ? forecast.forecastday : [];
-      const normalized = normalizeDay(forecastDays[0], date);
-      await recordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_request", outcome: "success", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
-      if (normalized) {
-        days.push(normalized);
-        // A database/cache write failure must not discard a successful live
-        // forecast. The response still reaches the traveler; it simply will
-        // not be reusable from Neon on the next request.
+        const cacheKey = providerCacheKey({ provider: "weatherapi", location: location.toLocaleLowerCase("en-US"), date, endpoint: "forecast.json" });
+        const cacheStartedAt = Date.now();
         try {
-          await setProviderCache(cacheKey, { normalizedDay: normalized as unknown as JsonObject }, 3600);
+          const cached = !forceRefresh ? await getProviderCache(cacheKey) : null;
+          const cachedDay = cached?.payload.normalizedDay;
+          if (cachedDay && typeof cachedDay === "object" && !Array.isArray(cachedDay)) {
+            const cachedRecord = cachedDay as unknown as Partial<WeatherDay>;
+            const normalized = { ...cachedRecord, source: "WeatherAPI", forecastType: "forecast" } as WeatherDay;
+            if (normalized.date === date && typeof normalized.condition === "string") {
+              daysByDate.set(date, normalized);
+              await safeRecordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "cache_hit", outcome: "success", cacheStatus: "hit", durationMs: Date.now() - cacheStartedAt });
+              continue;
+            }
+          }
+
+          const staleEntry = await getProviderCacheFallback(cacheKey, 6 * 3600);
+          const url = new URL("https://api.weatherapi.com/v1/forecast.json");
+          url.searchParams.set("key", weatherApiKey);
+          url.searchParams.set("q", location);
+          url.searchParams.set("dt", date);
+          url.searchParams.set("days", "1");
+          url.searchParams.set("aqi", "no");
+          url.searchParams.set("alerts", "no");
+          const providerStartedAt = Date.now();
+          let response: Response | null = null;
+          try {
+            response = await fetch(url.toString(), { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15000) });
+          } catch {
+            weatherApiMessage = "WeatherAPI could not be reached; Tripfinder is trying its backup weather source.";
+          }
+
+          let providerError: { code: number; message: string } | null = null;
+          let payload: JsonObject = {};
+          if (response) {
+            try { payload = asObject(await response.json()); }
+            catch { weatherApiMessage = "WeatherAPI returned an unreadable response; Tripfinder is trying its backup weather source."; }
+            providerError = weatherApiError(payload);
+            if (!response.ok || providerError) {
+              weatherApiMessage = providerError?.code === 2009
+                ? "The current WeatherAPI plan does not cover every selected date; Tripfinder is using Visual Crossing for missing days."
+                : providerError?.code === 2007 || response.status === 429
+                  ? "WeatherAPI reached a request allowance or rate limit; Tripfinder is using Visual Crossing for missing days."
+                  : providerError?.code === 2006
+                    ? "WeatherAPI rejected its configured key; Tripfinder is trying Visual Crossing instead."
+                    : providerError?.message || `WeatherAPI returned HTTP ${response.status}; Tripfinder is trying its backup source.`;
+              await safeRecordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_error", outcome: "error", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
+            } else {
+              const forecast = asObject(payload.forecast);
+              const forecastDays = Array.isArray(forecast.forecastday) ? forecast.forecastday : [];
+              const normalized = normalizeWeatherApiDay(forecastDays[0], date);
+              await safeRecordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "provider_request", outcome: normalized ? "success" : "empty", cacheStatus: "miss", httpStatus: response.status, durationMs: Date.now() - providerStartedAt });
+              if (normalized) {
+                daysByDate.set(date, normalized);
+                try { await setProviderCache(cacheKey, { normalizedDay: normalized as unknown as JsonObject }, 3600); }
+                catch { /* A successful live forecast is still returned without cache persistence. */ }
+              }
+            }
+          }
+
+          if (!daysByDate.has(date) && staleEntry?.payload.normalizedDay && typeof staleEntry.payload.normalizedDay === "object") {
+            const staleRecord = staleEntry.payload.normalizedDay as unknown as Partial<WeatherDay>;
+            const staleDay = { ...staleRecord, source: "WeatherAPI", forecastType: "forecast" } as WeatherDay;
+            if (staleDay.date === date && typeof staleDay.condition === "string") {
+              daysByDate.set(date, staleDay);
+              staleWeatherApiDates.push(date);
+              await safeRecordProviderEvent({ provider: "WeatherAPI", category: "Daily forecast", eventType: "cache_hit", outcome: "success", cacheStatus: "stale", durationMs: Date.now() - cacheStartedAt });
+            }
+          }
+          if (!daysByDate.has(date) && (weatherApiMessage || !response)) break;
         } catch {
-          // The provider response is already valid and should remain visible.
+          weatherApiMessage = "WeatherAPI cache or provider lookup failed; Tripfinder is trying Visual Crossing instead.";
+          break;
+        }
+      }
+    } else {
+      weatherApiMessage = "WeatherAPI is not configured; Tripfinder is using its no-key Visual Crossing backup.";
+    }
+
+    const missingDates = requestedDates.filter((date) => !daysByDate.has(date));
+    let visualCrossingMessage = "";
+    let usedVisualCrossing = false;
+    let visualCrossingStale = false;
+    if (missingDates.length) {
+      const visualCrossing = await loadVisualCrossingRange(location, startDate, endDate, requestedDates, forceRefresh);
+      visualCrossingMessage = visualCrossing.message || "";
+      visualCrossingStale = visualCrossing.stale;
+      if (visualCrossing.days.length) {
+        usedVisualCrossing = true;
+        for (const day of visualCrossing.days) {
+          // Preserve days supplied by WeatherAPI; use Visual Crossing only to
+          // fill missing dates from the requested single range response.
+          if (!daysByDate.has(day.date)) daysByDate.set(day.date, day);
         }
       }
     }
 
-    const staleMessage = staleDates.length
-      ? `Showing saved weather data for ${staleDates.join(", ")}. A live refresh was unavailable, so conditions may have changed.`
-      : "";
+    const days = requestedDates.flatMap((date) => {
+      const day = daysByDate.get(date);
+      return day ? [day] : [];
+    });
+    const remaining = requestedDates.filter((date) => !daysByDate.has(date));
+    const containsSeasonal = days.some((day) => day.forecastType === "seasonal_estimate");
+    const messageParts = [
+      weatherApiMessage && usedVisualCrossing ? weatherApiMessage : "",
+      visualCrossingMessage,
+      staleWeatherApiDates.length ? `Showing saved WeatherAPI data for ${staleWeatherApiDates.join(", ")}; its conditions may have changed.` : "",
+      containsSeasonal ? "Dates beyond the 15-day model forecast window are statistical seasonal estimates based on historical climate patterns, not precise day-specific forecasts." : "",
+      remaining.length ? `Weather is unavailable for ${remaining.join(", ")} because neither provider returned data for those dates.` : "",
+    ].filter(Boolean);
+
+    const attributions = weatherAttributions(days);
     if (days.length === requestedDates.length) {
-      return NextResponse.json({ status: staleDates.length ? "partial" : "ok", days, message: staleMessage || undefined, attribution: "Weather data by WeatherAPI.com" }, { headers: { "Cache-Control": "private, max-age=1800" } });
+      return NextResponse.json({
+        status: staleWeatherApiDates.length || visualCrossingStale ? "partial" : "ok",
+        days,
+        message: messageParts.join(" ") || undefined,
+        attributions,
+      }, { headers: { "Cache-Control": "private, max-age=1800" } });
     }
-    if (days.length > 0) {
-      return NextResponse.json({ status: "partial", days, message: staleMessage || planMessage || "Weather is available for only part of the selected date range on the current plan.", attribution: "Weather data by WeatherAPI.com" });
+    if (days.length) {
+      return NextResponse.json({ status: "partial", days, message: messageParts.join(" ") || "Some requested weather days were unavailable.", attributions });
     }
-    return NextResponse.json({ status: "unavailable", days: [], message: planMessage || "No forecast data was returned for these dates." });
+    return NextResponse.json({ status: "unavailable", days: [], message: messageParts.join(" ") || "No weather data was returned for these dates.", attributions: [] });
   } catch {
-    return NextResponse.json({ status: "error", days: [], message: "Weather lookup failed. Check the WeatherAPI connection and try again." }, { status: 502 });
+    return NextResponse.json({ status: "error", days: [], message: "Weather lookup failed. Tripfinder tried its configured weather sources; please try again later.", attributions: [] }, { status: 502 });
   }
 }

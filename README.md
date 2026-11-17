@@ -51,6 +51,7 @@ In Vercel, open **TripPlanner → Settings → Environment Variables** and add:
 | `SERPAPI_PROVIDER_QUOTA_RESERVE` | `75` | Preview and Production (optional; default is 75) |
 | `SERPAPI_PROVIDER_HOURLY_RESERVE` | `10` | Preview and Production (optional; default is 10) |
 | `WEATHERAPI_API_KEY` | Optional WeatherAPI key | Preview and Production (optional) |
+| `VISUALCROSSING_API_KEY` | Optional registered Visual Crossing key; anonymous keyless access is supported | Preview and Production (optional; no key required) |
 | `ADMIN_DASHBOARD_SECRET` | Random secret of at least 32 characters; also used as the `/admin` login password | Production (optional; required for admin access) |
 | `BOOKING_COM_API_BASE` | `https://demandapi.booking.com/3.3` (or the official sandbox URL when using sandbox credentials) | Preview and Production (optional; defaults to production) |
 | `BOOKING_COM_API_TOKEN` | Booking.com Demand API token from Partner Centre | Preview and Production (optional; requires approved Managed Affiliate Partner access) |
@@ -79,7 +80,7 @@ The Booking.com adapter supports the search-and-redirect flow only; it does not 
 
 ### Private operations dashboard
 
-Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRET`. The dashboard requires a signed, 12-hour HttpOnly session and rate-limits failed logins. It reports the live SerpApi account quota, Tripfinder's own monthly/hourly reservations, provider API calls, cache hits, errors, category-level usage, Neon cache health and recent sanitized request events. Data refreshes every 30 seconds. SerpApi search events and WeatherAPI forecasts are instrumented; WeatherAPI daily responses use a one-hour Neon cache. Event logs omit search terms, API keys, booking tokens and raw IP addresses, and are pruned after 90 days. The initial dashboard will show only events recorded after this update is deployed; historical requests cannot be reconstructed retroactively.
+Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRET`. The dashboard requires a signed, 12-hour HttpOnly session and rate-limits failed logins. It reports the live SerpApi account quota, Tripfinder's own monthly/hourly reservations, provider API calls, cache hits, errors, category-level usage, Neon cache health and recent sanitized request events. Data refreshes every 30 seconds. SerpApi searches, WeatherAPI forecasts and Visual Crossing fallback requests are instrumented; WeatherAPI daily responses use a one-hour Neon cache and Visual Crossing date ranges use a 12-hour Neon cache. Event logs omit search terms, API keys, booking tokens and raw IP addresses, and are pruned after 90 days. The initial dashboard will show only events recorded after this update is deployed; historical requests cannot be reconstructed retroactively.
 
 ### Request budget and caching
 
@@ -105,7 +106,7 @@ Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRE
 - Flexible date selections are stored and disclosed, but live flight/hotel checks currently use the exact dates entered.
 - Destination autocomplete and destination matching are based on a maintained internal catalog, not a global live places/autocomplete feed. Unlisted destinations can be typed and searched, but country-to-airport resolution requires a known gateway or a valid three-letter airport code.
 - Itinerary schedules are structured suggestions. Attraction opening hours, ticket inventory, transfer times, entry rules and current local conditions are not guaranteed. OpenStreetMap place records may omit websites, hours, coordinates or categories and do not supply authoritative review ratings. Geoapify results are limited to 40 places per category in the initial request and may be incomplete; the UI offers external discovery links when no local results are returned. Coordinate-based Geoapify routes are estimates without live traffic.
-- WeatherAPI's Free plan provides a three-day forecast. Tripfinder does not present a day-by-day forecast for dates outside the provider's reliable forecast window. Longer-range forecasts require a plan that supports them; climate averages are not represented as daily forecasts.
+- WeatherAPI remains the primary short-range source. If it does not cover the requested dates, Tripfinder requests the missing date range once from Visual Crossing and caches that range in Neon for 12 hours. Visual Crossing supplies model-based forecasts through Today+15 and statistical seasonal estimates beyond that (currently through 2049); the latter are labeled as estimates, not precise forecasts. The free no-key service permits commercial use subject to IP-based fair-use limits and visible clickable attribution. `VISUALCROSSING_API_KEY` is optional; no additional key is required.
 - The free SerpApi plan is intended for controlled development/testing here. Before public commercial use, review SerpApi's terms, data-use/display rights and liability coverage, and obtain suitable supplier/API partnerships. Do not assume an API key or search response grants unrestricted resale or public redistribution rights.
 
 ## Technology and services
@@ -123,7 +124,8 @@ Open `https://your-production-domain/admin` after setting `ADMIN_DASHBOARD_SECRE
 | Neon PostgreSQL | Provider cache, shared request counters, anonymous saved trips, and collaboration state | Requires `DATABASE_URL` |
 | Affiliate networks | Commission attribution and affiliate links | Not connected |
 | AI provider | Optional natural-language intent extraction | Not connected; not required for deterministic search validation |
-| WeatherAPI | Short-range destination forecasts | Optional `WEATHERAPI_API_KEY`; Free plan has a 3-day forecast |
+| WeatherAPI | Primary short-range destination forecasts | Optional `WEATHERAPI_API_KEY`; Free plan has a 3-day forecast |
+| Visual Crossing | Backup daily date-range weather; forecast through Today+15 and statistical seasonal outlook beyond | No key required; optional `VISUALCROSSING_API_KEY`; anonymous use has IP-based fair-use limits and requires visible attribution |
 
 Neon stores provider cache and usage counters, anonymous saved trips, share-token hashes, and owner-only collaboration data. Tripfinder does not require traveler accounts; synchronized cross-device search history is not currently provided.
 

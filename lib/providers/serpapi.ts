@@ -756,7 +756,7 @@ function experienceQueryForStyle(style: TripSearchInput["style"]): string {
     city: "top tourist attractions, landmarks and museums",
     food: "food markets and local cultural attractions",
     nature: "top nature attractions, national parks and scenic landmarks",
-    romantic: "top scenic attractions, gardens and boat tours",
+    romantic: "romantic activities and experiences, sunset cruises, private boat tours, couples spa experiences, scenic viewpoints, gardens, and date-night experiences",
     family: "top family attractions, museums and wildlife parks",
     adventure: "top outdoor attractions, adventure tours and water activities",
     culture: "top historic attractions, museums and cultural landmarks",
@@ -997,7 +997,9 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
   const components = input.components;
   const normalizedDestinationName = cleanDestinationSearchName(destinationName);
   const originCode = input.originAirportCode || resolveAirportCode(input.origin);
-  const destinationCode = input.destinationAirportCode || destinationAirportCode;
+  // The API route passes the resolved airport from the confirmed search object.
+  // Prefer that argument so a recommendation/default airport cannot override it.
+  const destinationCode = destinationAirportCode || input.destinationAirportCode;
   const geoapifyPlacesActive = Boolean(process.env.GEOAPIFY_API_KEY?.trim() && (
     getDestinationAreaGeo(normalizedDestinationName) || AIRPORT_COORDINATES[destinationCode || destinationAirportCode]
   ));
@@ -1012,8 +1014,11 @@ export async function searchLiveTravel(input: TripSearchInput, destinationAirpor
     }
   }
   if (components.includes("activities")) {
+    const restaurantQuery = input.style === "romantic"
+      ? "romantic restaurants, intimate date-night dining, waterfront restaurants and highly rated local dining"
+      : "popular restaurants, highly rated local dining, casual restaurants and local food";
     tasks.push({ key: "experiences", promise: searchPlacesWithFallback(experienceQueryForStyle(input.style), normalizedDestinationName, destinationCode || destinationAirportCode, "activity", clientUsageKey, forceRefresh) });
-    tasks.push({ key: "restaurants", promise: searchPlacesWithFallback("popular restaurants, highly rated local dining, casual restaurants and local food", normalizedDestinationName, destinationCode || destinationAirportCode, "restaurant", clientUsageKey, forceRefresh) });
+    tasks.push({ key: "restaurants", promise: searchPlacesWithFallback(restaurantQuery, normalizedDestinationName, destinationCode || destinationAirportCode, "restaurant", clientUsageKey, forceRefresh) });
   }
 
   const bookingPromise = components.includes("stays") && isBookingComConfigured()

@@ -12,6 +12,7 @@ type Props = {
   geminiAvailable: boolean;
   openRouterAvailable: boolean;
   onSetStartingPoint?: (location: string) => Promise<ProximityStartingPoint>;
+  onViewResult?: (anchor: string) => void;
 };
 type ChatMessage = TripAssistantMessage & { id: string; provider?: string; cached?: boolean; welcome?: boolean; actions?: TripAssistantResultAction[] };
 
@@ -34,7 +35,7 @@ function messageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function AITripAssistant({ context, configured, databaseAvailable, geminiAvailable, openRouterAvailable, onSetStartingPoint }: Props) {
+export function AITripAssistant({ context, configured, databaseAvailable, geminiAvailable, openRouterAvailable, onSetStartingPoint, onViewResult }: Props) {
   // Start minimized in the server-rendered markup so phones never open a full-screen chat by default.
   // Preserve the expanded desktop workspace after hydration on wider screens.
   const [open, setOpen] = useState(false);
@@ -128,20 +129,34 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
   }
 
   function jumpToResult(anchor: string) {
+    setOpen(false);
+    // Results can be nested inside a collapsed destination card or a collapsed
+    // <details> category. Let the results workspace reveal the destination,
+    // open every containing section, and only then scroll to the result.
+    if (onViewResult) {
+      onViewResult(anchor);
+      return;
+    }
     const target = document.getElementById(anchor);
     if (!target) {
       setMessages((current) => [...current, {
-        id: messageId(), role: "assistant", content: "I couldn't find that result card in the current results. Reopen the destination's stay results and try again.",
+        id: messageId(), role: "assistant", content: "I couldn't find that result card in the current results. Reopen the destination's results and try again.",
       }]);
       return;
     }
-    setOpen(false);
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
-    target.focus({ preventScroll: true });
-    target.classList.remove("trip-ai-result-highlight");
-    void target.offsetWidth;
-    target.classList.add("trip-ai-result-highlight");
-    window.setTimeout(() => target.classList.remove("trip-ai-result-highlight"), 3000);
+    let ancestor: Element | null = target;
+    while (ancestor) {
+      if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+      ancestor = ancestor.parentElement;
+    }
+    window.requestAnimationFrame(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+      target.classList.remove("trip-ai-result-highlight");
+      void target.offsetWidth;
+      target.classList.add("trip-ai-result-highlight");
+      window.setTimeout(() => target.classList.remove("trip-ai-result-highlight"), 3000);
+    });
   }
 
   return <div className={`trip-ai-dock ${open ? "is-expanded" : "is-minimized"}`}>
