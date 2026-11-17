@@ -6,6 +6,7 @@ import { AIRPORT_COORDINATES, destinationMetadata, getDestinationAreaGeo, getDes
 import type { TripSearchInput, TripComponent, StaySpaceType, StayType } from "@/lib/trip-planner/types";
 import { makeFlightBookingParams, makeFlightParams, makeReturnFlightParams } from "@/lib/trip-planner/flight-search-params";
 import { makeFlexibleFlightCalendarParams, normalizeFlexibleFlightDateOptions, type FlexibleFlightDateOption } from "@/lib/trip-planner/flexible-flight-dates";
+import { firstProviderImage } from "@/lib/trip-planner/provider-images";
 import { applyLayoverPreferences } from "@/lib/trip-planner/flight-search-policy";
 import { safeGoogleBookingUrl } from "@/lib/trip-planner/flight-booking-url";
 import { isRestaurantCategory, isUsefulActivityCategory, localPlaceDedupeKey } from "@/lib/trip-planner/place-quality";
@@ -703,7 +704,7 @@ function normalizeHotel(item: unknown, index: number, currency: string, destinat
     address: str(hotel.address),
     amenities: amenities.slice(0, 40),
     freeCancellation: hotel.free_cancellation === true,
-    image: safeHttpUrl(firstImage.thumbnail) ?? safeHttpUrl(hotel.thumbnail),
+    image: firstProviderImage(imageList, hotel.thumbnail, hotel.image),
     bookingUrl: propertyUrl,
     bookingUrlLabel: officialWebsite ? "Official website" : propertyDetailsUrl ? "Property details" : mapUrl ? "View on Maps" : "View on Google Hotels",
     providerOffers,
@@ -796,7 +797,7 @@ function normalizeExperiences(data: JsonObject, destinationName: string, kind: "
       reviews: num(place.reviews),
       latitude: num(coords.latitude) ?? num(place.lat),
       longitude: num(coords.longitude) ?? num(place.lon),
-      thumbnail: safeHttpUrl(place.thumbnail) ?? safeHttpUrl(place.serpapi_thumbnail),
+      thumbnail: firstProviderImage(place.images, place.thumbnail_large, place.thumbnail, place.serpapi_thumbnail, place.image),
       openState: str(place.open_state) || undefined,
       openingHours: str(place.opening_hours) || undefined,
       source: str(place.data_source) || "SerpApi / Google Maps and Local",
