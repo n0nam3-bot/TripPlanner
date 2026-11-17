@@ -25,7 +25,6 @@ const sourceFiles = [
   "lib/trip-planner/place-quality.ts",
   "lib/trip-planner/geoapify-format.ts",
   "lib/ai/trip-assistant.ts",
-  "lib/ai/result-navigation.ts",
   "tests/types/process-shim.d.ts",
   "lib/ai/search-preferences.ts",
 ];

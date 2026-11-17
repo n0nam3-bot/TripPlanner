@@ -78,6 +78,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
           liveSearchConfigured={Boolean(process.env.SERPAPI_API_KEY && process.env.DATABASE_URL)}
           providerKeyConfigured={Boolean(process.env.SERPAPI_API_KEY)}
           databaseConfigured={Boolean(process.env.DATABASE_URL)}
+          weatherKeyConfigured={Boolean(process.env.WEATHERAPI_API_KEY)}
           aiProviderConfigured={Boolean(process.env.OPENROUTER_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim())}
           geminiProviderConfigured={Boolean(process.env.GEMINI_API_KEY?.trim())}
           openRouterProviderConfigured={Boolean(process.env.OPENROUTER_API_KEY?.trim())}
@@ -85,7 +86,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Sear
       </section>
       <footer className="site-footer shell results-footer">
         <div className="footer-top">
-          <div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Plan the whole trip in one place.</p></div>
+          <div><span className="brand-name footer-brand">tripfinder<span className="brand-period">.</span></span><p>Make room for somewhere new.</p></div>
           <div className="footer-side">
             <SupportTipLink />
             <Link href="/#plan" className="text-link dark-link">New search <ArrowRight size={16}/></Link>
