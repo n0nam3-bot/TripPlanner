@@ -152,8 +152,9 @@ export function sanitizeSearchPreferenceDraft(value: unknown, todayLocal: string
   const tripStyle = enumValue(raw.tripStyle, tripStyles);
   const parsedStayTypes = enumList(raw.stayTypes, stayTypes, 2);
   let staySpaceType = enumValue(raw.staySpaceType, spaceTypes);
-  const explicitEntirePhrase = /\b(entire|whole)\s+(?:house|home|property|place|cabin|condo|villa)\b|\b(?:rent|book|looking for)\s+(?:a|an)\s+(?:whole|entire)\s+(?:house|home|property|place|cabin|condo|villa)\b|\bprivate\s+(?:house|home|property|cabin|condo|villa)\b/i.test(source);
-  const entirePlaceNegated = /\b(?:no|not|without|don't|do not|doesn't|does not)\b.{0,36}\b(?:entire|whole)\s+(?:house|home|property|place|cabin|condo|villa)\b/i.test(source);
+  const explicitEntireStay = /\b(?:entire|whole)\s+(?:[a-z]+\s+){0,2}(?:house|home|property|place|cabin|condo|villa|airbnb|vacation rental)\b|\b(?:rent|book|looking for)\s+(?:a|an)\s+(?:whole|entire)\s+(?:house|home|property|place|cabin|condo|villa)\b|\bprivate\s+(?:house|home|property|cabin|condo|villa)\b/i;
+  const explicitEntirePhrase = explicitEntireStay.test(source);
+  const entirePlaceNegated = /\b(?:no|not|without|don't|do not|doesn't|does not)\b.{0,36}\b(?:entire|whole)\b.{0,30}\b(?:house|home|property|place|cabin|condo|villa|airbnb|vacation rental)\b/i.test(source);
   const explicitEntirePlace = explicitEntirePhrase && !entirePlaceNegated;
   const explicitPrivateRoom = /\bprivate\s+room\b/i.test(source) && !/\b(?:no|not|without|don't|do not|doesn't|does not)\b.{0,24}\bprivate\s+room\b/i.test(source);
   const explicitSharedRoom = /\bshared\s+room\b/i.test(source) && !/\b(?:no|not|without|don't|do not|doesn't|does not)\b.{0,24}\bshared\s+room\b/i.test(source);
@@ -350,13 +351,19 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
 
   const routeCodes = source.match(/\bfrom\s+([a-z]{3})\s+to\s+([a-z]{3})\b/i);
   const fromTo = source.match(/\bfrom\s+(.+?)\s+to\s+/i);
-  if (fromTo?.[1]) {
-    const requestedOrigin = fromTo[1].trim().replace(/[,.]+$/, "");
-    const originCode = routeCodes?.[1]?.toUpperCase() || resolveAirportCode(requestedOrigin);
-    if (requestedOrigin) raw.origin = /^[a-z]{3}$/i.test(requestedOrigin) ? requestedOrigin.toUpperCase() : originCode ? `${requestedOrigin} (${originCode})` : requestedOrigin;
+  const requestedOriginText = fromTo?.[1]?.trim().replace(/[,.]+$/, "") || "";
+  const fromToStartsWithDate = /^(?:(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}|\d{1,2}[/.]\d{1,2}(?:[/.]20\d{2})?|20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?))\b/i.test(requestedOriginText);
+  const hasAirportRoutePhrase = Boolean(fromTo?.[1] && !fromToStartsWithDate);
+  if (hasAirportRoutePhrase) {
+    const originCode = routeCodes?.[1]?.toUpperCase() || resolveAirportCode(requestedOriginText);
+    if (requestedOriginText) raw.origin = /^[a-z]{3}$/i.test(requestedOriginText) ? requestedOriginText.toUpperCase() : originCode ? `${requestedOriginText} (${originCode})` : requestedOriginText;
     if (originCode) raw.originAirportCode = originCode;
   }
-  const explicitDestinationCode = routeCodes?.[2]?.toUpperCase() || source.match(/\bto\s+([a-z]{3})\b/i)?.[1]?.toUpperCase();
+  // A date range such as "from Dec 20 to Dec 23" is not an airport route.
+  // Suppress both endpoint-code extraction paths for that construction.
+  const explicitDestinationCode = hasAirportRoutePhrase
+    ? routeCodes?.[2]?.toUpperCase() || source.match(/\bto\s+([a-z]{3})\b/i)?.[1]?.toUpperCase()
+    : undefined;
   if (explicitDestinationCode && /^[A-Z]{3}$/.test(explicitDestinationCode)) raw.destinationAirportCode = explicitDestinationCode;
   if (!raw.destinationAirportCode && typeof raw.destination === "string") {
     const destinationCode = resolveAirportCode(String(raw.destinationArea || raw.destination));
@@ -369,13 +376,15 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
     raw.stayTypes = asksRental && asksHotel ? ["vacation_rentals", "hotels"] : asksRental ? ["vacation_rentals"] : ["hotels"];
     raw.components = ["stays"];
   }
-  if (/\b(flights?|fly|flying|airfare|air travel|plane tickets?)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "flights"])];
+  const mentionsFlights = /\b(flights?|fly|flying|airfare|air travel|plane tickets?)\b/i.test(source);
+  const explicitlyExcludesFlights = /\b(?:no|not|without|exclude|excluding|skip|avoid|don't|do not|doesn't|does not)\b[^.!?;]{0,32}\b(?:flights?|airfare|air travel|plane tickets?)\b/i.test(source);
+  if (mentionsFlights && !explicitlyExcludesFlights) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "flights"] )];
   if (/\b(activities|things to do|attractions|excursions|tours|restaurants|dining)\b/i.test(source)) raw.components = [...new Set([...(Array.isArray(raw.components) ? raw.components as string[] : []), "activities"])];
 
   if (/\b(beachfront|on the beach|oceanfront|steps from the beach|direct beach access)\b/i.test(source)) {
     raw.tripStyle = "beach";
     raw.mustHaveAmenities = ["beach_access"];
-  } else if (/\b(by|near|close to|nearby) the beach\b/i.test(source) || /\bbeach\b/i.test(source)) {
+  } else if (/\b(by|near|close to|nearby) the beach\b/i.test(source) || /\beach\b/i.test(source)) {
     raw.tripStyle = "beach";
     raw.preferredAmenities = ["beach_access"];
     raw.notes = ["Beach proximity was requested. Confirm the property's actual walking distance and whether beach access is direct."];
@@ -416,14 +425,16 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
   const rooms = source.match(/\b(\d{1,2})\s*rooms?\b/i);
   if (rooms) raw.rooms = Number(rooms[1]);
 
-  const budget = source.match(/\b(?:under|below|up to|max(?:imum)?|budget(?:\s+of)?|budget\s+is|budget\s+it\s+is)\b[^\d$€£]{0,28}(?:us\$|[$€£])?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*([km])?\b/i)
+  // Route constraints such as "maximum of 1 stop" and "up to 2 stops"
+  // must not consume the first number and hide a budget later in the prompt.
+  const budget = source.match(/\b(?:under|below|up to|max(?:imum)?|budget(?:\s+of)?|budget\s+is|budget\s+it\s+is)\b[^\d$€£]{0,28}(?:us\$|[$€£])?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*([km])?\b(?!\s*(?:stops?|rooms?|adults?|people|persons|travelers?|travellers?|guests?|nights?|days?)\b)/i)
     || source.match(/(?:us\$|[$€£])\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*([km])?\b/i);
   if (budget) {
     const baseAmount = Number(budget[1].replace(/,/g, ""));
     const multiplier = budget[2]?.toLowerCase() === "k" ? 1000 : budget[2]?.toLowerCase() === "m" ? 1000000 : 1;
     const parsedBudget = Math.round(baseAmount * multiplier);
     if (Number.isFinite(parsedBudget) && parsedBudget >= 50) raw.budget = parsedBudget;
-    // Word boundaries prevent words such as "beachfront" from implying "each".
+    // Match the standalone word "each" without treating "beach" or "beachfront" as per-person wording.
     raw.budgetMode = /\bper\s+person\b|\beach\b|\bper\s+traveler\b|\bper\s+traveller\b/i.test(source) ? "per_person" : "total";
     raw.currency = /\b(cad|canadian dollars?)\b/i.test(source) ? "CAD" : /\b(eur|euros?)\b|€/i.test(source) ? "EUR" : /\b(gbp|pounds?)\b|£/i.test(source) ? "GBP" : "USD";
   }
@@ -459,13 +470,13 @@ export function parseDeterministicSearchPreferenceDraft(description: string, tod
         if (!departure && /\b(return|returning|back)\b/i.test(secondContext) && resolvedReturn) raw.returnDate = resolvedReturn;
       }
     }
-    if (dateTokens.some((item) => item.year === undefined) && (raw.departureDate || raw.returnDate)) {
+    if (dateTokens.every((item) => item.year === undefined) && (raw.departureDate || raw.returnDate)) {
       const dateLabel = [raw.departureDate, raw.returnDate].filter((item): item is string => typeof item === "string").join(" – ");
       raw.notes = [...(Array.isArray(raw.notes) ? raw.notes as string[] : []), `No year was specified. Tripfinder selected the next upcoming date(s): ${dateLabel}. Confirm the year before searching.`];
     }
   }
 
-  if (/\b(entire|whole) (house|home|property|place|cabin|condo|villa)\b|\bprivate (house|home|property|cabin|condo|villa)\b/i.test(source)) raw.staySpaceType = "entire_place";
+  if (/\b(?:entire|whole)\s+(?:[a-z]+\s+){0,2}(?:house|home|property|place|cabin|condo|villa|airbnb|vacation rental)\b|\bprivate (house|home|property|cabin|condo|villa)\b/i.test(source)) raw.staySpaceType = "entire_place";
   else if (/\bprivate room\b/i.test(source)) raw.staySpaceType = "private_room";
   else if (/\bshared room\b/i.test(source)) raw.staySpaceType = "shared_room";
 
