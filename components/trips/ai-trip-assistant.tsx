@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { LoaderCircle, MessageCircle, Minus, Send, Sparkles, X } from "lucide-react";
+import { LoaderCircle, MessageCircle, Minus, Send, Sparkles } from "lucide-react";
 import type { TripAssistantContext, TripAssistantMessage, TripAssistantResultAction } from "@/lib/ai/trip-assistant";
-import { expandCollapsedResultAncestors } from "@/lib/ai/result-navigation";
+import { extractProximityAnchorQuestion, extractStartingPointStatement, type ProximityStartingPoint } from "@/lib/trip-planner/proximity";
 
 type Props = {
   context: TripAssistantContext;
@@ -11,7 +11,7 @@ type Props = {
   databaseAvailable: boolean;
   geminiAvailable: boolean;
   openRouterAvailable: boolean;
-  onSetStartingPoint?: (location: string) => void | Promise<void>;
+  onSetStartingPoint?: (location: string) => Promise<ProximityStartingPoint>;
 };
 type ChatMessage = TripAssistantMessage & { id: string; provider?: string; cached?: boolean; welcome?: boolean; actions?: TripAssistantResultAction[] };
 
@@ -34,7 +34,9 @@ function messageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function AITripAssistant({ context, configured, databaseAvailable, geminiAvailable, openRouterAvailable }: Props) {
+export function AITripAssistant({ context, configured, databaseAvailable, geminiAvailable, openRouterAvailable, onSetStartingPoint }: Props) {
+  // Start minimized in the server-rendered markup so phones never open a full-screen chat by default.
+  // Preserve the expanded desktop workspace after hydration on wider screens.
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [draft, setDraft] = useState("");
@@ -42,6 +44,10 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasConversation = messages.length > 1;
+
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 641px)").matches) setOpen(true);
+  }, []);
 
   useEffect(() => {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -58,10 +64,30 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
     setDraft("");
     setLoading(true);
     try {
+      // Location statements and proximity questions with an explicit landmark are handled locally.
+      // This lets a traveler use a college, venue, home, hotel, or other point without a stay booking.
+      const locationStatement = extractStartingPointStatement(question);
+      const proximityAnchor = !context.startingPoint && !context.selected?.stayId && !context.selected?.stay
+        ? extractProximityAnchorQuestion(question)
+        : null;
+      let requestContext = context;
+      if ((locationStatement || proximityAnchor) && onSetStartingPoint) {
+        const location = locationStatement || proximityAnchor!;
+        const resolved = await onSetStartingPoint(location);
+        if (locationStatement) {
+          setMessages((current) => [...current, {
+            id: messageId(), role: "assistant",
+            content: `I found **${resolved.label}** and set it as your starting point. The address is ${resolved.address}. The trip cards now show straight-line distances from this location and can calculate driving routes when requested. This starting point is saved only in this browser and is not included in the public share link.`,
+            provider: "Tripfinder local check",
+          }]);
+          return;
+        }
+        requestContext = { ...context, startingPoint: resolved };
+      }
       const response = await fetch("/api/ai/assist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history, context, allowGemini }),
+        body: JSON.stringify({ question, history, context: requestContext, allowGemini }),
       });
       const payload = await response.json() as Record<string, unknown>;
       if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Tripfinder could not complete that travel question.");
@@ -109,22 +135,13 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
       }]);
       return;
     }
-    // A result card can exist inside a collapsed category <details> element.
-    // Reveal all containing sections before scrolling so “View in results” never
-    // sends the traveler to an invisible card. Open outer sections first, then
-    // wait for the browser to lay out the newly visible content.
-    expandCollapsedResultAncestors(target);
     setOpen(false);
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        target.scrollIntoView({ behavior: "smooth", block: "center" });
-        target.focus({ preventScroll: true });
-        target.classList.remove("trip-ai-result-highlight");
-        void target.offsetWidth;
-        target.classList.add("trip-ai-result-highlight");
-        window.setTimeout(() => target.classList.remove("trip-ai-result-highlight"), 3000);
-      });
-    });
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+    target.classList.remove("trip-ai-result-highlight");
+    void target.offsetWidth;
+    target.classList.add("trip-ai-result-highlight");
+    window.setTimeout(() => target.classList.remove("trip-ai-result-highlight"), 3000);
   }
 
   return <div className={`trip-ai-dock ${open ? "is-expanded" : "is-minimized"}`}>
@@ -132,7 +149,7 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
       <header className="trip-ai-chat-header">
         <span className="trip-ai-chat-mark"><Sparkles size={17}/></span>
         <div><strong>Tripfinder assistant</strong><small>{context.destination} · Travel questions only</small></div>
-        <button type="button" className="trip-ai-window-control" onClick={() => setOpen(false)} aria-label="Minimize Tripfinder assistant"><Minus size={18}/></button>
+        <button type="button" className="trip-ai-window-control" onClick={() => setOpen(false)} aria-label="Minimize Tripfinder assistant" title="Minimize assistant"><Minus size={18}/></button>
       </header>
 
       <div className="trip-ai-chat-messages" ref={scrollRef} aria-live="polite">
@@ -170,8 +187,8 @@ export function AITripAssistant({ context, configured, databaseAvailable, gemini
       <footer className="trip-ai-chat-footer">Answers use the results already loaded. No additional travel-provider searches are triggered.</footer>
     </section>}
 
-    <button type="button" className={`trip-ai-launcher ${open ? "is-open" : ""}`} onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={open ? "Close Tripfinder assistant" : "Open Tripfinder assistant"}>
-      {open ? <X size={19}/> : <><MessageCircle size={19}/><span>Ask Tripfinder</span></>}
-    </button>
+    {!open && <button type="button" className="trip-ai-launcher" onClick={() => setOpen(true)} aria-expanded={false} aria-label="Open Tripfinder assistant">
+      <MessageCircle size={19}/><span>Ask Tripfinder</span>
+    </button>}
   </div>;
 }
